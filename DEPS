@@ -1197,7 +1197,7 @@ deps = {
       'packages': [
           {
               'package': 'chromium/chrome/android/orderfiles/arm64',
-              'version': 'r1qxTP9PUupCcqxu8nrFgR0GBm00mTrsVGx4q6Nwq6sC',
+              'version': 'uazXJev6O_CFODRIhHLn1ZbL53q8ViOugxFM1A2CXusC',
           },
       ],
       'condition': 'checkout_android',
@@ -1600,7 +1600,7 @@ deps = {
 
   'src/clank': {
     'url': Var('chrome_git') + '/clank/internal/apps.git' + '@' +
-    'fe6e891d88d7808bfcfe62679102bb1e2f4840a8',
+    'f6ab38c506b8f4085828ce46fef9114fbf3eb4f3',
     'condition': 'checkout_android and checkout_src_internal',
   },
 
@@ -2625,7 +2625,7 @@ deps = {
     Var('pdfium_git') + '/pdfium.git' + '@' +  Var('pdfium_revision'),
 
   'src/third_party/perfetto':
-    Var('chromium_git') + '/external/github.com/google/perfetto.git' + '@' + '6dc5fe8fbc7881be6e41b9e5218bba77c05c423a',
+    Var('chromium_git') + '/external/github.com/google/perfetto.git' + '@' + '0517232243e2794be6d5dd32c8b402c7814db9ec',
 
   'src/base/tracing/test/data': {
     'bucket': 'perfetto',
@@ -3771,7 +3771,7 @@ deps = {
 
   'src/ios_internal':  {
       'url': Var('chrome_git') + '/chrome/ios_internal.git' + '@' +
-        '75a0642fdbbb00eaada03545c79729a3ecc62552',
+        'f9a4def86c8aa3749c961a58227b38389f53874a',
       'condition': 'checkout_ios and checkout_src_internal',
   },
 
