@@ -295,7 +295,7 @@ vars = {
   # Three lines of non-changing comments so that
   # the commit queue can handle CLs rolling Skia
   # and whatever else without interference from each other.
-  'skia_revision': '57f4880b53b5582f0a3717f3b044556104621dc3',
+  'skia_revision': '1c2deb295032711846df360611c497cd21e2c119',
   # Three lines of non-changing comments so that
   # the commit queue can handle CLs rolling V8
   # and whatever else without interference from each other.
@@ -303,7 +303,7 @@ vars = {
   # Three lines of non-changing comments so that
   # the commit queue can handle CLs rolling ANGLE
   # and whatever else without interference from each other.
-  'angle_revision': 'ca3d732d11d5394d9957660fc9aed48889c22166',
+  'angle_revision': '9367369dc5f813b05ac0ae4b3202102154589d34',
   # Three lines of non-changing comments so that
   # the commit queue can handle CLs rolling SwiftShader
   # and whatever else without interference from each other.
@@ -407,7 +407,7 @@ vars = {
   # Three lines of non-changing comments so that
   # the commit queue can handle CLs rolling feed
   # and whatever else without interference from each other.
-  'dawn_revision': 'eea8adcdf74d010ee1516bc01a73906e4afe5350',
+  'dawn_revision': '26e8bd1105a87e71e6d6c0dfb6f92f9f131f51da',
   # Three lines of non-changing comments so that
   # the commit queue can handle CLs rolling feed
   # and whatever else without interference from each other.
@@ -515,7 +515,7 @@ vars = {
   # Three lines of non-changing comments so that
   # the commit queue can handle CLs rolling llvm-libc
   # and whatever else without interference from each other.
-  'compiler_rt_revision': '797599c8cf7ad2b8fa22850cbb1afb1ad1dd9e20',
+  'compiler_rt_revision': '581c5fcbc57a5f528bb9f5930b702e045084a4b6',
   # Three lines of non-changing comments so that
   # the commit queue can handle CLs rolling clusterfuzz-data
   # and whatever else without interference from each other.
@@ -1186,7 +1186,7 @@ deps = {
       'packages': [
           {
               'package': 'chromium/chrome/android/orderfiles/arm',
-              'version': 'HcSBNGblPkZxeG1hNC0Qi-h6eEaJXVQy7xGdzUq4BqwC',
+              'version': 'n5wvCp7YHatGmwbfV_tbaWAiSn-Xizvr1B4SxJPif1UC',
           },
       ],
       'condition': 'checkout_android',
@@ -1197,7 +1197,7 @@ deps = {
       'packages': [
           {
               'package': 'chromium/chrome/android/orderfiles/arm64',
-              'version': '2O_WkRybnm5Ip5c7UrjTJJtvWe18iB9Bdyge4XAQxMMC',
+              'version': 'r1qxTP9PUupCcqxu8nrFgR0GBm00mTrsVGx4q6Nwq6sC',
           },
       ],
       'condition': 'checkout_android',
@@ -1600,7 +1600,7 @@ deps = {
 
   'src/clank': {
     'url': Var('chrome_git') + '/clank/internal/apps.git' + '@' +
-    '5189b93502c29c19dea386b7dd7b56d716cd7524',
+    'fe6e891d88d7808bfcfe62679102bb1e2f4840a8',
     'condition': 'checkout_android and checkout_src_internal',
   },
 
@@ -3129,7 +3129,7 @@ deps = {
     'packages': [
       {
         'package': 'chromeos_internal/apps/help_app/app',
-        'version': 'uGyuXowArLnGMzjzkVgTtvZ02jkghFTLkvYbh95yd-0C',
+        'version': '88eTIDSNMlSX1Y_w559LZMuXq3HrqEGjZI4pBUa0wOwC',
       },
     ],
     'condition': 'checkout_chromeos and checkout_src_internal',
@@ -3140,7 +3140,7 @@ deps = {
     'packages': [
       {
         'package': 'chromeos_internal/apps/media_app/app',
-        'version': 'GGueNfKvRpFm0MoauXgnQIg-g5erAeaEbzXcqQaWBnUC',
+        'version': 'GrqDzDewHbHlG6JgqmWynwePaUJsIzbxA5gyC6p2b2YC',
       },
     ],
     'condition': 'checkout_chromeos and checkout_src_internal',
@@ -3173,7 +3173,7 @@ deps = {
     'packages': [
       {
         'package': 'chromeos_internal/apps/projector_app/app',
-        'version': 'lAUsJNZvJJbb9sxuR3aduBqKnUKdkUltk_uSLza8ONsC',
+        'version': '3D1r4oAU09M00pgOXO-XnKXgzvQDWW04Sz3vvcXiTlUC',
       },
     ],
     'condition': 'checkout_chromeos and checkout_src_internal',
@@ -3771,7 +3771,7 @@ deps = {
 
   'src/ios_internal':  {
       'url': Var('chrome_git') + '/chrome/ios_internal.git' + '@' +
-        '19fe996eb48fdda438f74de5d3200f928dc29b87',
+        '75a0642fdbbb00eaada03545c79729a3ecc62552',
       'condition': 'checkout_ios and checkout_src_internal',
   },
 
