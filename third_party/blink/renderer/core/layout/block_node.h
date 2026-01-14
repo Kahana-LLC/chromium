@@ -118,7 +118,6 @@ class CORE_EXPORT BlockNode : public LayoutInputNode {
 
   bool IsFrameSet() const { return box_->IsFrameSet(); }
   bool IsParentNGFrameSet() const { return box_->Parent()->IsFrameSet(); }
-  bool IsParentGrid() const { return box_->Parent()->IsLayoutGrid(); }
 
   // Returns true if this node should pass its percentage resolution block-size
   // to its children. Typically only quirks-mode, auto block-size, block nodes.
@@ -138,7 +137,7 @@ class CORE_EXPORT BlockNode : public LayoutInputNode {
   // Returns the aspect ratio of a replaced element.
   LogicalSize GetReplacedAspectRatio() const;
 
-  bool MayHaveAnchorQuery() const { return box_->MayHaveAnchorQuery(); }
+  bool MayContainAnchor() const { return box_->MayContainAnchor(); }
 
   bool HasLeftOverflow() const { return box_->HasLeftOverflow(); }
   bool HasTopOverflow() const { return box_->HasTopOverflow(); }

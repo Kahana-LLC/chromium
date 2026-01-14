@@ -7,6 +7,7 @@
 #include <optional>
 
 #include "base/test/trace_event_analyzer.h"
+#include "base/test/trace_test_utils.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/renderer/core/css/css_style_rule.h"
 #include "third_party/blink/renderer/core/css/css_test_helpers.h"
@@ -42,9 +43,10 @@ static RuleSet* RuleSetFromSingleRule(Document& document, const String& text) {
   RuleSet* rule_set = MakeGarbageCollected<RuleSet>();
   MediaQueryEvaluator* medium =
       MakeGarbageCollected<MediaQueryEvaluator>(document.GetFrame());
+  RuleSet::ApplyMixinsStack apply_mixins_stack;
   rule_set->AddStyleRule(style_rule, /*parent_rule=*/nullptr, *medium,
                          /*mixins=*/{}, kRuleHasNoSpecialState,
-                         /*within_mixin=*/nullptr);
+                         apply_mixins_stack);
   rule_set->CompactRulesIfNeeded();
   return rule_set;
 }
@@ -359,8 +361,9 @@ TEST_F(ElementRuleCollectorTest, MatchesNonUniversalHighlights) {
     auto* rule = To<StyleRule>(CSSParser::ParseRule(
         sheet->ParserContext(), sheet, CSSNestingType::kNone,
         /*parent_rule_for_nesting=*/nullptr, selector + " { color: green }"));
+    RuleSet::ApplyMixinsStack apply_mixins_stack;
     rules.AddStyleRule(rule, /*parent_rule=*/nullptr, *medium, /*mixins=*/{},
-                       kRuleHasNoSpecialState, /*within_mixin=*/nullptr);
+                       kRuleHasNoSpecialState, apply_mixins_stack);
 
     MatchResult result;
     ElementResolveContext context{element};
@@ -733,6 +736,7 @@ CORE_EXPORT const CSSStyleSheet* FindStyleSheet(
     const StyleRule* rule);
 
 TEST_F(ElementRuleCollectorTest, FindStyleSheet) {
+  base::test::TracingEnvironment tracing_environment;
   trace_analyzer::Start(
       TRACE_DISABLED_BY_DEFAULT("devtools.timeline.invalidationTracking"));
   InvalidationSetToSelectorMap::StartOrStopTrackingIfNeeded(

@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "base/win/access_token.h"
 
 #include <windows.h>
@@ -17,11 +12,13 @@
 #include <memory>
 #include <utility>
 
+#include "base/compiler_specific.h"
 #include "base/containers/span.h"
 #include "base/numerics/checked_math.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/win/access_control_list.h"
+#include "base/win/win_util.h"
 
 namespace base::win {
 
@@ -39,7 +36,7 @@ typedef struct _TOKEN_SECURITY_ATTRIBUTE_V1 {
   USHORT Reserved;
   ULONG Flags;
   ULONG ValueCount;
-  PLONG64 pInt64;
+  PUNICODE_STRING pString;
 } TOKEN_SECURITY_ATTRIBUTE_V1, *PTOKEN_SECURITY_ATTRIBUTE_V1;
 
 #define TOKEN_SECURITY_ATTRIBUTES_INFORMATION_VERSION_V1 1
@@ -84,9 +81,9 @@ typedef struct _TOKEN_SECURITY_ATTRIBUTES_AND_OPERATION_INFORMATION {
 } TOKEN_SECURITY_ATTRIBUTES_AND_OPERATION_INFORMATION,
     *PTOKEN_SECURITY_ATTRIBUTES_AND_OPERATION_INFORMATION;
 
-#define TOKEN_SECURITY_ATTRIBUTE_TYPE_INT64 0x01
-static_assert(TOKEN_SECURITY_ATTRIBUTE_TYPE_INT64 ==
-              AUTHZ_SECURITY_ATTRIBUTE_TYPE_INT64);
+#define TOKEN_SECURITY_ATTRIBUTE_TYPE_STRING 0x03
+static_assert(TOKEN_SECURITY_ATTRIBUTE_TYPE_STRING ==
+              AUTHZ_SECURITY_ATTRIBUTE_TYPE_STRING);
 
 #define TOKEN_SECURITY_ATTRIBUTE_NON_INHERITABLE 0x0001
 static_assert(TOKEN_SECURITY_ATTRIBUTE_NON_INHERITABLE ==
@@ -151,8 +148,17 @@ std::optional<T> GetTokenInfoFixed(HANDLE token,
 template <typename T>
 T* GetType(std::optional<std::vector<char>>& info) {
   DCHECK(info);
-  DCHECK(info->size() >= sizeof(T));
-  return reinterpret_cast<T*>(info->data());
+  CHECK(info->size() >= sizeof(T));
+  // SAFETY: We ensure a check is made on the size before casting. This is to
+  // support accessing a C-style API and unsafe access is unavoidable.
+  return UNSAFE_BUFFERS(reinterpret_cast<T*>(info->data()));
+}
+
+template <typename T>
+span<T> GetArraySpan(T* ptr, size_t size) {
+  // SAFETY: This is to support accessing a C-style API, we have to trust that
+  // the size and pointer values are valid.
+  return UNSAFE_BUFFERS(span(ptr, size));
 }
 
 std::vector<AccessToken::Group> GetGroupsFromToken(
@@ -169,9 +175,9 @@ std::vector<AccessToken::Group> GetGroupsFromToken(
   TOKEN_GROUPS* groups_ptr = GetType<TOKEN_GROUPS>(groups);
   std::vector<AccessToken::Group> ret;
   ret.reserve(groups_ptr->GroupCount);
-  for (DWORD index = 0; index < groups_ptr->GroupCount; ++index) {
-    ret.emplace_back(UnwrapSid(Sid::FromPSID(groups_ptr->Groups[index].Sid)),
-                     groups_ptr->Groups[index].Attributes);
+  for (const auto& group :
+       GetArraySpan(groups_ptr->Groups, groups_ptr->GroupCount)) {
+    ret.emplace_back(UnwrapSid(Sid::FromPSID(group.Sid)), group.Attributes);
   }
   return ret;
 }
@@ -284,6 +290,28 @@ std::optional<DWORD> AdjustPrivilege(const ScopedHandle& token,
     return out_privs.Privileges[0].Attributes;
   }
   return attributes;
+}
+
+std::optional<const TOKEN_SECURITY_ATTRIBUTE_V1*> FindSecurityAttribute(
+    std::optional<std::vector<char>>& buffer,
+    std::wstring_view name) {
+  if (!buffer) {
+    return std::nullopt;
+  }
+
+  const auto* info = GetType<TOKEN_SECURITY_ATTRIBUTES_INFORMATION>(buffer);
+  if (info->Version != TOKEN_SECURITY_ATTRIBUTES_INFORMATION_VERSION_V1) {
+    return std::nullopt;
+  }
+
+  for (const auto& attr :
+       GetArraySpan(info->pAttributeV1, info->AttributeCount)) {
+    if (UnicodeStringToView(attr.Name) == name) {
+      return &attr;
+    }
+  }
+
+  return nullptr;
 }
 
 }  // namespace
@@ -566,9 +594,9 @@ std::vector<AccessToken::Privilege> AccessToken::Privileges() const {
   TOKEN_PRIVILEGES* privileges_ptr = GetType<TOKEN_PRIVILEGES>(privileges);
   std::vector<AccessToken::Privilege> ret;
   ret.reserve(privileges_ptr->PrivilegeCount);
-  for (DWORD index = 0; index < privileges_ptr->PrivilegeCount; ++index) {
-    ret.emplace_back(ConvertLuid(privileges_ptr->Privileges[index].Luid),
-                     privileges_ptr->Privileges[index].Attributes);
+  for (const auto& privilege : GetArraySpan(privileges_ptr->Privileges,
+                                            privileges_ptr->PrivilegeCount)) {
+    ret.emplace_back(ConvertLuid(privilege.Luid), privilege.Attributes);
   }
   return ret;
 }
@@ -580,6 +608,15 @@ bool AccessToken::IsElevated() const {
     return false;
   }
   return !!value->TokenIsElevated;
+}
+
+bool AccessToken::IsSplitToken() const {
+  std::optional<TOKEN_ELEVATION_TYPE> value =
+      GetTokenInfoFixed<TOKEN_ELEVATION_TYPE>(token_.get(), TokenElevationType);
+  if (!value) {
+    return false;
+  }
+  return value != TokenElevationTypeDefault;
 }
 
 bool AccessToken::IsMember(const Sid& sid) const {
@@ -693,8 +730,7 @@ std::optional<AccessToken> AccessToken::CreateAppContainer(
   return FromToken(token_handle.get(), desired_access);
 }
 
-std::optional<bool> AccessToken::SetPrivilege(const std::wstring& name,
-                                              bool enable) {
+std::optional<bool> AccessToken::SetPrivilege(wcstring_view name, bool enable) {
   std::optional<DWORD> attrs =
       AdjustPrivilege(token_, name.c_str(), enable ? SE_PRIVILEGE_ENABLED : 0);
   if (!attrs) {
@@ -703,7 +739,7 @@ std::optional<bool> AccessToken::SetPrivilege(const std::wstring& name,
   return !!(*attrs & SE_PRIVILEGE_ENABLED);
 }
 
-bool AccessToken::RemovePrivilege(const std::wstring& name) {
+bool AccessToken::RemovePrivilege(wcstring_view name) {
   return AdjustPrivilege(token_, name.c_str(), SE_PRIVILEGE_REMOVED)
       .has_value();
 }
@@ -722,8 +758,8 @@ bool AccessToken::RemoveAllPrivileges() {
     return false;
   }
 
-  for (auto& privilege : span(&token_privileges->Privileges[0],
-                              token_privileges->PrivilegeCount)) {
+  for (auto& privilege : GetArraySpan(token_privileges->Privileges,
+                                      token_privileges->PrivilegeCount)) {
     privilege.Attributes = SE_PRIVILEGE_REMOVED;
   }
   return ::AdjustTokenPrivileges(
@@ -732,7 +768,9 @@ bool AccessToken::RemoveAllPrivileges() {
       /*PreviousState=*/nullptr, /*ReturnLength=*/nullptr);
 }
 
-bool AccessToken::AddSecurityAttribute(const std::wstring& name, bool inherit) {
+bool AccessToken::AddSecurityAttribute(std::wstring_view name,
+                                       bool inherit,
+                                       std::wstring_view value) {
   TOKEN_SECURITY_ATTRIBUTE_V1 attr = {};
 
   attr.Flags = TOKEN_SECURITY_ATTRIBUTE_MANDATORY;
@@ -740,11 +778,17 @@ bool AccessToken::AddSecurityAttribute(const std::wstring& name, bool inherit) {
     attr.Flags |= TOKEN_SECURITY_ATTRIBUTE_NON_INHERITABLE;
   }
 
-  ::RtlInitUnicodeString(&attr.Name, name.c_str());
-  LONG64 value = 0;
+  if (!ViewToUnicodeString(name, attr.Name)) {
+    return false;
+  }
+
+  UNICODE_STRING ustr_value = {};
+  if (!ViewToUnicodeString(value, ustr_value)) {
+    return false;
+  }
   attr.ValueCount = 1;
-  attr.ValueType = TOKEN_SECURITY_ATTRIBUTE_TYPE_INT64;
-  attr.pInt64 = &value;
+  attr.ValueType = TOKEN_SECURITY_ATTRIBUTE_TYPE_STRING;
+  attr.pString = &ustr_value;
 
   TOKEN_SECURITY_ATTRIBUTES_INFORMATION attrs = {};
   attrs.Version = TOKEN_SECURITY_ATTRIBUTES_INFORMATION_VERSION_V1;
@@ -759,6 +803,35 @@ bool AccessToken::AddSecurityAttribute(const std::wstring& name, bool inherit) {
   info.Operations = &op;
 
   return Set(token_, TokenSecurityAttributes, info);
+}
+
+std::optional<bool> AccessToken::HasSecurityAttribute(
+    std::wstring_view name) const {
+  std::optional<std::vector<char>> buffer =
+      GetTokenInfo(token_.get(), TokenSecurityAttributes);
+  const auto attr = FindSecurityAttribute(buffer, name);
+  if (!attr) {
+    return std::nullopt;
+  }
+  return *attr != nullptr;
+}
+
+std::optional<std::wstring> AccessToken::GetSecurityAttributeString(
+    std::wstring_view name) const {
+  std::optional<std::vector<char>> buffer =
+      GetTokenInfo(token_.get(), TokenSecurityAttributes);
+  auto attr = FindSecurityAttribute(buffer, name);
+  if (!attr) {
+    return std::nullopt;
+  }
+  const TOKEN_SECURITY_ATTRIBUTE_V1* attr_val = *attr;
+  if (attr_val == nullptr ||
+      attr_val->ValueType != TOKEN_SECURITY_ATTRIBUTE_TYPE_STRING ||
+      attr_val->ValueCount < 1) {
+    return std::nullopt;
+  }
+
+  return std::wstring(UnicodeStringToView(*attr_val->pString));
 }
 
 bool AccessToken::is_valid() const {

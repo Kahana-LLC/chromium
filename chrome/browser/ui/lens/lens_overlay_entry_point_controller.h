@@ -20,6 +20,10 @@
 class BrowserWindowInterface;
 class CommandUpdater;
 
+namespace optimization_guide {
+class OptimizationGuideDecider;
+}  // namespace optimization_guide
+
 namespace tabs {
 class TabInterface;
 }  // namespace tabs
@@ -58,8 +62,6 @@ class LensOverlayEntryPointController : public FullscreenObserver,
   // this current moment in time. Sometimes, entrypoints are hidden ephermally,
   // such as when the Lens Overlay is currently active, so entrypoints do
   // nothing.
-  // When the AIM Omnibox entrypoint is enabled, the Lens Overlay entrypoints
-  // should be hidden in order to mitigate non-deterministic Omnibox behavior.
   bool AreVisible() const;
 
   // Updates the enable/disable and visibility state of entry points. If
@@ -127,6 +129,11 @@ class LensOverlayEntryPointController : public FullscreenObserver,
 
   // URL matcher for entrypoints with EDU promos.
   std::unique_ptr<LensUrlMatcher> edu_url_matcher_;
+
+  // Optimization guide decider used for determining EDU action chip
+  // eligibility.
+  raw_ptr<optimization_guide::OptimizationGuideDecider>
+      optimization_guide_decider_{nullptr};
 };
 
 }  // namespace lens

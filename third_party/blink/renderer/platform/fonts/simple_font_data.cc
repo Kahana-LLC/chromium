@@ -32,12 +32,12 @@
 #include <unicode/utf16.h>
 
 #include <algorithm>
+#include <bit>
 #include <memory>
 #include <utility>
 
 #include "base/compiler_specific.h"
 #include "base/memory/ptr_util.h"
-#include "base/numerics/byte_conversions.h"
 #include "build/build_config.h"
 #include "skia/ext/font_utils.h"
 #include "third_party/blink/renderer/platform/font_family_names.h"
@@ -76,9 +76,7 @@ SimpleFontData::SimpleFontData(const FontPlatformData* platform_data,
                                bool subpixel_ascent_descent,
                                const FontMetricsOverride& metrics_override)
     : platform_data_(platform_data),
-      shape_cache_(RuntimeEnabledFeatures::LayoutNGShapeCacheEnabled()
-                       ? MakeGarbageCollected<NGShapeCache>(this)
-                       : nullptr),
+      shape_cache_(MakeGarbageCollected<NGShapeCache>(this)),
       font_(platform_data->size() ? platform_data->CreateSkFont()
                                   : skia::DefaultFont()),
       custom_font_data_(custom_data) {
@@ -171,7 +169,7 @@ void SimpleFontData::PlatformInit(bool subpixel_ascent_descent,
   if (metrics_override.line_gap_override) {
     line_gap = *metrics_override.line_gap_override * platform_data_->size();
   } else {
-    line_gap = SkScalarToFloat(metrics.fLeading);
+    line_gap = metrics.fLeading;
   }
   font_metrics_.SetLineGap(line_gap);
   font_metrics_.SetLineSpacing(lroundf(ascent) + lroundf(descent) +
@@ -203,7 +201,7 @@ void SimpleFontData::PlatformInit(bool subpixel_ascent_descent,
 
 #if !BUILDFLAG(IS_APPLE)
   if (metrics.fAvgCharWidth) {
-    avg_char_width_ = SkScalarToFloat(metrics.fAvgCharWidth);
+    avg_char_width_ = metrics.fAvgCharWidth;
   } else {
 #endif
     avg_char_width_ = x_height;
@@ -369,8 +367,7 @@ static std::pair<int16_t, int16_t> TypoAscenderAndDescender(
                                        sizeof(buffer), buffer);
   if (size == sizeof(buffer)) {
     // The buffer values are in big endian.
-    return std::make_pair(base::ByteSwap(buffer[0]),
-                          -base::ByteSwap(buffer[1]));
+    return std::make_pair(std::byteswap(buffer[0]), -std::byteswap(buffer[1]));
   }
   return std::make_pair(0, 0);
 }

@@ -24,7 +24,7 @@ class CORE_EXPORT CSSRelativeColorValue : public CSSValue {
                         const CSSValue& channel2,
                         const CSSValue* alpha);
 
-  WTF::String CustomCSSText() const;
+  String CustomCSSText() const;
 
   void TraceAfterDispatch(blink::Visitor* visitor) const;
 
@@ -38,6 +38,10 @@ class CORE_EXPORT CSSRelativeColorValue : public CSSValue {
 
   // Alpha will be nullptr if it was not specified.
   const CSSValue* Alpha() const;
+
+  const CSSValue* CopyRandomValueWithPropertyNameAndValueIndexIfNeeded(
+      const CSSPropertyName& property_name,
+      wtf_size_t& property_value_index) const;
 
  private:
   Member<const CSSValue> origin_color_;

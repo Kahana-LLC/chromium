@@ -4,6 +4,7 @@
 
 #import "ios/chrome/browser/intelligence/page_action_menu/coordinator/page_action_menu_coordinator.h"
 
+#import "ios/chrome/browser/content_settings/model/host_content_settings_map_factory.h"
 #import "ios/chrome/browser/dom_distiller/model/distiller_service_factory.h"
 #import "ios/chrome/browser/intelligence/bwg/model/bwg_service_factory.h"
 #import "ios/chrome/browser/intelligence/page_action_menu/coordinator/page_action_menu_mediator.h"
@@ -22,16 +23,12 @@
 #import "ios/chrome/browser/shared/model/web_state_list/web_state_list.h"
 #import "ios/chrome/browser/shared/public/commands/bwg_commands.h"
 #import "ios/chrome/browser/shared/public/commands/command_dispatcher.h"
+#import "ios/chrome/browser/shared/public/commands/contextual_sheet_commands.h"
 #import "ios/chrome/browser/shared/public/commands/lens_overlay_commands.h"
 #import "ios/chrome/browser/shared/public/commands/page_action_menu_commands.h"
 #import "ios/chrome/browser/shared/public/commands/reader_mode_commands.h"
 #import "ios/chrome/browser/shared/public/commands/reader_mode_options_commands.h"
-
-namespace {
-
-const CGFloat kMenuCornerRadius = 20;
-
-}
+#import "ios/chrome/browser/signin/model/authentication_service_factory.h"
 
 @interface PageActionMenuCoordinator () <
     PageActionMenuViewControllerDelegate,
@@ -51,6 +48,13 @@ const CGFloat kMenuCornerRadius = 20;
 #pragma mark - ChromeCoordinator
 
 - (void)start {
+  raw_ptr<BwgService> BWGService =
+      BwgServiceFactory::GetForProfile(self.profile);
+
+  // TODO(crbug.com/474126721): Understand if/when the PageActionMenu is started
+  // while BWGService is nullptr. Remove when investigation is complete.
+  CHECK(BWGService != nullptr, base::NotFatalUntil::M150);
+
   web::WebState* activeWebState =
       self.browser->GetWebStateList()->GetActiveWebState();
 
@@ -58,20 +62,32 @@ const CGFloat kMenuCornerRadius = 20;
 
   ReaderModeTabHelper* readerModeTabHelper =
       ReaderModeTabHelper::FromWebState(activeWebState);
+
+  HostContentSettingsMap* hostContentSettingsMap =
+      ios::HostContentSettingsMapFactory::GetForProfile(self.profile);
   _mediator = [[PageActionMenuMediator alloc]
-         initWithWebState:activeWebState
-       profilePrefService:self.profile->GetPrefs()
-       templateURLService:ios::TemplateURLServiceFactory::GetForProfile(
-                              self.profile)
-               BWGService:BwgServiceFactory::GetForProfile(self.profile)
-      readerModeTabHelper:readerModeTabHelper];
+            initWithWebState:activeWebState
+       authenticationService:AuthenticationServiceFactory::GetForProfile(
+                                 self.profile)
+          profilePrefService:self.profile->GetPrefs()
+          templateURLService:ios::TemplateURLServiceFactory::GetForProfile(
+                                 self.profile)
+                  BWGService:BWGService
+         readerModeTabHelper:readerModeTabHelper
+      hostContentSettingsMap:hostContentSettingsMap];
+
+  id<PageActionMenuCommands> pageActionMenuHandler = HandlerForProtocol(
+      self.browser->GetCommandDispatcher(), PageActionMenuCommands);
+  _mediator.pageActionMenuHandler = pageActionMenuHandler;
+  _mediator.consumer = _viewController;
+  _mediator.contextualSheetHandler = HandlerForProtocol(
+      self.browser->GetCommandDispatcher(), ContextualSheetCommands);
 
   if (readerModeTabHelper) {
     DistillerService* distillerService =
         DistillerServiceFactory::GetForProfile(self.profile);
     _readerModeOptionsMediator = [[ReaderModeOptionsMediator alloc]
-        initWithDistilledPagePrefs:distillerService->GetDistilledPagePrefs()
-                      webStateList:self.browser->GetWebStateList()];
+        initWithDistilledPagePrefs:distillerService->GetDistilledPagePrefs()];
   }
 
   _viewController.delegate = self;
@@ -79,12 +95,16 @@ const CGFloat kMenuCornerRadius = 20;
 
   _viewController.readerModeHandler = HandlerForProtocol(
       self.browser->GetCommandDispatcher(), ReaderModeCommands);
-  _viewController.pageActionMenuHandler = HandlerForProtocol(
-      self.browser->GetCommandDispatcher(), PageActionMenuCommands);
+  _viewController.pageActionMenuHandler = pageActionMenuHandler;
   _viewController.BWGHandler =
       HandlerForProtocol(self.browser->GetCommandDispatcher(), BWGCommands);
-  _viewController.lensOverlayHandler = HandlerForProtocol(
-      self.browser->GetCommandDispatcher(), LensOverlayCommands);
+
+  // If Lens is not available for the profile, then the handler has not been
+  // configured.
+  if ([_mediator isLensAvailableForProfile]) {
+    _viewController.lensOverlayHandler = HandlerForProtocol(
+        self.browser->GetCommandDispatcher(), LensOverlayCommands);
+  }
 
   _navigationController = [[UINavigationController alloc]
       initWithRootViewController:_viewController];
@@ -109,8 +129,6 @@ const CGFloat kMenuCornerRadius = 20;
   ];
   _navigationController.sheetPresentationController.selectedDetentIdentifier =
       kAIHubDetentIdentifier;
-  _navigationController.sheetPresentationController.preferredCornerRadius =
-      kMenuCornerRadius;
   _navigationController.sheetPresentationController
       .prefersEdgeAttachedInCompactHeight = YES;
   _navigationController.sheetPresentationController.prefersGrabberVisible = NO;
@@ -133,6 +151,7 @@ const CGFloat kMenuCornerRadius = 20;
                                                 completion:completion];
   }
   _viewController = nil;
+  [_mediator disconnect];
   _mediator = nil;
   _readerModeOptionsViewController = nil;
   [_readerModeOptionsMediator disconnect];
@@ -146,7 +165,7 @@ const CGFloat kMenuCornerRadius = 20;
     (PageActionMenuViewController*)viewController {
   _readerModeOptionsViewController =
       [[ReaderModeOptionsViewController alloc] init];
-  [_readerModeOptionsViewController updateHideReaderModeButtonVisibility:YES];
+  [_readerModeOptionsViewController updateHideReaderModeButtonVisibility:NO];
   _readerModeOptionsViewController.readerModeOptionsHandler =
       HandlerForProtocol(self.browser->GetCommandDispatcher(),
                          ReaderModeOptionsCommands);
@@ -155,6 +174,18 @@ const CGFloat kMenuCornerRadius = 20;
       _readerModeOptionsMediator;
   [_navigationController pushViewController:_readerModeOptionsViewController
                                    animated:YES];
+}
+
+- (void)viewControllerDidTapTranslateOptionsButton:
+    (PageActionMenuViewController*)viewController {
+  __weak __typeof(self) weakSelf = self;
+  [self.pageActionMenuHandler dismissPageActionMenuWithCompletion:^{
+    __strong __typeof(weakSelf) strongSelf = weakSelf;
+    if (!strongSelf) {
+      return;
+    }
+    [strongSelf->_mediator openTranslateOptions];
+  }];
 }
 
 #pragma mark - UIAdaptivePresentationControllerDelegate

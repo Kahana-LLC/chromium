@@ -17,13 +17,11 @@
 
 namespace gfx {
 class ColorSpace;
-class GpuMemoryBuffer;
 class Size;
 }  // namespace gfx
 
 namespace gpu {
 class ClientSharedImage;
-class GpuMemoryBufferManager;
 struct SharedImageCapabilities;
 class SharedImageInterface;
 struct SyncToken;
@@ -37,12 +35,12 @@ namespace media {
 
 class VideoFrame;
 
-// A video frame pool that returns GpuMemoryBuffer-backed VideoFrames. All
+// A video frame pool that returns MappableSharedImage-backed VideoFrames. All
 // access to this class must be on the thread on which it was created.
 class MEDIA_EXPORT RenderableGpuMemoryBufferVideoFramePool {
  public:
   // Interface to GPU functionality. This particular interface (as opposed to,
-  // say, exposing a GpuMemoryBufferManager and SharedImageInterface) is
+  // say, exposing a SharedImageInterface) is
   // chosen for testing.
   class Context {
    public:
@@ -77,8 +75,8 @@ class MEDIA_EXPORT RenderableGpuMemoryBufferVideoFramePool {
       VideoPixelFormat format = PIXEL_FORMAT_NV12,
       bool requires_cpu_access = true);
 
-  // Returns a GpuMemoryBuffer-backed VideoFrame that can be rendered to. This
-  // may return nullptr on an unsupported parameter, or may return nullptr
+  // Returns a MappableSharedImage-backed VideoFrame that can be rendered to.
+  // This may return nullptr on an unsupported parameter, or may return nullptr
   // forever in response to a context lost.
   virtual scoped_refptr<VideoFrame> MaybeCreateVideoFrame(
       const gfx::Size& coded_size,

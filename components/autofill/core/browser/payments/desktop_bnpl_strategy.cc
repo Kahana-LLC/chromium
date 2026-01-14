@@ -10,4 +10,31 @@ DesktopBnplStrategy::DesktopBnplStrategy() = default;
 
 DesktopBnplStrategy::~DesktopBnplStrategy() = default;
 
+BnplStrategy::SuggestionShownNextAction
+DesktopBnplStrategy::GetNextActionOnSuggestionShown() {
+  return SuggestionShownNextAction::
+      kNotifyUpdateCallbackOfSuggestionsShownResponse;
+}
+
+BnplStrategy::BnplSuggestionAcceptedNextAction
+DesktopBnplStrategy::GetNextActionOnBnplSuggestionAcceptance() {
+  return BnplSuggestionAcceptedNextAction::kShowSelectBnplIssuerUi;
+}
+
+BnplStrategy::BnplAmountExtractionReturnedNextAction
+DesktopBnplStrategy::GetNextActionOnAmountExtractionReturned() {
+  return BnplAmountExtractionReturnedNextAction::
+      kNotifyUpdateCallbackOfAmountExtractionReturnedResponse;
+}
+
+BnplStrategy::BeforeSwitchingViewAction
+DesktopBnplStrategy::GetBeforeViewSwitchAction() {
+  return BeforeSwitchingViewAction::kCloseCurrentUi;
+}
+
+bool DesktopBnplStrategy::ShouldRemoveExistingUiOnServerReturn(
+    PaymentsAutofillClient::PaymentsRpcResult result) {
+  return true;
+}
+
 }  // namespace autofill::payments

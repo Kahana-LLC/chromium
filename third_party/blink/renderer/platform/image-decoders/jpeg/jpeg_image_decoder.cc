@@ -214,7 +214,6 @@ class JPEGImageReader final {
         last_set_byte_(nullptr),
         state_(kJpegHeader),
         samples_(nullptr) {
-    UNSAFE_TODO(memset(&info_, 0, sizeof(jpeg_decompress_struct)));
 
     // Set up the normal JPEG error routines, then override error_exit.
     info_.err = jpeg_std_error(&err_.pub);
@@ -224,7 +223,6 @@ class JPEGImageReader final {
     jpeg_create_decompress(&info_);
 
     // Initialize source manager.
-    UNSAFE_TODO(memset(&src_, 0, sizeof(decoder_source_mgr)));
     info_.src = reinterpret_cast_ptr<jpeg_source_mgr*>(&src_);
 
     // Set up callback functions.
@@ -477,7 +475,7 @@ class JPEGImageReader final {
         if (!decoder_->IgnoresColorSpace()) {
           // Extract the ICC profile data without copying it (the function
           // ColorProfile::Create will make its own copy).
-          sk_sp<SkData> profile_data =
+          auto profile_data =
               metadata_decoder_->getICCProfileData(/*copyData=*/false);
           if (profile_data) {
             std::unique_ptr<ColorProfile> profile =
@@ -764,9 +762,9 @@ class JPEGImageReader final {
   // value, we know we've reached the next restart position.
   raw_ptr<const JOCTET> last_set_byte_;
 
-  jpeg_decompress_struct info_;
+  jpeg_decompress_struct info_ = {};
   decoder_error_mgr err_;
-  decoder_source_mgr src_;
+  decoder_source_mgr src_ = {};
   jpeg_progress_mgr progress_mgr_;
   jstate state_;
 
@@ -866,18 +864,18 @@ void JPEGImageDecoder::OnSetData(scoped_refptr<SegmentReader> data) {
   // multi-picture format, also known as CIPA DC-007). This is in contrast with
   // other decoders (e.g AVIF), which are aware of gainmap metadata.
   if (data && aux_image_ == cc::AuxImage::kGainmap) {
-    sk_sp<SkData> base_image_data = data->GetAsSkData();
+    auto base_image_data = data->GetAsSkData();
     DCHECK(base_image_data);
-    SkGainmapInfo gainmap_info;
-    sk_sp<SkData> gainmap_image_data;
     auto base_metadata_decoder = SkJpegMetadataDecoder::Make(base_image_data);
-    if (!base_metadata_decoder->findGainmapImage(
-            base_image_data, gainmap_image_data, gainmap_info)) {
+    if (auto [gainmap_image_data, _] =
+            base_metadata_decoder->findGainmapImage(base_image_data);
+        gainmap_image_data) {
+      data = SegmentReader::CreateFromSkData(std::move(gainmap_image_data));
+      data_ = data;
+    } else {
       SetFailed();
       return;
     }
-    data = SegmentReader::CreateFromSkData(std::move(gainmap_image_data));
-    data_ = data;
   }
 
   if (reader_) {
@@ -1009,17 +1007,16 @@ bool JPEGImageDecoder::GetGainmapInfoAndData(
   // TODO(crbug.com/356827770): This function will be removed once all decoders
   // rely on ImageDecoder::aux_image_ to decode the gainmap, instead of
   // extracting gainmap data.
-  sk_sp<SkData> base_image_data = data_->GetAsSkData();
+  auto base_image_data = data_->GetAsSkData();
   DCHECK(base_image_data);
-  sk_sp<SkData> gainmap_image_data;
-  SkGainmapInfo gainmap_info;
-  if (!metadata_decoder->findGainmapImage(base_image_data, gainmap_image_data,
-                                          gainmap_info)) {
-    return false;
+  if (auto [ok, gainmap_info] =
+          metadata_decoder->findGainmapImage(base_image_data);
+      ok) {
+    out_gainmap_info = gainmap_info;
+    out_gainmap_data = data_;
+    return true;
   }
-  out_gainmap_info = gainmap_info;
-  out_gainmap_data = data_;
-  return true;
+  return false;
 }
 
 bool JPEGImageDecoder::HasC2PAManifest() const {
@@ -1029,8 +1026,7 @@ bool JPEGImageDecoder::HasC2PAManifest() const {
   }
 
   // C2PA manifests are contained in APP11 blocks in JUMBF format
-  sk_sp<SkData> jumbf_data =
-      metadata_decoder->getJUMBFMetadata(/*copyData=*/false);
+  auto jumbf_data = metadata_decoder->getJUMBFMetadata(/*copyData=*/false);
   if (!jumbf_data) {
     return false;
   }

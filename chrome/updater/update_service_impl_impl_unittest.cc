@@ -59,8 +59,7 @@ TEST(UpdateServiceImplTest, TestToResult) {
 }
 
 TEST(UpdateServiceImplTest, TestGetComponentsInOrder) {
-  base::test::TaskEnvironment environment_{
-      base::test::TaskEnvironment::MainThreadType::UI};
+  base::test::TaskEnvironment environment_;
 
   base::ScopedTempDir temp_dir;
   ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
@@ -347,8 +346,9 @@ INSTANTIATE_TEST_SUITE_P(
          base::WideToUTF8(
              GetLocalizedString(IDS_ERROR_HTTPSTATUS_UNAUTHORIZED_BASE))},
         {UpdateService::ErrorCategory::kUpdateCheck, 401, "ar",
-         "‏تعذر الاتصال بالإنترنت. بروتوكول HTTP 401 محظور. يُرجى التحقق من "
-         "إعدادات الخادم الوكيل."},
+         base::WideToUTF8(
+             GetLocalizedString(IDS_ERROR_HTTPSTATUS_UNAUTHORIZED_BASE,
+                                L"ar"))},
         {UpdateService::ErrorCategory::kUpdateCheck, 403, "en",
          base::WideToUTF8(
              GetLocalizedString(IDS_ERROR_HTTPSTATUS_FORBIDDEN_BASE))},

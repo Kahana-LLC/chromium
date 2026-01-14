@@ -6,10 +6,14 @@ package org.chromium.components.omnibox;
 
 import android.text.TextUtils;
 
+import org.chromium.build.BuildConfig;
 import org.chromium.build.annotations.Initializer;
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.components.metrics.OmniboxEventProtos.OmniboxEventProto.PageClassification;
+import org.chromium.components.omnibox.AimToolsAndModelsProto.ChromeAimToolsAndModels;
 import org.chromium.url.GURL;
+
+import java.util.Locale;
 
 /** AutocompleteInput encompasses the input to autocomplete. */
 @NullMarked
@@ -19,6 +23,8 @@ public class AutocompleteInput {
     private String mPageTitle;
     private String mUserText;
     private boolean mAllowExactKeywordMatch;
+    private boolean mHasAttachments;
+    private @AutocompleteRequestType int mRequestType;
 
     public AutocompleteInput() {
         reset();
@@ -35,9 +41,38 @@ public class AutocompleteInput {
         return this;
     }
 
+    private int getComposeboxEquivalentOfPageClassification() {
+        return switch (mPageClassification) {
+            // LINT.IfChange(FuseboxSupportedPageClassifications)
+            case PageClassification.INSTANT_NTP_WITH_OMNIBOX_AS_STARTING_FOCUS_VALUE ->
+                    PageClassification.NTP_COMPOSEBOX_VALUE;
+            case PageClassification.SEARCH_RESULT_PAGE_NO_SEARCH_TERM_REPLACEMENT_VALUE ->
+                    PageClassification.SRP_OMNIBOX_COMPOSEBOX_VALUE;
+            case PageClassification.OTHER_VALUE ->
+                    PageClassification.OTHER_OMNIBOX_COMPOSEBOX_VALUE;
+            // LINT.ThenChange(/chrome/browser/ui/android/omnibox/java/src/org/chromium/chrome/browser/omnibox/fusebox/FuseboxCoordinator.java:FuseboxSupportedPageClassifications)
+            default -> {
+                // TODO(crbug.com/474808407): address the issue with top resumed activity change and
+                // remove condition, making assertion live again.
+                if (BuildConfig.ENABLE_DEBUG_LOGS) {
+                    assert false
+                            : String.format(
+                                    Locale.ROOT,
+                                    "Unrecognized page classification: %d",
+                                    mPageClassification);
+                }
+                yield PageClassification.OTHER_OMNIBOX_COMPOSEBOX_VALUE;
+            }
+        };
+    }
+
     /** Returns the current page classification. */
     public int getPageClassification() {
-        return mPageClassification;
+        return switch (mRequestType) {
+            case AutocompleteRequestType.AI_MODE, AutocompleteRequestType.IMAGE_GENERATION ->
+                    getComposeboxEquivalentOfPageClassification();
+            default -> mPageClassification;
+        };
     }
 
     /**
@@ -70,6 +105,27 @@ public class AutocompleteInput {
     /** Returns the current page title. */
     public String getPageTitle() {
         return mPageTitle;
+    }
+
+    /** Set the AutocompleteRequestType */
+    public void setRequestType(@AutocompleteRequestType int type) {
+        mRequestType = type;
+    }
+
+    /** Returns the AutocompleteRequestType value. */
+    public @AutocompleteRequestType int getRequestType() {
+        return mRequestType;
+    }
+
+    /** Returns the Autocomplete Tool to use to fulfill the Request. */
+    public /* ChromeAimToolsAndModels */ int getToolMode() {
+        return switch (mRequestType) {
+            case AutocompleteRequestType.IMAGE_GENERATION ->
+                    mHasAttachments
+                            ? ChromeAimToolsAndModels.TOOL_MODE_IMAGE_GEN_UPLOAD_VALUE
+                            : ChromeAimToolsAndModels.TOOL_MODE_IMAGE_GEN_VALUE;
+            default -> ChromeAimToolsAndModels.TOOL_MODE_UNSPECIFIED_VALUE;
+        };
     }
 
     /**
@@ -130,6 +186,10 @@ public class AutocompleteInput {
         }
     }
 
+    public void setHasAttachments(boolean hasAttachments) {
+        mHasAttachments = hasAttachments;
+    }
+
     /**
      * Resets the AutocompleteInput to its default state.
      *
@@ -141,6 +201,7 @@ public class AutocompleteInput {
         mAllowExactKeywordMatch = false;
         mPageUrl = GURL.emptyGURL();
         mPageTitle = "";
+        mHasAttachments = false;
         mPageClassification = PageClassification.BLANK_VALUE;
 
         return this;

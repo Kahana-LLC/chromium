@@ -20,7 +20,8 @@ SidePanelEntry::SidePanelEntry(
     base::RepeatingCallback<std::unique_ptr<ui::MenuModel>()>
         more_info_callback,
     base::RepeatingCallback<int()> default_content_width_callback)
-    : key_(key),
+    : type_(PanelType::kContent),
+      key_(key),
       create_content_callback_(std::move(create_content_callback)),
       open_in_new_tab_url_callback_(std::move(open_in_new_tab_url_callback)),
       more_info_callback_(std::move(more_info_callback)),
@@ -29,13 +30,26 @@ SidePanelEntry::SidePanelEntry(
 }
 
 SidePanelEntry::SidePanelEntry(
+    PanelType type,
     Key key,
     CreateContentCallback create_content_callback,
     base::RepeatingCallback<int()> default_content_width_callback)
-    : SidePanelEntry(key,
+    : type_(type),
+      key_(key),
+      create_content_callback_(std::move(create_content_callback)),
+      open_in_new_tab_url_callback_(base::NullCallback()),
+      more_info_callback_(base::NullCallback()),
+      default_content_width_callback_(default_content_width_callback) {
+  DCHECK(create_content_callback_);
+}
+
+SidePanelEntry::SidePanelEntry(
+    Key key,
+    CreateContentCallback create_content_callback,
+    base::RepeatingCallback<int()> default_content_width_callback)
+    : SidePanelEntry(PanelType::kContent,
+                     key,
                      std::move(create_content_callback),
-                     base::NullCallback(),
-                     base::NullCallback(),
                      default_content_width_callback) {}
 
 SidePanelEntry::~SidePanelEntry() = default;
@@ -59,7 +73,7 @@ void SidePanelEntry::ClearCachedView() {
 
 void SidePanelEntry::OnEntryShown() {
   entry_shown_timestamp_ = base::TimeTicks::Now();
-  SidePanelUtil::RecordEntryShownMetrics(key_.id(),
+  SidePanelUtil::RecordEntryShownMetrics(type(), key_.id(),
                                          entry_show_triggered_timestamp_);
   // After the initial load time is recorded, we need to reset the triggered
   // timestamp so we don't keep recording this entry after its selected from the
@@ -72,8 +86,13 @@ void SidePanelEntry::OnEntryWillHide(SidePanelEntryHideReason reason) {
   observers_.Notify(&SidePanelEntryObserver::OnEntryWillHide, this, reason);
 }
 
+void SidePanelEntry::OnEntryHideCancelled() {
+  observers_.Notify(&SidePanelEntryObserver::OnEntryHideCancelled, this);
+}
+
 void SidePanelEntry::OnEntryHidden() {
-  SidePanelUtil::RecordEntryHiddenMetrics(key_.id(), entry_shown_timestamp_);
+  SidePanelUtil::RecordEntryHiddenMetrics(type(), key_.id(),
+                                          entry_shown_timestamp_);
   observers_.Notify(&SidePanelEntryObserver::OnEntryHidden, this);
 }
 

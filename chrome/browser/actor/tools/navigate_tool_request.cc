@@ -4,6 +4,8 @@
 
 #include "chrome/browser/actor/tools/navigate_tool_request.h"
 
+#include <optional>
+
 #include "chrome/browser/actor/tools/navigate_tool.h"
 #include "chrome/browser/actor/tools/tool_request_visitor_functor.h"
 #include "chrome/common/actor.mojom.h"
@@ -25,6 +27,7 @@ ToolRequest::CreateToolResult NavigateToolRequest::CreateTool(
   TabInterface* tab = GetTabHandle().Get();
   if (!tab) {
     return {/*tool=*/nullptr, MakeResult(mojom::ActionResultCode::kTabWentAway,
+                                         /*requires_page_stabilization=*/false,
                                          "The tab is no longer present.")};
   }
 
@@ -32,12 +35,21 @@ ToolRequest::CreateToolResult NavigateToolRequest::CreateTool(
           MakeOkResult()};
 }
 
+bool NavigateToolRequest::RequiresUrlCheckInCurrentTab() const {
+  // A navigate tool is tab scoped but navigates *away* from the current URL.
+  return false;
+}
+
 void NavigateToolRequest::Apply(ToolRequestVisitorFunctor& f) const {
   f.Apply(*this);
 }
 
-std::string NavigateToolRequest::JournalEvent() const {
-  return "Navigate";
+std::string_view NavigateToolRequest::Name() const {
+  return kName;
+}
+
+std::optional<url::Origin> NavigateToolRequest::AssociatedOriginGrant() const {
+  return url::Origin::Create(url_);
 }
 
 }  // namespace actor

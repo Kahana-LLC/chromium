@@ -134,16 +134,12 @@ class CORE_EXPORT LayoutBlock : public LayoutBox {
 
   const char* GetName() const override;
 
- protected:
+ private:
   // Insert a child correctly into the tree when |before_descendant| isn't a
   // direct child of |this|. This happens e.g. when there's an anonymous block
   // child of |this| and |before_descendant| has been reparented into that one.
   // Such things are invisible to the DOM, and addChild() is typically called
   // with the DOM tree (and not the layout tree) in mind.
-  void AddChildBeforeDescendantDeprecated(LayoutObject* new_child,
-                                          LayoutObject* before_descendant);
-
- private:
   void AddChildBeforeDescendant(LayoutObject* new_child,
                                 LayoutObject* before_descendant);
 
@@ -171,7 +167,6 @@ class CORE_EXPORT LayoutBlock : public LayoutBox {
   LayoutBox* CreateAnonymousBoxWithSameTypeAs(
       const LayoutObject* parent) const override;
 
- public:
   RecalcScrollableOverflowResult RecalcScrollableOverflow() override;
 
   void RecalcVisualOverflow() override;
@@ -213,14 +208,12 @@ class CORE_EXPORT LayoutBlock : public LayoutBox {
                    HitTestPhase) override;
 
  protected:
-  bool HitTestChildren(HitTestResult&,
-                       const HitTestLocation&,
-                       const PhysicalOffset& accumulated_offset,
-                       HitTestPhase) override;
-
   void StyleWillChange(StyleDifference,
-                       const ComputedStyle& new_style) override;
-  void StyleDidChange(StyleDifference, const ComputedStyle* old_style) override;
+                       const ComputedStyle& new_style,
+                       StyleChangeContext&) override;
+  void StyleDidChange(StyleDifference,
+                      const ComputedStyle* old_style,
+                      const StyleChangeContext&) override;
   bool RespectsCSSOverflow() const override;
 
  protected:

@@ -19,9 +19,8 @@
 #include "chrome/browser/extensions/extension_apitest.h"
 #include "chrome/browser/extensions/test_extension_action_dispatcher_observer.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/ui/extensions/extensions_container.h"
 #include "chrome/browser/ui/tabs/tab_enums.h"
-#include "chrome/browser/ui/toolbar/toolbar_action_view_controller.h"
+#include "chrome/browser/ui/toolbar/toolbar_action_view_model.h"
 #include "chrome/browser/ui/toolbar/toolbar_actions_model.h"
 #include "components/sessions/content/session_tab_helper.h"
 #include "components/version_info/channel.h"
@@ -57,6 +56,7 @@
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/extensions/extension_action_test_helper.h"
+#include "chrome/browser/ui/extensions/extensions_container.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #endif
 
@@ -212,7 +212,6 @@ class ActionTestHelper {
   const raw_ptr<content::WebContents> web_contents_;
 };
 
-#if BUILDFLAG(ENABLE_EXTENSIONS)
 // Forces a flush of the StateStore, where action state is persisted.
 void FlushStateStore(Profile* profile) {
   base::RunLoop run_loop;
@@ -220,7 +219,6 @@ void FlushStateStore(Profile* profile) {
       run_loop.QuitWhenIdleClosure());
   run_loop.Run();
 }
-#endif  // BUILDFLAG(ENABLE_EXTENSIONS)
 
 }  // namespace
 
@@ -275,7 +273,7 @@ class MultiActionAPITest
   }
 
   // Returns the id of the currently-active tab.
-  int GetActiveTabId() const {
+  int GetActiveTabId() {
     content::WebContents* web_contents = GetActiveWebContents();
     return sessions::SessionTabHelper::IdForTab(web_contents).id();
   }
@@ -577,6 +575,63 @@ IN_PROC_BROWSER_TEST_P(MultiActionAPITest, PopupCreation) {
   EXPECT_EQ(0u, frames.size());
 }
 
+// Tests that setting the popup to an empty string clears it (so no popup is
+// shown), even if a default popup is specified in the manifest.
+IN_PROC_BROWSER_TEST_P(MultiActionAPITest, SetPopupToEmptyString) {
+  constexpr char kManifestTemplate[] =
+      R"({
+           "name": "Test Set Popup to Empty",
+           "manifest_version": %d,
+           "version": "0.1",
+           "%s": {
+             "default_popup": "default_popup.html"
+           }
+         })";
+  constexpr char kPageJs[] = "// Intentionally blank.";
+  constexpr char kPopupHtml[] =
+      "<!doctype html><html><body>Blank</body></html>";
+
+  TestExtensionDir test_dir;
+  test_dir.WriteManifest(base::StringPrintf(
+      kManifestTemplate, GetManifestVersionForActionType(GetParam()),
+      ActionInfo::GetManifestKeyForActionType(GetParam())));
+  test_dir.WriteFile(FILE_PATH_LITERAL("page.html"), kPageHtmlTemplate);
+  test_dir.WriteFile(FILE_PATH_LITERAL("page.js"), kPageJs);
+  test_dir.WriteFile(FILE_PATH_LITERAL("default_popup.html"), kPopupHtml);
+
+  const Extension* extension = LoadExtension(test_dir.UnpackedPath());
+  ASSERT_TRUE(extension);
+
+  ExtensionAction* action = GetExtensionAction(*extension);
+  ASSERT_TRUE(action);
+
+  ASSERT_TRUE(NavigateToURLInNewTab(extension->GetResourceURL("page.html")));
+  content::WebContents* web_contents = GetActiveWebContents();
+  ASSERT_TRUE(content::WaitForLoadStop(web_contents));
+
+  int tab_id = GetActiveTabId();
+
+  // Initially, it should have the default popup.
+  EXPECT_EQ(extension->GetResourceURL("default_popup.html"),
+            action->GetPopupUrl(tab_id));
+  EXPECT_TRUE(action->HasPopup(tab_id));
+
+  // Set the popup to an empty string.
+  constexpr char kSetPopupEmptyScript[] =
+      R"(chrome.%s.setPopup({tabId: %d, popup: ''}, () => {
+           chrome.test.assertNoLastError();
+           chrome.test.notifyPass();
+         });)";
+  RunTestAndWaitForSuccess(
+      web_contents,
+      base::StringPrintf(kSetPopupEmptyScript,
+                         GetAPINameForActionType(GetParam()), tab_id));
+
+  // Now, it should have no popup.
+  EXPECT_EQ(GURL(), action->GetPopupUrl(tab_id));
+  EXPECT_FALSE(action->HasPopup(tab_id));
+}
+
 // Tests that sessionStorage does not persist between closing and opening of a
 // popup.
 // TODO(crbug.com/419057482): Enable on Android when we have a cross-platform
@@ -630,9 +685,9 @@ IN_PROC_BROWSER_TEST_P(MultiActionAPITest,
   ExtensionsContainer* extensions_container =
       browser()->window()->GetExtensionsContainer();
   ASSERT_TRUE(extensions_container);
-  ToolbarActionViewController* action_controller =
+  ToolbarActionViewModel* model =
       extensions_container->GetActionForId(extension->id());
-  ASSERT_TRUE(action_controller);
+  ASSERT_TRUE(model);
 
   ExtensionAction* action = GetExtensionAction(*extension);
   ASSERT_TRUE(action);
@@ -642,8 +697,8 @@ IN_PROC_BROWSER_TEST_P(MultiActionAPITest,
   EXPECT_TRUE(action->HasPopup(tab_id));
 
   ResultCatcher result_catcher;
-  action_controller->ExecuteUserAction(
-      ToolbarActionViewController::InvocationSource::kToolbarButton);
+  model->ExecuteUserAction(
+      ToolbarActionViewModel::InvocationSource::kToolbarButton);
   EXPECT_TRUE(result_catcher.GetNextResult()) << result_catcher.message();
 
   ProcessManager* process_manager = ProcessManager::Get(profile());
@@ -670,8 +725,8 @@ IN_PROC_BROWSER_TEST_P(MultiActionAPITest,
   EXPECT_EQ(0u, frames.size());
 
   // Open the popup again.
-  action_controller->ExecuteUserAction(
-      ToolbarActionViewController::InvocationSource::kToolbarButton);
+  model->ExecuteUserAction(
+      ToolbarActionViewModel::InvocationSource::kToolbarButton);
   EXPECT_TRUE(result_catcher.GetNextResult()) << result_catcher.message();
 
   frames = process_manager->GetRenderFrameHostsForExtension(extension->id());
@@ -691,11 +746,9 @@ IN_PROC_BROWSER_TEST_P(MultiActionAPITest,
 
 using ActionAndBrowserActionAPITest = MultiActionAPITest;
 
-#if BUILDFLAG(ENABLE_EXTENSIONS)
 // Tests whether action values persist across sessions.
 // Note: Since pageActions are only applicable on a specific tab, this test
 // doesn't apply to them.
-// TODO(crbug.com/40200835): Enable on Android when PRE_ steps are supported.
 IN_PROC_BROWSER_TEST_P(ActionAndBrowserActionAPITest, PRE_ValuesArePersisted) {
   const char* dir_name = nullptr;
   switch (GetParam()) {
@@ -734,7 +787,7 @@ IN_PROC_BROWSER_TEST_P(ActionAndBrowserActionAPITest, PRE_ValuesArePersisted) {
 
 IN_PROC_BROWSER_TEST_P(ActionAndBrowserActionAPITest, ValuesArePersisted) {
   const Extension* extension = GetSingleLoadedExtension();
-  ASSERT_TRUE(extension);
+  ASSERT_TRUE(extension) << message_;
   EXPECT_EQ("Action persistence check", extension->name());
 
   // The previous action states are read from the state store on start-up.
@@ -762,6 +815,7 @@ IN_PROC_BROWSER_TEST_P(ActionAndBrowserActionAPITest, ValuesArePersisted) {
   EXPECT_EQ("default title", action->GetTitle(ExtensionAction::kDefaultTabId));
 }
 
+#if BUILDFLAG(ENABLE_EXTENSIONS)
 // Canvas tests rely on the harness producing pixel output in order to read back
 // pixels from a canvas element. So we have to override the setup function.
 class MultiActionAPICanvasTest : public MultiActionAPITest {
@@ -1590,8 +1644,6 @@ IN_PROC_BROWSER_TEST_F(ExtensionActionAPITest, IsEnabled) {
 }
 
 // Tests that isEnabled correctly ignores declarativeContent rules for enable.
-// TODO(crbug.com/417786079): Enable this test on desktop Android when the
-// declarativeContent API is ported.
 IN_PROC_BROWSER_TEST_F(ExtensionActionAPITest, IsEnabledIgnoreDeclarative) {
   constexpr char kManifestTemplate[] =
       R"({

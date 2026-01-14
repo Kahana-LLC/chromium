@@ -177,26 +177,6 @@ public interface SiteSettingsDelegate {
      */
     boolean isPartOfManagedRelatedWebsiteSet(String origin);
 
-    /**
-     * @return true if the Tracking Protection UI should be displayed.
-     */
-    boolean shouldShowTrackingProtectionUi();
-
-    /**
-     * @return whether all 3pcs should be blocked in incognito.
-     */
-    boolean isAlwaysBlock3pcsIncognitoEnabled();
-
-    /**
-     * @return true if all third-party cookies are blocked when Tracking Protection is on.
-     */
-    boolean isBlockAll3pcEnabledInTrackingProtection();
-
-    /**
-     * @return true if wildcards should be shown in content settings patterns.
-     */
-    boolean isDisplayWildcardInContentSettingsEnabled();
-
     /** Enables/disables Related Website Sets data access. */
     void setRelatedWebsiteSetsDataAccessEnabled(boolean enabled);
 
@@ -231,11 +211,6 @@ public interface SiteSettingsDelegate {
     void getBrowsingDataModel(Callback<BrowsingDataModel> callback);
 
     /**
-     * @return whether the Safety Hub is enabled.
-     */
-    boolean isSafetyHubEnabled();
-
-    /**
      * @return whether the unused site permission autorevocation is enabled.
      */
     boolean isPermissionAutorevocationEnabled();
@@ -244,6 +219,11 @@ public interface SiteSettingsDelegate {
      * @return whether the related website sets UI is enabled.
      */
     boolean isRelatedWebsiteSetsUiEnabled();
+
+    /**
+     * @return whether the settings containment feature is enabled.
+     */
+    boolean isSettingsContainmentEnabled();
 
     /** Enable/Disable unused site permission autorevocation. */
     void setPermissionAutorevocationEnabled(boolean isEnabled);

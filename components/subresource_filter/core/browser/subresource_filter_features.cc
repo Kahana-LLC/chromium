@@ -12,7 +12,6 @@
 #include <tuple>
 #include <utility>
 
-#include "base/containers/contains.h"
 #include "base/metrics/field_trial_params.h"
 #include "base/no_destructor.h"
 #include "base/rand_util.h"
@@ -248,13 +247,9 @@ BASE_FEATURE(kSafeBrowsingSubresourceFilter,
              "SubresourceFilter",
              base::FEATURE_ENABLED_BY_DEFAULT);
 
-BASE_FEATURE(kFilterAdsOnAbusiveSites,
-             "FilterAdsOnAbusiveSites",
-             base::FEATURE_ENABLED_BY_DEFAULT);
+BASE_FEATURE(kFilterAdsOnAbusiveSites, base::FEATURE_ENABLED_BY_DEFAULT);
 
-BASE_FEATURE(kAdsInterventionsEnforced,
-             "AdsInterventionsEnforced",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+BASE_FEATURE(kAdsInterventionsEnforced, base::FEATURE_DISABLED_BY_DEFAULT);
 
 const base::FeatureParam<base::TimeDelta> kAdsInterventionDuration = {
     &kAdsInterventionsEnforced, "kAdsInterventionDuration", base::Days(3)};
@@ -381,9 +376,11 @@ void Configuration::AddToValue(base::trace_event::TracedValue* value) const {
 }
 
 mojom::ActivationState Configuration::GetActivationState(
-    mojom::ActivationLevel effective_activation_level) const {
+    mojom::ActivationLevel effective_activation_level,
+    mojom::SubresourceFilterDisabledReason disabled_reason) const {
   mojom::ActivationState state;
   state.activation_level = effective_activation_level;
+  state.disabled_reason = disabled_reason;
 
   double measurement_rate = activation_options.performance_measurement_rate;
   state.measure_performance =
@@ -425,7 +422,7 @@ scoped_refptr<ConfigurationList> GetEnabledConfigurations() {
 }
 
 bool HasEnabledConfiguration(const Configuration& config) {
-  return base::Contains(
+  return std::ranges::contains(
       GetEnabledConfigurations()->configs_by_decreasing_priority(), config);
 }
 

@@ -20,6 +20,7 @@
 #include "third_party/blink/renderer/platform/graphics/graphics_context.h"
 #include "third_party/blink/renderer/platform/graphics/static_bitmap_image.h"
 #include "third_party/blink/renderer/platform/graphics/unaccelerated_static_bitmap_image.h"
+#include "third_party/skia/include/core/SkBitmap.h"
 #include "third_party/skia/include/core/SkImage.h"
 #include "third_party/skia/include/core/SkSurface.h"
 
@@ -53,15 +54,26 @@ void ImageBitmapRenderingContext::Reset() {
   Host()->DiscardResources();
 }
 
+base::ByteSize ImageBitmapRenderingContext::AllocatedBufferSize() const {
+  if (!IsPaintable()) {
+    return base::ByteSize();
+  }
+  base::ByteSize result =
+      image_layer_bridge_->GetImage()->EstimatedSizeInBytes();
+  if (resource_provider_for_offscreen_canvas_) {
+    result += resource_provider_for_offscreen_canvas_->EstimatedSizeInBytes();
+  }
+  return result;
+}
+
 void ImageBitmapRenderingContext::Stop() {
   image_layer_bridge_->Dispose();
 }
 
 scoped_refptr<StaticBitmapImage>
 ImageBitmapRenderingContext::PaintRenderingResultsToSnapshot(
-    SourceDrawingBuffer source_buffer,
-    FlushReason reason) {
-  return GetImage(reason);
+    SourceDrawingBuffer source_buffer) {
+  return GetImage();
 }
 
 void ImageBitmapRenderingContext::Dispose() {
@@ -100,10 +112,10 @@ void ImageBitmapRenderingContext::SetImage(ImageBitmap* image_bitmap) {
   if (image_bitmap) {
     image_bitmap->close();
   }
+  Host()->UpdateMemoryUsage();
 }
 
-scoped_refptr<StaticBitmapImage> ImageBitmapRenderingContext::GetImage(
-    FlushReason) {
+scoped_refptr<StaticBitmapImage> ImageBitmapRenderingContext::GetImage() {
   return image_layer_bridge_->GetImage();
 }
 
@@ -139,14 +151,14 @@ void ImageBitmapRenderingContext::Trace(Visitor* visitor) const {
   CanvasRenderingContext::Trace(visitor);
 }
 
-CanvasResourceProvider*
+CanvasResourceProviderSharedImage*
 ImageBitmapRenderingContext::GetOrCreateResourceProviderForOffscreenCanvas() {
   CHECK(Host()->IsOffscreenCanvas());
   if (isContextLost() && !IsContextBeingRestored()) {
     return nullptr;
   }
 
-  if (CanvasResourceProvider* provider =
+  if (CanvasResourceProviderSharedImage* provider =
           resource_provider_for_offscreen_canvas_.get()) {
     if (!provider->IsValid()) {
       // The canvas context is not lost but the provider is invalid. This
@@ -169,7 +181,7 @@ ImageBitmapRenderingContext::GetOrCreateResourceProviderForOffscreenCanvas() {
     return nullptr;
   }
 
-  std::unique_ptr<CanvasResourceProvider> provider;
+  std::unique_ptr<CanvasResourceProviderSharedImage> provider;
   gfx::Size surface_size(Host()->width(), Host()->height());
   const SkAlphaType alpha_type = GetAlphaType();
   const viz::SharedImageFormat format = GetSharedImageFormat();
@@ -227,7 +239,7 @@ bool ImageBitmapRenderingContext::PushFrame() {
       &paint_flags);
   scoped_refptr<CanvasResource> resource =
       resource_provider_for_offscreen_canvas_->ProduceCanvasResource(
-          FlushReason::kNon2DCanvas);
+          FlushReason::kOther);
   Host()->PushFrame(
       std::move(resource),
       SkIRect::MakeWH(image_layer_bridge_->GetImage()->Size().width(),
@@ -273,6 +285,7 @@ ImageBitmap* ImageBitmapRenderingContext::TransferToImageBitmap(
 }
 
 CanvasRenderingContext* ImageBitmapRenderingContext::Factory::Create(
+    ExecutionContext*,
     CanvasRenderingContextHost* host,
     const CanvasContextCreationAttributesCore& attrs) {
   CanvasRenderingContext* rendering_context =

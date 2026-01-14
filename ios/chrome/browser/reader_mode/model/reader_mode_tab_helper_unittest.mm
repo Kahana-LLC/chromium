@@ -6,16 +6,32 @@
 
 #import "base/scoped_observation.h"
 #import "base/test/metrics/histogram_tester.h"
+#import "base/test/scoped_feature_list.h"
+#import "components/infobars/core/infobar.h"
+#import "components/infobars/core/infobar_delegate.h"
+#import "components/infobars/core/infobar_manager.h"
+#import "components/optimization_guide/proto/hints.pb.h"
 #import "components/ukm/ios/ukm_url_recorder.h"
 #import "components/ukm/test_ukm_recorder.h"
-#import "ios/chrome/browser/browser_container/model/edit_menu_tab_helper.h"
+#import "ios/chrome/browser/browser_content/model/edit_menu_tab_helper.h"
+#import "ios/chrome/browser/dom_distiller/model/distiller_service_factory.h"
+#import "ios/chrome/browser/infobars/model/infobar_manager_impl.h"
+#import "ios/chrome/browser/infobars/model/overlays/fake_infobar_overlay_request_factory.h"
+#import "ios/chrome/browser/infobars/model/overlays/infobar_overlay_request_inserter.h"
+#import "ios/chrome/browser/intelligence/features/features.h"
+#import "ios/chrome/browser/optimization_guide/model/optimization_guide_service.h"
+#import "ios/chrome/browser/optimization_guide/model/optimization_guide_service_factory.h"
+#import "ios/chrome/browser/overlays/model/public/overlay_request_queue.h"
 #import "ios/chrome/browser/reader_mode/model/constants.h"
 #import "ios/chrome/browser/reader_mode/model/features.h"
 #import "ios/chrome/browser/reader_mode/model/reader_mode_test.h"
 #import "ios/chrome/browser/shared/model/profile/test/test_profile_ios.h"
+#import "ios/chrome/browser/snapshots/model/snapshot_source_tab_helper.h"
 #import "ios/chrome/browser/web/model/web_view_proxy/web_view_proxy_tab_helper.h"
 #import "ios/chrome/browser/web_selection/model/web_selection_tab_helper.h"
+#import "ios/chrome/test/ios_chrome_scoped_testing_local_state.h"
 #import "ios/web/public/test/fakes/fake_navigation_context.h"
+#import "ios/web/public/test/fakes/fake_navigation_manager.h"
 #import "ios/web/public/test/fakes/fake_web_state.h"
 #import "ios/web/public/test/web_task_environment.h"
 #import "services/metrics/public/cpp/ukm_builders.h"
@@ -29,6 +45,7 @@ using IOS_ReaderMode_Heuristic_Result =
     ukm::builders::IOS_ReaderMode_Heuristic_Result;
 using base::Bucket;
 using base::BucketsAre;
+using testing::_;
 
 // Mock implementation of ReaderModeTabHelper::Observer using gMock.
 class MockReaderModeTabHelperObserver : public ReaderModeTabHelper::Observer {
@@ -38,11 +55,12 @@ class MockReaderModeTabHelperObserver : public ReaderModeTabHelper::Observer {
 
   MOCK_METHOD(void,
               ReaderModeWebStateDidLoadContent,
-              (ReaderModeTabHelper * tab_helper),
+              (ReaderModeTabHelper * tab_helper, web::WebState* web_state),
               (override));
   MOCK_METHOD(void,
               ReaderModeWebStateWillBecomeUnavailable,
               (ReaderModeTabHelper * tab_helper,
+               web::WebState* web_state,
                ReaderModeDeactivationReason reason),
               (override));
   MOCK_METHOD(void,
@@ -51,7 +69,7 @@ class MockReaderModeTabHelperObserver : public ReaderModeTabHelper::Observer {
               (override));
   MOCK_METHOD(void,
               ReaderModeTabHelperDestroyed,
-              (ReaderModeTabHelper * tab_helper),
+              (ReaderModeTabHelper * tab_helper, web::WebState* web_state),
               (override));
 };
 
@@ -65,7 +83,10 @@ class ReaderModeTabHelperTest : public ReaderModeTest {
     ukm::InitializeSourceUrlRecorderForWebState(web_state());
   }
 
-  void TearDown() override { test_ukm_recorder_.Purge(); }
+  void TearDown() override {
+    test_ukm_recorder_.Purge();
+    ReaderModeTest::TearDown();
+  }
 
   ReaderModeTabHelper* reader_mode_tab_helper() {
     return ReaderModeTabHelper::FromWebState(web_state());
@@ -95,7 +116,6 @@ class ReaderModeTabHelperTest : public ReaderModeTest {
 
  protected:
   std::unique_ptr<web::FakeWebState> web_state_;
-
   base::HistogramTester histogram_tester_;
   ukm::TestAutoSetUkmRecorder test_ukm_recorder_;
 };
@@ -147,6 +167,8 @@ TEST_F(ReaderModeTabHelperTest, TriggerHeuristicFlushedOnNewNavigation) {
   LoadWebpage(web_state(), test_url);
   WaitForPageLoadDelayAndRunUntilIdle();
 
+  SetReaderModeState(web_state(), test_url,
+                     ReaderModeHeuristicResult::kReaderModeEligible, "");
   LoadWebpage(web_state(), test_url);
   WaitForPageLoadDelayAndRunUntilIdle();
 
@@ -303,6 +325,57 @@ TEST_F(ReaderModeTabHelperTest, ReaderModeEligibleForSamePageNavigation) {
   web_state()->OnNavigationFinished(&navigation_context);
 
   ASSERT_TRUE(reader_mode_tab_helper()->CurrentPageIsDistillable());
+
+  // The last committed URL result should be the same as the previous same-page
+  // navigation result.
+  __block std::optional<bool>
+      current_page_supports_reader_mode_completion_result;
+  reader_mode_tab_helper()->FetchLastCommittedUrlDistillabilityResult(
+      base::BindOnce(^(std::optional<bool> current_page_supports_reader_mode) {
+        current_page_supports_reader_mode_completion_result =
+            std::move(current_page_supports_reader_mode);
+      }));
+
+  ASSERT_TRUE(current_page_supports_reader_mode_completion_result.has_value());
+  EXPECT_TRUE(current_page_supports_reader_mode_completion_result.value());
+}
+
+// Tests that reader mode page eligibility supports same-page navigations from
+// fragment change navigations or pushState/replaceState, which do not result
+// in a document change. Regression test for crbug.com/438667588.
+TEST_F(ReaderModeTabHelperTest,
+       ReaderModeEligibleForFragmentChangeNavigations) {
+  GURL test_url("https://test.url/ref-with-page-one");
+  SetReaderModeState(web_state(), test_url,
+                     ReaderModeHeuristicResult::kReaderModeEligible, "");
+
+  LoadWebpage(web_state(), test_url);
+  WaitForPageLoadDelayAndRunUntilIdle();
+
+  // Start same page navigation.
+  GURL test_url_with_ref("https://test.url/ref-with-page-two");
+  web::FakeNavigationContext navigation_context;
+  navigation_context.SetIsSameDocument(true);
+  navigation_context.SetHasCommitted(true);
+  web_state()->OnNavigationStarted(&navigation_context);
+  // Fragment change navigation will not call PageLoaded, set new committed URL.
+  web_state()->SetCurrentURL(test_url_with_ref);
+  web_state()->OnNavigationFinished(&navigation_context);
+
+  ASSERT_TRUE(reader_mode_tab_helper()->CurrentPageIsDistillable());
+
+  // The last committed URL result should be the same as the previous same-page
+  // navigation result.
+  __block std::optional<bool>
+      current_page_supports_reader_mode_completion_result;
+  reader_mode_tab_helper()->FetchLastCommittedUrlDistillabilityResult(
+      base::BindOnce(^(std::optional<bool> current_page_supports_reader_mode) {
+        current_page_supports_reader_mode_completion_result =
+            std::move(current_page_supports_reader_mode);
+      }));
+
+  ASSERT_TRUE(current_page_supports_reader_mode_completion_result.has_value());
+  EXPECT_TRUE(current_page_supports_reader_mode_completion_result.value());
 }
 
 // Tests that
@@ -347,7 +420,7 @@ TEST_F(ReaderModeTabHelperTest, NotifiesObserversOfAvailability) {
   // When ActivateReader() is called and distillation completes,
   // ReaderModeWebStateDidLoadContent should be called.
   EXPECT_CALL(mock_observer,
-              ReaderModeWebStateDidLoadContent(reader_mode_tab_helper()));
+              ReaderModeWebStateDidLoadContent(reader_mode_tab_helper(), _));
   reader_mode_tab_helper()->ActivateReader(
       ReaderModeAccessPoint::kContextualChip);
   WaitForAvailableReaderModeContentInWebState(web_state());
@@ -357,7 +430,7 @@ TEST_F(ReaderModeTabHelperTest, NotifiesObserversOfAvailability) {
   // ReaderModeWebStateWillBecomeUnavailable should be called.
   EXPECT_CALL(mock_observer,
               ReaderModeWebStateWillBecomeUnavailable(
-                  reader_mode_tab_helper(),
+                  reader_mode_tab_helper(), _,
                   ReaderModeDeactivationReason::kUserDeactivated));
   reader_mode_tab_helper()->DeactivateReader(
       ReaderModeDeactivationReason::kUserDeactivated);
@@ -373,11 +446,11 @@ TEST_F(ReaderModeTabHelperTest, NotifiesObserverOfDestruction) {
   // When the tab helper is destroyed, ReaderModeTabHelperDestroyed should be
   // called.
   EXPECT_CALL(mock_observer,
-              ReaderModeTabHelperDestroyed(reader_mode_tab_helper()))
-      .WillOnce(
-          testing::Invoke([&mock_observer](ReaderModeTabHelper* tab_helper) {
-            tab_helper->RemoveObserver(&mock_observer);
-          }));
+              ReaderModeTabHelperDestroyed(reader_mode_tab_helper(), _))
+      .WillOnce([&mock_observer](ReaderModeTabHelper* tab_helper,
+                                 web::WebState* web_state) {
+        tab_helper->RemoveObserver(&mock_observer);
+      });
   ReaderModeTabHelper::RemoveFromWebState(web_state_.get());
 }
 
@@ -412,6 +485,33 @@ TEST_F(ReaderModeTabHelperTest, NotifiesObserversOfDistillationFailure) {
               BucketsAre(Bucket(ReaderModeAccessPoint::kContextualChip, 1)));
 }
 
+// Tests that ReaderModeTabHelper observers are notified when distillation
+// fails.
+TEST_F(ReaderModeTabHelperTest, DistillationFailureOnIneligiblePage) {
+  MockReaderModeTabHelperObserver mock_observer;
+  base::ScopedObservation<ReaderModeTabHelper, ReaderModeTabHelper::Observer>
+      observation(&mock_observer);
+  observation.Observe(reader_mode_tab_helper());
+
+  // Set an empty DOM Distiller result to simulate failure.
+  GURL test_url("https://www.google.com");
+  LoadWebpage(web_state(), test_url);
+  SetReaderModeState(web_state(), test_url,
+                     ReaderModeHeuristicResult::kReaderModeEligible, "");
+
+  // Initially, no observer methods should be called.
+  WaitForPageLoadDelayAndRunUntilIdle();
+
+  // When ActivateReader() is called and distillation fails,
+  // ReaderModeDistillationFailed should be called.
+  EXPECT_CALL(mock_observer,
+              ReaderModeDistillationFailed(reader_mode_tab_helper()));
+  reader_mode_tab_helper()->ActivateReader(
+      ReaderModeAccessPoint::kContextualChip);
+  WaitForPageLoadDelayAndRunUntilIdle();
+  testing::Mock::VerifyAndClearExpectations(&mock_observer);
+}
+
 // Tests that the WebViewProxy is updated when reader mode is toggled.
 TEST_F(ReaderModeTabHelperTest, WebViewProxyUpdated) {
   WebViewProxyTabHelper::CreateForWebState(web_state());
@@ -434,7 +534,7 @@ TEST_F(ReaderModeTabHelperTest, WebViewProxyUpdated) {
   observation.Observe(reader_mode_tab_helper());
 
   EXPECT_CALL(mock_observer,
-              ReaderModeWebStateDidLoadContent(reader_mode_tab_helper()));
+              ReaderModeWebStateDidLoadContent(reader_mode_tab_helper(), _));
   reader_mode_tab_helper()->ActivateReader(
       ReaderModeAccessPoint::kContextualChip);
   WaitForAvailableReaderModeContentInWebState(web_state());
@@ -446,7 +546,7 @@ TEST_F(ReaderModeTabHelperTest, WebViewProxyUpdated) {
 
   EXPECT_CALL(mock_observer,
               ReaderModeWebStateWillBecomeUnavailable(
-                  reader_mode_tab_helper(),
+                  reader_mode_tab_helper(), _,
                   ReaderModeDeactivationReason::kUserDeactivated));
   reader_mode_tab_helper()->DeactivateReader(
       ReaderModeDeactivationReason::kUserDeactivated);
@@ -500,6 +600,7 @@ TEST_F(ReaderModeTabHelperTest, TestEligibleContentIsDisplayed) {
   FlushMetrics();
   EXPECT_THAT(histogram_tester_.GetAllSamples(kReaderModeStateHistogram),
               BucketsAre(Bucket(ReaderModeState::kReaderShown, 1)));
+  histogram_tester_.ExpectTotalCount(kReaderModeCustomizationHistogram, 0);
 }
 
 // Tests that distillation that takes longer than the expected timeout will
@@ -574,6 +675,101 @@ TEST_F(ReaderModeTabHelperTest, TestDistillationCompletedAfterTimeout) {
   EXPECT_THAT(histogram_tester_.GetAllSamples(kReaderModeStateHistogram),
               BucketsAre(Bucket(ReaderModeState::kReaderShown, 1)));
   EXPECT_TRUE(reader_mode_tab_helper()->IsActive());
+}
+
+class ReaderModeTabHelperOptimizationGuideTest
+    : public ReaderModeTabHelperTest {
+ public:
+  void SetUp() override {
+    feature_list_.InitAndEnableFeature(
+        kEnableReaderModeOptimizationGuideEligibility);
+
+    ReaderModeTabHelperTest::SetUp();
+  }
+
+  void TearDown() override {
+    ReaderModeTabHelperTest::TearDown();
+    feature_list_.Reset();
+  }
+
+ private:
+  base::test::ScopedFeatureList feature_list_;
+};
+
+// Tests that reader mode is eligible when the OptimizationGuideService provides
+// a hint on an eligible page.
+TEST_F(ReaderModeTabHelperOptimizationGuideTest, EligibilityForEligiblePage) {
+  GURL test_url("https://test.url/");
+  SetReaderModeState(web_state(), test_url,
+                     ReaderModeHeuristicResult::kReaderModeEligible, "");
+
+  // Prepare optimization guide metadata.
+  OptimizationGuideService* optimization_guide_service =
+      OptimizationGuideServiceFactory::GetForProfile(profile());
+  optimization_guide::proto::Any any_metadata;
+  optimization_guide::OptimizationMetadata metadata;
+  metadata.set_any_metadata(any_metadata);
+  optimization_guide_service->AddHintForTesting(
+      GURL(test_url), optimization_guide::proto::READER_MODE_ELIGIBLE,
+      metadata);
+
+  LoadWebpage(web_state(), test_url);
+  WaitForPageLoadDelayAndRunUntilIdle();
+
+  ASSERT_TRUE(reader_mode_tab_helper()->CurrentPageIsDistillable());
+  EXPECT_THAT(
+      histogram_tester_.GetAllSamples(kReaderModeHeuristicResultHistogram),
+      BucketsAre(Bucket(ReaderModeHeuristicResult::kReaderModeEligible, 1)));
+}
+
+// Tests that reader mode is not eligible when the heuristic is not eligible
+// regardless of the OptimizationGuideService hint.
+TEST_F(ReaderModeTabHelperOptimizationGuideTest,
+       EligibilityForNotEligiblePage) {
+  GURL test_url("https://test.url/");
+  SetReaderModeState(
+      web_state(), test_url,
+      ReaderModeHeuristicResult::kReaderModeNotEligibleContentAndLength, "");
+
+  // Prepare optimization guide metadata.
+  OptimizationGuideService* optimization_guide_service =
+      OptimizationGuideServiceFactory::GetForProfile(profile());
+  optimization_guide::proto::Any any_metadata;
+  optimization_guide::OptimizationMetadata metadata;
+  metadata.set_any_metadata(any_metadata);
+  optimization_guide_service->AddHintForTesting(
+      GURL(test_url), optimization_guide::proto::READER_MODE_ELIGIBLE,
+      metadata);
+
+  LoadWebpage(web_state(), test_url);
+  WaitForPageLoadDelayAndRunUntilIdle();
+
+  ASSERT_FALSE(reader_mode_tab_helper()->CurrentPageIsDistillable());
+  EXPECT_THAT(
+      histogram_tester_.GetAllSamples(kReaderModeHeuristicResultHistogram),
+      BucketsAre(Bucket(
+          ReaderModeHeuristicResult::kReaderModeNotEligibleContentAndLength,
+          1)));
+}
+
+// Tests that reader mode is not eligible when the OptimizationGuideService hint
+// returns ineligibility.
+TEST_F(ReaderModeTabHelperOptimizationGuideTest,
+       NotEligibleWithOptimizationGuide) {
+  GURL test_url("https://test.url/");
+  SetReaderModeState(web_state(), test_url,
+                     ReaderModeHeuristicResult::kReaderModeEligible, "");
+
+  // No optimization guide metadata provided.
+  LoadWebpage(web_state(), test_url);
+  WaitForPageLoadDelayAndRunUntilIdle();
+
+  ASSERT_FALSE(reader_mode_tab_helper()->CurrentPageIsDistillable());
+  EXPECT_THAT(
+      histogram_tester_.GetAllSamples(kReaderModeHeuristicResultHistogram),
+      BucketsAre(Bucket(ReaderModeHeuristicResult::
+                            kReaderModeNotEligibleOptimizationGuideIneligible,
+                        1)));
 }
 
 class ReaderModeTabHelperWithEligibilityTest
@@ -689,6 +885,34 @@ TEST_P(ReaderModeTabHelperWithEligibilityTest, TriggerDistillationOnActive) {
   EXPECT_THAT(ukm_entries,
               testing::ElementsAre(static_cast<int>(
                   ReaderModeDistillerResult::kPageIsNotDistillable)));
+}
+
+// Tests that the Reader Mode infobar is added when Reader Mode is activated
+// and the proactive suggestions framework is enabled.
+// Tests that the Reader Mode infobar is added when Reader Mode is activated
+// and the proactive suggestions framework is enabled.
+// Tests that the Reader Mode infobar is added when Reader Mode is activated
+// and the proactive suggestions framework is enabled.
+TEST_F(ReaderModeTabHelperTest, AddsInfobarWhenActivated) {
+  GURL test_url("https://test.url/");
+  LoadWebpage(web_state(), test_url);
+  SetReaderModeState(web_state(), test_url,
+                     ReaderModeHeuristicResult::kReaderModeEligible, "Content");
+  WaitForPageLoadDelayAndRunUntilIdle();
+
+  reader_mode_tab_helper()->ActivateReader(
+      ReaderModeAccessPoint::kContextualChip);
+  WaitForAvailableReaderModeContentInWebState(web_state());
+
+  infobars::InfoBarManager* infobar_manager =
+      InfoBarManagerImpl::FromWebState(web_state());
+  ASSERT_EQ(1u, infobar_manager->infobars().size());
+  EXPECT_EQ(infobars::InfoBarDelegate::READER_MODE_INFOBAR_DELEGATE_IOS,
+            infobar_manager->infobars()[0]->delegate()->GetIdentifier());
+
+  reader_mode_tab_helper()->DeactivateReader(
+      ReaderModeDeactivationReason::kUserDeactivated);
+  EXPECT_EQ(0u, infobar_manager->infobars().size());
 }
 
 INSTANTIATE_TEST_SUITE_P(

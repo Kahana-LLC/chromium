@@ -50,7 +50,6 @@
 #include "mojo/public/cpp/bindings/struct_ptr.h"
 #include "services/data_decoder/public/cpp/test_support/in_process_data_decoder.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/blink/public/mojom/manifest/manifest.mojom-forward.h"
 #include "third_party/blink/public/mojom/manifest/manifest.mojom.h"
 #include "url/gurl.h"
 #include "url/origin.h"
@@ -519,12 +518,12 @@ TEST_F(WebAppInstallFinalizerUnitTest, InstallUrlSetInWebAppDB) {
 }
 
 TEST_F(WebAppInstallFinalizerUnitTest, IsolationDataSetInWebAppDB) {
-  base::Version version("1.2.3");
+  IwaVersion version = *IwaVersion::Create("1.2.3");
 
   auto info = WebAppInstallInfo::CreateWithStartUrlForTesting(
       GURL("isolated-app://random_app"));
   info->title = u"Foo Title";
-  info->isolated_web_app_version = version;
+  info->set_isolated_web_app_version(version);
 
   const IsolatedWebAppStorageLocation location(
       IwaStorageUnownedBundle{base::FilePath(FILE_PATH_LITERAL("p"))});

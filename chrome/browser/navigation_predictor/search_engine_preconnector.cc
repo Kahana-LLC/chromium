@@ -7,6 +7,7 @@
 #include <limits>
 
 #include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/metrics/field_trial_params.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
@@ -45,17 +46,41 @@ constexpr int kPreconnectIntervalSec = 60;
 constexpr int kPreconnectRetryDelayMs = 50;
 constexpr int kPreconnectIntervalForLowPowerSec = 30;
 
+bool RebindPreconnectReceiversEnabled() {
+  return base::FeatureList::IsEnabled(features::kRebindPreconnectReceivers);
+}
+
+bool OnlyBindOnConnectionClosedOrFailed() {
+  return RebindPreconnectReceiversEnabled() &&
+         features::kRebindReceiverEvent.Get() ==
+             features::RebindReceiverEvent::kOnlyOnConnectionClosedOrFailed;
+}
+
 }  // namespace
 
 namespace features {
 // Feature to control preconnect to search.
 
-BASE_FEATURE(kPreconnectFromKeyedService,
-             "PreconnectFromKeyedService",
-             base::FEATURE_DISABLED_BY_DEFAULT);
-BASE_FEATURE(kPreconnectToSearch,
-             "PreconnectToSearch",
-             base::FEATURE_ENABLED_BY_DEFAULT);
+BASE_FEATURE(kPreconnectFromKeyedService, base::FEATURE_ENABLED_BY_DEFAULT);
+BASE_FEATURE(kPreconnectToSearch, base::FEATURE_ENABLED_BY_DEFAULT);
+
+// Feature to control binding the receivers every time we attempt to
+// preconnect. This will trigger the destruction of the previous receiver
+// (and also the remote), and also the re-creation of the observer.
+BASE_FEATURE(kRebindPreconnectReceivers, base::FEATURE_DISABLED_BY_DEFAULT);
+
+constexpr base::FeatureParam<RebindReceiverEvent>::Option
+    kRebindReceiverEventOptions[] = {
+        {RebindReceiverEvent::kEverytime, "kEverytime"},
+        {RebindReceiverEvent::kOnlyOnConnectionClosedOrFailed,
+         "kOnlyOnConnectionClosedOrFailed"}};
+
+BASE_FEATURE_ENUM_PARAM(RebindReceiverEvent,
+                        kRebindReceiverEvent,
+                        &kRebindPreconnectReceivers,
+                        "kRebindReceiverEvent",
+                        features::RebindReceiverEvent::kEverytime,
+                        &kRebindReceiverEventOptions);
 }  // namespace features
 
 WebContentVisibilityManager::WebContentVisibilityManager()
@@ -107,7 +132,7 @@ bool SearchEnginePreconnector::ShouldBeEnabledAsKeyedService() {
 
 bool SearchEnginePreconnector::ShouldBeEnabledForOffTheRecord() {
   static bool enabled_for_otr = base::GetFieldTrialParamByFeatureAsBool(
-      features::kPreconnectFromKeyedService, "run_on_otr", false);
+      features::kPreconnectFromKeyedService, "run_on_otr", true);
   return enabled_for_otr;
 }
 
@@ -160,8 +185,8 @@ void SearchEnginePreconnector::PreconnectDSE() {
     return;
 
   GURL preconnect_url = GetDefaultSearchEngineOriginURL();
-  if (preconnect_url.scheme() != url::kHttpScheme &&
-      preconnect_url.scheme() != url::kHttpsScheme) {
+  if (preconnect_url.GetScheme() != url::kHttpScheme &&
+      preconnect_url.GetScheme() != url::kHttpsScheme) {
     return;
   }
 
@@ -184,6 +209,11 @@ void SearchEnginePreconnector::PreconnectDSE() {
   mojo::PendingRemote<network::mojom::ConnectionChangeObserverClient> observer;
   if (SearchEnginePreconnect2Enabled()) {
     keepalive_config = GetConnectionKeepAliveConfig();
+
+    if (RebindPreconnectReceiversEnabled() &&
+        !OnlyBindOnConnectionClosedOrFailed()) {
+      ResetReceiver();
+    }
 
     if (!receiver_.is_bound()) {
       observer = receiver_.BindNewPipeAndPassRemote();
@@ -347,6 +377,10 @@ void SearchEnginePreconnector::OnSessionClosed() {
         consecutive_connection_failure_);
     consecutive_connection_failure_ = 0;
   }
+  if (RebindPreconnectReceiversEnabled() &&
+      OnlyBindOnConnectionClosedOrFailed()) {
+    ResetReceiver();
+  }
   StartPreconnectWithDelay(GetPreconnectInterval(),
                            PreconnectTriggerEvent::kSessionClosed);
 }
@@ -355,6 +389,10 @@ void SearchEnginePreconnector::OnNetworkEvent(net::NetworkChangeEvent event) {
   // If the network event is `Connected`, we attempt preconnect. Otherwise,
   // we will ignore the events for now.
   if (event == net::NetworkChangeEvent::kConnected) {
+    // We do not call `ResetReceiver` here since the network change event might
+    // not actually close a connection. It is OK to not reset the receiver here
+    // since network event will be followed by `OnSessionClosed` or
+    // `OnConnectionFailed` anyway when the connection is actually closed.
     StartPreconnectWithDelay(base::Milliseconds(kPreconnectRetryDelayMs),
                              PreconnectTriggerEvent::kNetworkEvent);
   }
@@ -362,6 +400,10 @@ void SearchEnginePreconnector::OnNetworkEvent(net::NetworkChangeEvent event) {
 
 void SearchEnginePreconnector::OnConnectionFailed() {
   consecutive_connection_failure_++;
+  if (RebindPreconnectReceiversEnabled() &&
+      OnlyBindOnConnectionClosedOrFailed()) {
+    ResetReceiver();
+  }
   StartPreconnectWithDelay(GetPreconnectInterval(),
                            PreconnectTriggerEvent::kConnectionFailed);
 }
@@ -373,6 +415,18 @@ void SearchEnginePreconnector::OnReconnectObserverPipeDisconnected() {
   if (!timer_.IsRunning()) {
     OnConnectionFailed();
   }
+}
+
+void SearchEnginePreconnector::ResetReceiver() {
+  if (!receiver_.is_bound()) {
+    return;
+  }
+
+  // We clear the disconnect handler to avoid calling
+  // `OnReconnectObserverPipeDisconnected` when the pipe is intentionally
+  // reset, so that we will not start a new preconnect attempt.
+  receiver_.set_disconnect_handler(base::DoNothing());
+  receiver_.reset();
 }
 
 void SearchEnginePreconnector::RecordPreconnectAttemptHistogram(

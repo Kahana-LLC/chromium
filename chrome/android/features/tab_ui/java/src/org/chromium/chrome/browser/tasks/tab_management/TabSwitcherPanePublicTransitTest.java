@@ -23,8 +23,10 @@ import org.junit.runner.RunWith;
 
 import org.chromium.base.test.util.Batch;
 import org.chromium.base.test.util.CommandLineFlags;
+import org.chromium.base.test.util.Features;
 import org.chromium.base.test.util.ImportantFormFactors;
 import org.chromium.chrome.browser.ChromeTabbedActivity;
+import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.chrome.test.transit.AutoResetCtaTransitTestRule;
@@ -52,6 +54,8 @@ public class TabSwitcherPanePublicTransitTest {
 
     @Test
     @MediumTest
+    // TODO(crbug.com/457847264): Test disabled for Incognito windowing.
+    @Features.DisableFeatures(ChromeFeatureList.ANDROID_OPEN_INCOGNITO_AS_WINDOW)
     public void testSwitchTabModel_ScrollToSelectedTab() {
         WebPageStation firstPage = mCtaTestRule.startOnBlankPage();
         ChromeTabbedActivity cta = mCtaTestRule.getActivity();
@@ -72,7 +76,7 @@ public class TabSwitcherPanePublicTransitTest {
 
         LinearLayoutManager layoutManager =
                 (LinearLayoutManager)
-                        regularTabSwitcher.recyclerViewElement.get().getLayoutManager();
+                        regularTabSwitcher.recyclerViewElement.value().getLayoutManager();
         assertEquals(9, layoutManager.findLastVisibleItemPosition());
 
         // Go back to a tab to cleanup tab state
@@ -96,6 +100,8 @@ public class TabSwitcherPanePublicTransitTest {
 
     @Test
     @MediumTest
+    // TODO(crbug.com/457847264): Test disabled for Incognito windowing.
+    @Features.DisableFeatures(ChromeFeatureList.ANDROID_OPEN_INCOGNITO_AS_WINDOW)
     public void testEmptyStateView() {
         WebPageStation firstPage = mCtaTestRule.startOnBlankPage();
         ChromeTabbedActivity cta = mCtaTestRule.getActivity();

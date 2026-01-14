@@ -42,8 +42,6 @@
 #include "chrome/browser/ash/system_web_apps/test_support/system_web_app_integration_test.h"
 #include "chrome/browser/error_reporting/mock_chrome_js_error_report_processor.h"
 #include "chrome/browser/extensions/component_loader.h"
-#include "chrome/browser/notifications/notification_display_service.h"
-#include "chrome/browser/notifications/notification_display_service_factory.h"
 #include "chrome/browser/platform_util.h"
 #include "chrome/browser/ui/ash/system_web_apps/system_web_app_ui_utils.h"
 #include "chrome/browser/ui/browser.h"
@@ -55,6 +53,7 @@
 #include "chrome/browser/web_applications/web_app_provider.h"
 #include "chrome/browser/web_applications/web_app_registrar.h"
 #include "chrome/common/chrome_paths.h"
+#include "chrome/test/base/ui_test_utils.h"
 #include "chromeos/ash/components/dbus/cros_disks/cros_disks_client.h"
 #include "chromeos/ash/components/settings/cros_settings_names.h"
 #include "chromeos/constants/chromeos_features.h"
@@ -76,7 +75,9 @@
 #include "ui/aura/window.h"
 #include "ui/aura/window_observer.h"
 #include "ui/gfx/color_palette.h"
+#include "ui/message_center/message_center.h"
 #include "ui/message_center/public/cpp/notification.h"
+#include "ui/message_center/test/message_center_waiter.h"
 
 using ash::SystemWebAppType;
 using platform_util::OpenOperationResult;
@@ -280,50 +281,6 @@ using MediaAppIntegrationAllProfilesTest = MediaAppIntegrationTest;
 using MediaAppIntegrationWithFilesAppAllProfilesTest =
     MediaAppIntegrationWithFilesAppTest;
 
-// Scoped observer of notifications that will spin a run loop until a
-// notification is displayed.
-class NotificationWatcher : public NotificationDisplayService::Observer {
- public:
-  NotificationWatcher(Profile* profile,
-                      ash::NetworkPortalDetectorMixin& network_portal_detector)
-      : profile_(profile) {
-    // Notifications only fire if the device is "online". Simulate that.
-    network_portal_detector.SimulateDefaultNetworkState(
-        ash::NetworkPortalDetectorMixin::NetworkStatus::kOnline);
-
-    NotificationDisplayServiceFactory::GetForProfile(profile_)->AddObserver(
-        this);
-  }
-  ~NotificationWatcher() override {
-    NotificationDisplayServiceFactory::GetForProfile(profile_)->RemoveObserver(
-        this);
-  }
-  std::string NextSeenNotificationId() {
-    if (seen_notification_id_.empty()) {
-      run_loop_.Run();
-    }
-    return seen_notification_id_;
-  }
-
- private:
-  raw_ptr<Profile> profile_;
-  base::RunLoop run_loop_;
-  std::string seen_notification_id_;
-
-  void OnNotificationDisplayed(
-      const message_center::Notification& notification,
-      const NotificationCommon::Metadata* const metadata) override {
-    seen_notification_id_ = notification.id();
-    if (run_loop_.IsRunningOnCurrentThread()) {
-      run_loop_.Quit();
-    }
-  }
-
-  void OnNotificationClosed(const std::string& notification_id) override {}
-  void OnNotificationDisplayServiceDestroyed(
-      NotificationDisplayService* service) override {}
-};
-
 class BrowserWindowWaiter : public BrowserListObserver {
  public:
   void WaitForBrowserAdded() {
@@ -343,8 +300,8 @@ class BrowserWindowWaiter : public BrowserListObserver {
 
 // Waits for the number of active Browsers in the test process to reach `count`.
 void WaitForBrowserCount(size_t count) {
-  EXPECT_LE(BrowserList::GetInstance()->size(), count) << "Too many browsers";
-  while (BrowserList::GetInstance()->size() < count) {
+  EXPECT_LE(chrome::GetTotalBrowserCount(), count) << "Too many browsers";
+  while (chrome::GetTotalBrowserCount() < count) {
     BrowserWindowWaiter().WaitForBrowserAdded();
   }
 }
@@ -549,13 +506,17 @@ IN_PROC_BROWSER_TEST_P(MediaAppIntegrationTest, MediaAppLaunchImageMulti) {
   image_params.launch_paths = {TestFile(kFilePng800x600),
                                TestFile(kFileJpeg640x480)};
 
+  ui_test_utils::BrowserCreatedObserver browser_created_observer;
   LaunchAndWait(image_params);
+  BrowserWindowInterface* const system_app_browser =
+      browser_created_observer.Wait();
 
-  const BrowserList* browser_list = BrowserList::GetInstance();
-  EXPECT_EQ(2u, browser_list->size());  // 1 extra for the browser test browser.
+  EXPECT_EQ(
+      2u,
+      chrome::GetTotalBrowserCount());  // 1 extra for the browser test browser.
 
   content::TitleWatcher watcher(
-      browser_list->get(1)->tab_strip_model()->GetActiveWebContents(),
+      system_app_browser->GetTabStripModel()->GetActiveWebContents(),
       u"image.png");
   EXPECT_EQ(u"image.png", watcher.WaitAndGetTitle());
   ExpectProductSurveyData({.open_image = "1"});
@@ -566,18 +527,22 @@ IN_PROC_BROWSER_TEST_P(MediaAppIntegrationTest, MediaAppLaunchPdfMulti) {
   ash::SystemAppLaunchParams pdf_params;
   pdf_params.launch_paths = {TestFile(kFilePdfTall), TestFile(kFilePdfImg)};
 
+  // BrowserCreatedObserver will report the most recently added browser, which
+  // will be the pdf img browser specified above.
+  ui_test_utils::BrowserCreatedObserver browser_created_observer;
   LaunchAndWait(pdf_params);
-
   WaitForBrowserCount(3);  // 1 extra for the browser test browser.
-  const BrowserList* browser_list = BrowserList::GetInstance();
-  EXPECT_EQ(3u, browser_list->size());
+  EXPECT_EQ(3u, chrome::GetTotalBrowserCount());
+
+  Browser* const pdf_img_browser = browser_created_observer.Wait();
+  Browser* const pdf_tall_browser =
+      ui_test_utils::GetBrowserNotInSet({browser(), pdf_img_browser});
 
   content::TitleWatcher watcher1(
-      browser_list->get(1)->tab_strip_model()->GetActiveWebContents(),
+      pdf_tall_browser->GetTabStripModel()->GetActiveWebContents(),
       u"tall.pdf");
   content::TitleWatcher watcher2(
-      browser_list->get(2)->tab_strip_model()->GetActiveWebContents(),
-      u"img.pdf");
+      pdf_img_browser->GetTabStripModel()->GetActiveWebContents(), u"img.pdf");
   EXPECT_EQ(u"tall.pdf", watcher1.WaitAndGetTitle());
   EXPECT_EQ(u"img.pdf", watcher2.WaitAndGetTitle());
   ExpectProductSurveyData({});  // Only images and video are tracked.
@@ -1007,12 +972,12 @@ IN_PROC_BROWSER_TEST_P(MediaAppIntegrationTest,
       "console.error('YIKES', {data: 'something'}, new Error('deep error'));";
   EXPECT_EQ(true, ExecJs(web_ui, kConsoleError));
   auto report = endpoint.WaitForReport();
-  EXPECT_NE(std::string::npos,
-            report.query.find(
-                "error_message=Unexpected%3A%20%22YIKES%22%0A%7B%22data%22%"
-                "3A%22something%22%7D%0AError%3A%20deep%20error"))
-      << report.query;
-  EXPECT_NE(std::string::npos, report.query.find("prod=ChromeOS_MediaApp"));
+  // Endpoint doesn't decode `%0A` into newlines.
+  EXPECT_THAT(report.GetQueryParam("error_message").value_or(""),
+              ::testing::StartsWith(
+                  "Unexpected: \"YIKES\"%0A{\"data\":\"something\"}%0AError: "
+                  "deep error"));
+  EXPECT_EQ(report.GetQueryParam("prod"), "ChromeOS_MediaApp");
 }
 
 IN_PROC_BROWSER_TEST_P(MediaAppIntegrationTest,
@@ -1024,11 +989,9 @@ IN_PROC_BROWSER_TEST_P(MediaAppIntegrationTest,
 
   EXPECT_EQ(true, ExecJs(web_ui, kDomExceptionScript));
   auto report = endpoint.WaitForReport();
-  EXPECT_NE(std::string::npos,
-            report.query.find("error_message=Unhandled%20rejection%3A"
-                              "%20%5BNotAFile%5D%20Not%20a%20file."))
-      << report.query;
-  EXPECT_NE(std::string::npos, report.query.find("prod=ChromeOS_MediaApp"));
+  EXPECT_EQ(report.GetQueryParam("error_message"),
+            "Unhandled rejection: [NotAFile] Not a file.");
+  EXPECT_EQ(report.GetQueryParam("prod"), "ChromeOS_MediaApp");
 }
 
 IN_PROC_BROWSER_TEST_P(MediaAppIntegrationTest,
@@ -1041,10 +1004,10 @@ IN_PROC_BROWSER_TEST_P(MediaAppIntegrationTest,
   EXPECT_EQ(true,
             MediaAppUiBrowserTest::EvalJsInAppFrame(app, kDomExceptionScript));
   auto report = endpoint.WaitForReport();
-  EXPECT_NE(std::string::npos,
-            report.query.find("error_message=Not%20a%20file."))
-      << report.query;
-  EXPECT_NE(std::string::npos, report.query.find("prod=ChromeOS_MediaApp"));
+  EXPECT_EQ(report.GetQueryParam("error_message"), "Not a file.");
+  // The real Media App is used for Chrome-branded builds.
+  EXPECT_THAT(report.GetQueryParam("prod").value_or(""),
+              ::testing::MatchesRegex("ChromeOS_MediaApp(Mock)?"));
 }
 
 IN_PROC_BROWSER_TEST_P(MediaAppIntegrationTest,
@@ -1056,11 +1019,9 @@ IN_PROC_BROWSER_TEST_P(MediaAppIntegrationTest,
 
   EXPECT_EQ(true, ExecJs(web_ui, kUnhandledRejectionScript));
   auto report = endpoint.WaitForReport();
-  EXPECT_NE(std::string::npos,
-            report.query.find("error_message=Unhandled%20rejection%3A%20%5B"
-                              "FakeErrorName%5D%20fake_throw"))
-      << report.query;
-  EXPECT_NE(std::string::npos, report.query.find("prod=ChromeOS_MediaApp"));
+  EXPECT_EQ(report.GetQueryParam("error_message"),
+            "Unhandled rejection: [FakeErrorName] fake_throw");
+  EXPECT_EQ(report.GetQueryParam("prod"), "ChromeOS_MediaApp");
 }
 
 IN_PROC_BROWSER_TEST_P(MediaAppIntegrationTest,
@@ -1073,9 +1034,10 @@ IN_PROC_BROWSER_TEST_P(MediaAppIntegrationTest,
   EXPECT_EQ(true, MediaAppUiBrowserTest::EvalJsInAppFrame(
                       app, kUnhandledRejectionScript));
   auto report = endpoint.WaitForReport();
-  EXPECT_NE(std::string::npos, report.query.find("error_message=fake_throw"))
-      << report.query;
-  EXPECT_NE(std::string::npos, report.query.find("prod=ChromeOS_MediaApp"));
+  EXPECT_EQ(report.GetQueryParam("error_message"), "fake_throw");
+  // The real Media App is used for Chrome-branded builds.
+  EXPECT_THAT(report.GetQueryParam("prod").value_or(""),
+              ::testing::MatchesRegex("ChromeOS_MediaApp(Mock)?"));
 }
 
 IN_PROC_BROWSER_TEST_P(MediaAppIntegrationTest,
@@ -1087,12 +1049,10 @@ IN_PROC_BROWSER_TEST_P(MediaAppIntegrationTest,
 
   EXPECT_EQ(true, ExecJs(web_ui, kTypeErrorScript));
   auto report = endpoint.WaitForReport();
-  EXPECT_NE(std::string::npos,
-            report.query.find(
-                "error_message=ErrorEvent%3A%20%5B%5D%20Uncaught%20TypeError%"
-                "3A%20event.notAFunction%20is%20not%20a%20function"))
-      << report.query;
-  EXPECT_NE(std::string::npos, report.query.find("prod=ChromeOS_MediaApp"));
+  EXPECT_EQ(report.GetQueryParam("error_message"),
+            "ErrorEvent: [] Uncaught TypeError: event.notAFunction is not a "
+            "function");
+  EXPECT_EQ(report.GetQueryParam("prod"), "ChromeOS_MediaApp");
 }
 
 IN_PROC_BROWSER_TEST_P(MediaAppIntegrationTest,
@@ -1105,10 +1065,11 @@ IN_PROC_BROWSER_TEST_P(MediaAppIntegrationTest,
   EXPECT_EQ(true,
             MediaAppUiBrowserTest::EvalJsInAppFrame(app, kTypeErrorScript));
   auto report = endpoint.WaitForReport();
-  EXPECT_NE(std::string::npos,
-            report.query.find("event.notAFunction%20is%20not%20a%20function"))
-      << report.query;
-  EXPECT_NE(std::string::npos, report.query.find("prod=ChromeOS_MediaApp"));
+  EXPECT_THAT(report.GetQueryParam("error_message").value_or(""),
+              ::testing::HasSubstr("event.notAFunction is not a function"));
+  // The real Media App is used for Chrome-branded builds.
+  EXPECT_THAT(report.GetQueryParam("prod").value_or(""),
+              ::testing::MatchesRegex("ChromeOS_MediaApp(Mock)?"));
 }
 
 // End-to-end test to ensure that the MediaApp successfully registers as a file
@@ -1588,11 +1549,16 @@ IN_PROC_BROWSER_TEST_P(MediaAppIntegrationTest, MaybeTriggerPdfHats) {
       })();
   )";
 
-  NotificationWatcher notification_watcher(profile(), network_portal_detector_);
+  // Notifications only fire if the device is "online". Simulate that.
+  network_portal_detector_.SimulateDefaultNetworkState(
+      ash::NetworkPortalDetectorMixin::NetworkStatus::kOnline);
+  message_center::MessageCenterWaiter waiter("hats_notification");
 
   EXPECT_EQ("success",
             ExtractStringInGlobalScope(web_ui, kMaybeTriggerPdfHats));
-  EXPECT_EQ(notification_watcher.NextSeenNotificationId(), "hats_notification");
+  waiter.WaitUntilAdded();
+  EXPECT_TRUE(message_center::MessageCenter::Get()->FindVisibleNotificationById(
+      "hats_notification"));
 }
 
 // Tests that the Photos happiness tracking survey triggers when the monitored
@@ -1608,12 +1574,17 @@ IN_PROC_BROWSER_TEST_P(MediaAppIntegrationTest, MaybeTriggerPhotosHats) {
   std::string media_app_app_id = MediaAppAppId();
   SetPhotosExperienceSurveyTriggerAppIdForTesting(media_app_app_id.c_str());
 
-  NotificationWatcher notification_watcher(profile(), network_portal_detector_);
+  // Notifications only fire if the device is "online". Simulate that.
+  network_portal_detector_.SimulateDefaultNetworkState(
+      ash::NetworkPortalDetectorMixin::NetworkStatus::kOnline);
+  message_center::MessageCenterWaiter waiter("hats_notification");
 
   LaunchWithNoFiles();
   chrome::FindBrowserWithActiveWindow()->window()->Close();
 
-  EXPECT_EQ(notification_watcher.NextSeenNotificationId(), "hats_notification");
+  waiter.WaitUntilAdded();
+  EXPECT_TRUE(message_center::MessageCenter::Get()->FindVisibleNotificationById(
+      "hats_notification"));
 
   // Avoid leaving a ref to the std::string about to be destroyed.
   SetPhotosExperienceSurveyTriggerAppIdForTesting("");

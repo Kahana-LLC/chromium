@@ -39,6 +39,7 @@
 #include "extensions/browser/service_worker/service_worker_task_queue.h"
 #include "extensions/browser/service_worker/service_worker_test_utils.h"
 #include "extensions/common/extension.h"
+#include "extensions/common/extension_builder.h"
 #include "extensions/common/manifest_handlers/background_info.h"
 #include "extensions/common/mojom/manifest.mojom.h"
 #include "extensions/test/extension_background_page_waiter.h"
@@ -766,7 +767,7 @@ IN_PROC_BROWSER_TEST_F(ServiceWorkerRegistrationApiTest,
                        MAYBE_ModifyingLocalFilesForUnpackedExtensions) {
   ASSERT_TRUE(StartEmbeddedTestServer());
   const double kUpdateDelayInMilliseconds =
-      content::ServiceWorkerContext::GetUpdateDelay().InMillisecondsF();
+      content::ServiceWorkerContext::kUpdateDelay.InMillisecondsF();
   // Assert that whatever our update delay is, it's less than 5 seconds. If it
   // were more, the test would risk timing out. If we ever need to exceed this
   // in practice, we could introduce a test setter for a different amount of
@@ -871,6 +872,67 @@ IN_PROC_BROWSER_TEST_F(ServiceWorkerRegistrationApiTest,
   EXPECT_EQ("storage changed version 2: count 4", open_tab_and_get_result());
 }
 
+// Tests that installing an extension with a service worker immediately after
+// uninstalling it does not result in the service worker not being registered.
+// Regression test for crbug.com/463925496.
+IN_PROC_BROWSER_TEST_F(ServiceWorkerRegistrationApiTest, ExtensionReinstall) {
+  const ExtensionId test_extension_id("iegclhlplifhodhkoafiokenjoapiobj");
+  base::HistogramTester histogram_tester;
+  auto SetupExtension = [&](ExtensionBuilder& builder,
+                            TestExtensionDir& test_dir) {
+    static constexpr char kSwJs[] = "chrome.test.sendMessage('ready');";
+    test_dir.WriteFile(FILE_PATH_LITERAL("sw.js"), kSwJs);
+
+    auto manifest = base::Value::Dict()
+                        .Set("name", "Extension SW reinstall test")
+                        .Set("version", "0.1")
+                        .Set("manifest_version", 3)
+                        .Set("background", base::Value::Dict().Set(
+                                               "service_worker", "sw.js"));
+    builder.SetManifest(std::move(manifest));
+    builder.SetPath(test_dir.UnpackedPath());
+    builder.SetID(test_extension_id);
+  };
+
+  ExtensionBuilder builder;
+  TestExtensionDir test_dir;
+  SetupExtension(builder, test_dir);
+
+  ExtensionBuilder reinstalled_builder;
+  SetupExtension(reinstalled_builder, test_dir);
+
+  ExtensionRegistrationAndUnregistrationWaiter registration_waiter(
+      test_extension_id);
+  scoped_refptr<const Extension> extension(builder.Build());
+  extension_registrar()->AddExtension(extension.get());
+  {
+    SCOPED_TRACE("waiting for extension registration to finish");
+    registration_waiter.WaitForWorkerRegistrationAttemptCompleted();
+    EXPECT_EQ(content::ServiceWorkerCapability::SERVICE_WORKER_NO_FETCH_HANDLER,
+              GetServiceWorkerRegistrationState(*extension));
+  }
+
+  UninstallExtension(extension->id());
+
+  ExtensionRegistrationAndUnregistrationWaiter registration_waiter2(
+      test_extension_id);
+  scoped_refptr<const Extension> reinstalled_extension(
+      reinstalled_builder.Build());
+  extension_registrar()->AddExtension(reinstalled_extension.get());
+  // Expect the service worker to be registered again.
+  {
+    SCOPED_TRACE("waiting for extension re-registration to finish");
+    registration_waiter2.WaitForWorkerRegistrationAttemptCompleted();
+    EXPECT_EQ(content::ServiceWorkerCapability::SERVICE_WORKER_NO_FETCH_HANDLER,
+              GetServiceWorkerRegistrationState(*reinstalled_extension));
+  }
+
+  CheckBooleanHistogramCounts(
+      "Extensions.ServiceWorkerBackground."
+      "WorkerRegistrationRetryForUnregistrationAttemptsResult",
+      /*true_count=*/1, /*false_count=*/0, histogram_tester);
+}
+
 class ServiceWorkerExtensionUpdateOnBrowserRestartRegistrationApiTest
     : public ServiceWorkerRegistrationApiTest {
  protected:
@@ -973,7 +1035,7 @@ IN_PROC_BROWSER_TEST_F(
 
   // Navigate current tab to new tab to engage v1 of the NTP extension to stay
   // non-idle.
-  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), new_tab_url()));
+  ASSERT_TRUE(NavigateToURL(GetActiveWebContents(), new_tab_url()));
 
   // Verify v1 of extension is responding to messages in the tab.
   std::u16string first_new_tab_title;
@@ -1026,7 +1088,7 @@ IN_PROC_BROWSER_TEST_F(
 
   // Navigate again to new tab so we can confirm v1 is still running and v2
   // hasn't taken over future new tabs.
-  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), new_tab_url()));
+  ASSERT_TRUE(NavigateToURL(GetActiveWebContents(), new_tab_url()));
   std::u16string third_new_tab_title;
   ui_test_utils::GetCurrentTabTitle(browser(), &third_new_tab_title);
   ASSERT_EQ(u"Custom NTP test v1", third_new_tab_title);
@@ -1084,7 +1146,7 @@ IN_PROC_BROWSER_TEST_F(
 
   // Navigate to new tab page so we can confirm v2 is still running and v1
   // hasn't taken over future new tabs loads.
-  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), new_tab_url()));
+  ASSERT_TRUE(NavigateToURL(GetActiveWebContents(), new_tab_url()));
   std::u16string new_tab_title;
   ui_test_utils::GetCurrentTabTitle(browser(), &new_tab_title);
   ASSERT_EQ(u"Custom NTP test v2", new_tab_title);

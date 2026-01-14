@@ -214,4 +214,93 @@ typedef XrResult(XRAPI_PTR* PFN_xrAcquireDepthSwapchainImagesANDROID)(
     XrDepthAcquireResultANDROID* acquireResult);
 #endif  // XR_ANDROID_depth_texture
 
+#ifndef XR_ANDROID_spatial_discovery_raycast
+#define XR_ANDROID_spatial_discovery_raycast 1
+#define XR_ANDROID_spatial_discovery_raycast_SPEC_VERSION 1
+#define XR_ANDROID_SPATIAL_DISCOVERY_RAYCAST_EXTENSION_NAME \
+  "XR_ANDROID_spatial_discovery_raycast"
+
+#define XR_TYPE_SPATIAL_BOUNDS_RAYCAST_ANDROID ((XrStructureType)1000786001U)
+#define XR_TYPE_SPATIAL_COMPONENT_RAYCAST_RESULT_LIST_ANDROID \
+  ((XrStructureType)1000786002U)
+#define XR_TYPE_SPATIAL_RAYCAST_SNAPSHOT_CREATE_INFO_ANDROID \
+  ((XrStructureType)1000786003U)
+#define XR_TYPE_SPATIAL_CAPABILITY_CONFIGURATION_DEPTH_RAYCAST_ANDROID \
+  ((XrStructureType)1000786000U)
+
+#define XR_SPATIAL_CAPABILITY_DEPTH_RAYCAST_ANDROID \
+  ((XrSpatialCapabilityEXT)1000786000U)
+#define XR_SPATIAL_COMPONENT_TYPE_RAYCAST_RESULT_ANDROID \
+  ((XrSpatialComponentTypeEXT)1000786000U)
+
+typedef struct XrSpatialRaycastResultDataANDROID {
+    XrPosef    hitPose;
+    float      distanceSquared;
+} XrSpatialRaycastResultDataANDROID;
+
+typedef struct XrSpatialCapabilityConfigurationDepthRaycastANDROID {
+    XrStructureType                     type;
+    const void* XR_MAY_ALIAS            next;
+    XrSpatialCapabilityEXT              capability;
+    uint32_t                            enabledComponentCount;
+    const XrSpatialComponentTypeEXT*    enabledComponents;
+} XrSpatialCapabilityConfigurationDepthRaycastANDROID;
+
+// XrSpatialBoundsRaycastANDROID extends XrSpatialDiscoverySnapshotCreateInfoEXT
+typedef struct XrSpatialBoundsRaycastANDROID {
+    XrStructureType             type;
+    const void* XR_MAY_ALIAS    next;
+    XrSpace                     space;
+    XrTime                      time;
+    XrVector3f                  origin;
+    XrVector3f                  direction;
+    float                       maxDistance;
+} XrSpatialBoundsRaycastANDROID;
+
+// XrSpatialComponentRaycastResultListANDROID extends XrSpatialComponentDataQueryResultEXT
+typedef struct XrSpatialComponentRaycastResultListANDROID {
+    XrStructureType                   type;
+    void* XR_MAY_ALIAS                next;
+    uint32_t                          raycastResultCount;
+    XrSpatialRaycastResultDataANDROID*    raycastResults;
+} XrSpatialComponentRaycastResultListANDROID;
+
+typedef struct XrSpatialRaycastSnapshotCreateInfoANDROID {
+  XrStructureType type;
+  const void* next;
+  uint32_t componentTypeCount;
+  const XrSpatialComponentTypeEXT* componentTypes;
+  const XrSpatialBoundsRaycastANDROID* raycastBounds;
+} XrSpatialRaycastSnapshotCreateInfoANDROID;
+
+typedef XrResult (XRAPI_PTR* PFN_xrCreateSpatialRaycastSnapshotANDROID)(
+  XrSpatialContextEXT spatialContext,
+  const XrSpatialRaycastSnapshotCreateInfoANDROID* createInfo,
+  XrSpatialSnapshotEXT* snapshot);
+
+#endif  // XR_ANDROID_spatial_discovery_raycast
+
+#ifndef XR_ANDROID_spatial_entity_bound_anchor
+#define XR_ANDROID_spatial_entity_bound_anchor 1
+#define XR_ANDROID_spatial_entity_bound_anchor_SPEC_VERSION 1
+#define XR_ANDROID_SPATIAL_ENTITY_BOUND_ANCHOR_EXTENSION_NAME "XR_ANDROID_spatial_entity_bound_anchor"
+
+#define XR_ERROR_SPATIAL_ANCHOR_ATTACHABLE_COMPONENT_NOT_FOUND_ANDROID ((XrResult) -1000790001U)
+#define XR_TYPE_SPATIAL_ANCHOR_PARENT_ANDROID ((XrStructureType) 1000790000U)
+
+// XrSpatialAnchorParentANDROID extends XrSpatialAnchorCreateInfoEXT
+typedef struct XrSpatialAnchorParentANDROID {
+    XrStructureType             type;
+    const void* XR_MAY_ALIAS    next;
+    XrSpatialEntityIdEXT        parentId;
+} XrSpatialAnchorParentANDROID;
+
+typedef XrResult (XRAPI_PTR *PFN_xrEnumerateSpatialAnchorAttachableComponentsANDROID)(
+    XrInstance                      instance,
+    XrSystemId                      systemId,
+    uint32_t                        attachableComponentCapacityInput,
+    uint32_t*                       attachableComponentCountOutput,
+    XrSpatialComponentTypeEXT*      attachableComponents);
+#endif /* XR_ANDROID_spatial_entity_bound_anchor */
+
 #endif  // THIRD_PARTY_OPENXR_DEV_XR_ANDROID_H_

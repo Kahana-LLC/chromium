@@ -17,12 +17,12 @@
 
 #include "base/auto_reset.h"
 #include "base/check_deref.h"
-#include "base/containers/contains.h"
 #include "base/json/json_reader.h"
 #include "base/run_loop.h"
 #include "base/strings/string_util_win.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/metrics/histogram_tester.h"
+#include "base/test/scoped_feature_list.h"
 #include "base/test/task_environment.h"
 #include "base/values.h"
 #include "base/win/atl.h"
@@ -3031,8 +3031,8 @@ TEST_F(AXPlatformNodeWinTest, UnlabeledImageAttributes) {
 
     std::vector<std::wstring> attribute_vector = base::SplitString(
         attributes, L";", base::KEEP_WHITESPACE, base::SPLIT_WANT_ALL);
-    EXPECT_TRUE(
-        base::Contains(attribute_vector, L"roledescription:Unlabeled image"));
+    EXPECT_TRUE(std::ranges::contains(attribute_vector,
+                                      L"roledescription:Unlabeled image"));
   }
 }
 
@@ -5882,8 +5882,13 @@ TEST_F(AXPlatformNodeWinTest, ComputeUIAControlType) {
   child10.role = ax::mojom::Role::kLineBreak;
   root.child_ids.push_back(child10.id);
 
+  AXNodeData child11;
+  child11.id = 12;
+  child11.role = ax::mojom::Role::kMenuItemSeparator;
+  root.child_ids.push_back(child11.id);
+
   Init(root, child1, child2, child3, child4, child5, child6, child7, child8,
-       child9, child10);
+       child9, child10, child11);
 
   EXPECT_UIA_INT_EQ(
       QueryInterfaceFromNodeId<IRawElementProviderSimple>(child1.id),
@@ -5915,6 +5920,9 @@ TEST_F(AXPlatformNodeWinTest, ComputeUIAControlType) {
   EXPECT_UIA_INT_EQ(
       QueryInterfaceFromNodeId<IRawElementProviderSimple>(child10.id),
       UIA_ControlTypePropertyId, int{UIA_TextControlTypeId});
+  EXPECT_UIA_INT_EQ(
+      QueryInterfaceFromNodeId<IRawElementProviderSimple>(child11.id),
+      UIA_ControlTypePropertyId, int{UIA_SeparatorControlTypeId});
 }
 
 TEST_F(AXPlatformNodeWinTest, IsUIAControlForStatusRole) {
@@ -8195,6 +8203,26 @@ TEST_F(AXPlatformNodeWinTest, DormantLiveGhostDestroyed) {
   // Zero instances and no ghost nodes.
   ASSERT_EQ(AXPlatformNodeWin::GetCounts(),
             (AXPlatformNodeWin::Counts{0U, 0U, 0U, 0U}));
+}
+
+// Test for UIA's MathML Implementation.
+TEST_F(AXPlatformNodeWinTest, UiaMathMlFeatureFlag) {
+  // Verify flag is disabled by default.
+  EXPECT_FALSE(base::FeatureList::IsEnabled(features::kUiaMathMlSupport));
+
+  // Verify flag can be enabled.
+  {
+    base::test::ScopedFeatureList scoped_feature_list;
+    scoped_feature_list.InitAndEnableFeature(features::kUiaMathMlSupport);
+    EXPECT_TRUE(base::FeatureList::IsEnabled(features::kUiaMathMlSupport));
+  }
+
+  // Verify flag can be explicitly disabled.
+  {
+    base::test::ScopedFeatureList scoped_feature_list;
+    scoped_feature_list.InitAndDisableFeature(features::kUiaMathMlSupport);
+    EXPECT_FALSE(base::FeatureList::IsEnabled(features::kUiaMathMlSupport));
+  }
 }
 
 }  // namespace ui

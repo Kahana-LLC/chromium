@@ -59,7 +59,6 @@ class CORE_EXPORT StyleImage : public GarbageCollected<StyleImage> {
   virtual ~StyleImage() = default;
 
   bool operator==(const StyleImage& other) const { return IsEqual(other); }
-  bool operator!=(const StyleImage& other) const { return !(*this == other); }
 
   // Returns a CSSValue representing the origin <image> value. May not be the
   // actual CSSValue from which this StyleImage was originally created if the
@@ -89,7 +88,7 @@ class CORE_EXPORT StyleImage : public GarbageCollected<StyleImage> {
 
   // Is the <image> considered same-origin? `failing_url` is set to the
   // (potentially formatted) URL of the first non-same-origin <image>.
-  virtual bool IsAccessAllowed(WTF::String& failing_url) const = 0;
+  virtual bool IsAccessAllowed(String& failing_url) const = 0;
 
   // Determine the natural dimensions (width, height, aspect ratio) of this
   // <image>, scaled by `multiplier`.
@@ -182,13 +181,12 @@ class CORE_EXPORT StyleImage : public GarbageCollected<StyleImage> {
   ALWAYS_INLINE bool IsPaintImage() const { return is_paint_image_; }
   ALWAYS_INLINE bool IsCrossfadeImage() const { return is_crossfade_; }
 
+  // TODO(crbug.com/473389267) This can never be true; it should be removed.
   bool IsLazyloadPossiblyDeferred() const {
     return is_lazyload_possibly_deferred_;
   }
 
   virtual bool IsLoadedAfterMouseover() const { return false; }
-
-  virtual bool IsFromOriginCleanStyleSheet() const { return true; }
 
   virtual void Trace(Visitor* visitor) const {}
 

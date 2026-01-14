@@ -24,6 +24,8 @@ constexpr char kProcessTypeWildcardStr[] = "*";
 constexpr char kBranchTypeGlobalStr[] = "global";
 constexpr char kBranchTypeThreadLocalDefaultStr[] = "*";
 constexpr char kBranchTypeMainStr[] = "main";
+constexpr char kBranchTypeIOStr[] = "io";
+constexpr char kBranchTypeAdvancedMemorySafetyChecksStr[] = "amsc";
 
 constexpr std::string_view GetSchedulerLoopQuarantineBranchTypeStr(
     SchedulerLoopQuarantineBranchType type) {
@@ -34,6 +36,10 @@ constexpr std::string_view GetSchedulerLoopQuarantineBranchTypeStr(
       return kBranchTypeThreadLocalDefaultStr;
     case SchedulerLoopQuarantineBranchType::kMain:
       return kBranchTypeMainStr;
+    case SchedulerLoopQuarantineBranchType::kIO:
+      return kBranchTypeIOStr;
+    case SchedulerLoopQuarantineBranchType::kAdvancedMemorySafetyChecks:
+      return kBranchTypeAdvancedMemorySafetyChecksStr;
   }
   NOTREACHED();
 }
@@ -49,6 +55,7 @@ constexpr char kKeyEnableQuarantine[] = "enable-quarantine";
 constexpr char kKeyEnableZapping[] = "enable-zapping";
 constexpr char kKeyLeakOnDestruction[] = "leak-on-destruction";
 constexpr char kKeyBranchCapacityInBytes[] = "branch-capacity-in-bytes";
+constexpr char kKeyMaxQuarantineSize[] = "max-quarantine-size";
 #endif  // PA_BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)
 }  // namespace
 
@@ -104,7 +111,9 @@ GetSchedulerLoopQuarantineConfiguration(
 
     // Falls back to thread-local default unless global.
     if (!config_entry &&
-        branch_type != SchedulerLoopQuarantineBranchType::kGlobal) {
+        branch_type != SchedulerLoopQuarantineBranchType::kGlobal &&
+        branch_type !=
+            SchedulerLoopQuarantineBranchType::kAdvancedMemorySafetyChecks) {
       config_entry =
           config_current_process->FindDict(kBranchTypeThreadLocalDefaultStr);
     }
@@ -139,6 +148,12 @@ GetSchedulerLoopQuarantineConfiguration(
   config.branch_capacity_in_bytes =
       static_cast<size_t>(config_entry->FindInt(kKeyBranchCapacityInBytes)
                               .value_or(config.branch_capacity_in_bytes));
+
+  int max_quarantine_size =
+      config_entry->FindInt(kKeyMaxQuarantineSize).value_or(-1);
+  if (0 < max_quarantine_size) {
+    config.max_quarantine_size = static_cast<size_t>(max_quarantine_size);
+  }
 #endif  // PA_BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)
 
   return config;

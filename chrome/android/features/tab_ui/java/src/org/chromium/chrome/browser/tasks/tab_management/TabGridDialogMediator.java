@@ -29,7 +29,6 @@ import org.chromium.base.ValueChangedCallback;
 import org.chromium.base.metrics.RecordUserAction;
 import org.chromium.base.supplier.LazyOneshotSupplier;
 import org.chromium.base.supplier.ObservableSupplier;
-import org.chromium.base.supplier.Supplier;
 import org.chromium.base.task.PostTask;
 import org.chromium.base.task.TaskTraits;
 import org.chromium.build.annotations.EnsuresNonNull;
@@ -56,6 +55,7 @@ import org.chromium.chrome.browser.tab_group_sync.TabGroupSyncServiceFactory;
 import org.chromium.chrome.browser.tab_ui.RecyclerViewPosition;
 import org.chromium.chrome.browser.tabmodel.TabClosingSource;
 import org.chromium.chrome.browser.tabmodel.TabClosureParamsUtils;
+import org.chromium.chrome.browser.tabmodel.TabCreatorUtil;
 import org.chromium.chrome.browser.tabmodel.TabGroupModelFilter;
 import org.chromium.chrome.browser.tabmodel.TabGroupModelFilterObserver;
 import org.chromium.chrome.browser.tabmodel.TabGroupTitleUtils;
@@ -64,18 +64,20 @@ import org.chromium.chrome.browser.tabmodel.TabGroupUtils.TabGroupCreationCallba
 import org.chromium.chrome.browser.tabmodel.TabGroupUtils.TabMovedCallback;
 import org.chromium.chrome.browser.tabmodel.TabModel;
 import org.chromium.chrome.browser.tabmodel.TabModelObserver;
-import org.chromium.chrome.browser.tasks.tab_management.MessageService.MessageType;
 import org.chromium.chrome.browser.tasks.tab_management.TabGridContextMenuCoordinator.ShowTabListEditor;
 import org.chromium.chrome.browser.tasks.tab_management.TabGridItemLongPressOrchestrator.CancelLongPressTabItemEventListener;
 import org.chromium.chrome.browser.tasks.tab_management.TabListEditorAction.ButtonType;
 import org.chromium.chrome.browser.tasks.tab_management.TabListEditorAction.IconPosition;
 import org.chromium.chrome.browser.tasks.tab_management.TabListEditorAction.ShowMode;
 import org.chromium.chrome.browser.tasks.tab_management.TabListEditorCoordinator.TabListEditorController;
+import org.chromium.chrome.browser.tasks.tab_management.TabSwitcherMessageManager.MessageType;
 import org.chromium.chrome.browser.tasks.tab_management.TabUiMetricsHelper.TabGroupColorChangeActionType;
 import org.chromium.chrome.browser.tasks.tab_management.TabUiMetricsHelper.TabListEditorOpenMetricGroups;
 import org.chromium.chrome.browser.tinker_tank.TinkerTankDelegate;
 import org.chromium.chrome.browser.ui.messages.snackbar.Snackbar;
 import org.chromium.chrome.browser.ui.messages.snackbar.SnackbarManager;
+import org.chromium.chrome.browser.url_constants.UrlConstantResolver;
+import org.chromium.chrome.browser.url_constants.UrlConstantResolverFactory;
 import org.chromium.chrome.tab_ui.R;
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetController;
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetController.SheetState;
@@ -99,7 +101,6 @@ import org.chromium.components.collaboration.messaging.PersistentNotificationTyp
 import org.chromium.components.data_sharing.DataSharingService;
 import org.chromium.components.data_sharing.GroupMember;
 import org.chromium.components.data_sharing.member_role.MemberRole;
-import org.chromium.components.embedder_support.util.UrlConstants;
 import org.chromium.components.tab_group_sync.EitherId.EitherGroupId;
 import org.chromium.components.tab_group_sync.LocalTabGroupId;
 import org.chromium.components.tab_group_sync.TabGroupSyncService;
@@ -117,8 +118,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Optional;
 import java.util.Set;
+import java.util.function.Supplier;
 
 /**
  * A mediator for the TabGridDialog component, responsible for communicating with the components'
@@ -388,7 +389,11 @@ public class TabGridDialogMediator
                     }
 
                     @Override
-                    public void willCloseTab(Tab tab, boolean didCloseAlone) {
+                    public void didRemoveTabForClosure(Tab tab) {
+                        onTabClose(tab);
+                    }
+
+                    private void onTabClose(Tab tab) {
                         if (!isVisible()) return;
 
                         // Ignore updates to tabs in other tab groups.
@@ -549,53 +554,51 @@ public class TabGridDialogMediator
             }
         }
 
-        if (ChromeFeatureList.sTabGroupParityBottomSheetAndroid.isEnabled()) {
-            TabGroupModelFilter filter = mCurrentTabGroupModelFilterSupplier.get();
-            assumeNonNull(filter);
-            if (profile != null && modalDialogManager != null) {
-                TabGroupCreationDialogManager tabGroupCreationDialogManager =
-                        new TabGroupCreationDialogManager(activity, modalDialogManager, null);
-                TabGroupCreationCallback tabGroupCreationCallback =
-                        groupId -> tabGroupCreationDialogManager.showDialog(groupId, filter);
+        TabGroupModelFilter filter = mCurrentTabGroupModelFilterSupplier.get();
+        assumeNonNull(filter);
+        if (profile != null && modalDialogManager != null) {
+            TabGroupCreationDialogManager tabGroupCreationDialogManager =
+                    new TabGroupCreationDialogManager(activity, modalDialogManager, null);
+            TabGroupCreationCallback tabGroupCreationCallback =
+                    groupId -> tabGroupCreationDialogManager.showDialog(groupId, filter);
 
-                // Dismiss the dialog if open. The dialog should be open when the bottom sheet is
-                // visible.
-                TabMovedCallback tabMovedCallback = () -> hideDialog(true);
-                mTabGroupListBottomSheetCoordinator =
-                        new TabGroupListBottomSheetCoordinator(
-                                activity,
-                                profile,
-                                tabGroupCreationCallback,
-                                tabMovedCallback,
-                                filter,
-                                bottomSheetController,
-                                true,
-                                false);
+            // Dismiss the dialog if open. The dialog should be open when the bottom sheet is
+            // visible.
+            TabMovedCallback tabMovedCallback = () -> hideDialog(true);
+            mTabGroupListBottomSheetCoordinator =
+                    new TabGroupListBottomSheetCoordinator(
+                            activity,
+                            profile,
+                            tabGroupCreationCallback,
+                            tabMovedCallback,
+                            filter,
+                            bottomSheetController,
+                            true,
+                            false);
 
-                CollaborationService collaborationService =
-                        CollaborationServiceFactory.getForProfile(profile);
-                ShowTabListEditor showTabListEditor =
-                        tabId -> {
-                            setupAndShowTabListEditor(mCurrentTabGroupId);
-                            TabListEditorController tabListEditorController =
-                                    mTabListEditorControllerSupplier.get();
-                            assumeNonNull(tabListEditorController);
-                            tabListEditorController.selectTabs(
-                                    Set.of(TabListEditorItemSelectionId.createTabId(tabId)));
-                        };
-                mTabGridContextMenuCoordinator =
-                        new TabGridContextMenuCoordinator(
-                                activity,
-                                tabBookmarkerSupplier,
-                                profile,
-                                filter,
-                                mTabGroupListBottomSheetCoordinator,
-                                tabGroupCreationDialogManager,
-                                shareDelegateSupplier,
-                                mTabGroupSyncService,
-                                collaborationService,
-                                showTabListEditor);
-            }
+            CollaborationService collaborationService =
+                    CollaborationServiceFactory.getForProfile(profile);
+            ShowTabListEditor showTabListEditor =
+                    tabId -> {
+                        setupAndShowTabListEditor(mCurrentTabGroupId);
+                        TabListEditorController tabListEditorController =
+                                mTabListEditorControllerSupplier.get();
+                        assumeNonNull(tabListEditorController);
+                        tabListEditorController.selectTabs(
+                                Set.of(TabListEditorItemSelectionId.createTabId(tabId)));
+                    };
+            mTabGridContextMenuCoordinator =
+                    new TabGridContextMenuCoordinator(
+                            activity,
+                            tabBookmarkerSupplier,
+                            profile,
+                            filter,
+                            mTabGroupListBottomSheetCoordinator,
+                            tabGroupCreationDialogManager,
+                            shareDelegateSupplier,
+                            mTabGroupSyncService,
+                            collaborationService,
+                            showTabListEditor);
         }
 
         mBottomSheetObserver =
@@ -770,7 +773,9 @@ public class TabGridDialogMediator
         if (mCurrentTabGroupId != null) {
             TabGroupModelFilter filter = mCurrentTabGroupModelFilterSupplier.get();
             assumeNonNull(filter);
-            filter.setTabGroupColor(mCurrentTabGroupId, selectedColor);
+            if (filter.tabGroupExists(mCurrentTabGroupId)) {
+                filter.setTabGroupColor(mCurrentTabGroupId, selectedColor);
+            }
         }
     }
 
@@ -849,7 +854,7 @@ public class TabGridDialogMediator
     private void updateColorProperties(Context context, boolean isIncognito) {
         @ColorInt
         int dialogBackgroundColor =
-                TabUiThemeProvider.getTabGridDialogBackgroundColor(context, isIncognito);
+                TabUiThemeProvider.getTabGroupDialogBackgroundColor(context, isIncognito);
         ColorStateList tintList =
                 isIncognito
                         ? AppCompatResources.getColorStateList(
@@ -872,8 +877,8 @@ public class TabGridDialogMediator
         @ColorInt
         int hairlineColor =
                 isIncognito
-                        ? ContextCompat.getColor(context, R.color.divider_line_bg_color_light)
-                        : SemanticColorUtils.getDividerLineBgColor(context);
+                        ? ContextCompat.getColor(context, R.color.divider_color_light)
+                        : SemanticColorUtils.getDividerColor(context);
 
         mModel.set(TabGridDialogProperties.DIALOG_BACKGROUND_COLOR, dialogBackgroundColor);
         mModel.set(TabGridDialogProperties.HAIRLINE_COLOR, hairlineColor);
@@ -1005,17 +1010,22 @@ public class TabGridDialogMediator
             List<Tab> tabsInGroup = getTabsInGroup(mCurrentTabGroupId);
             hideDialog(false);
 
+            TabGroupModelFilter filter = mCurrentTabGroupModelFilterSupplier.get();
+            assumeNonNull(filter);
+
             if (tabsInGroup.isEmpty()) {
-                TabGroupModelFilter filter = mCurrentTabGroupModelFilterSupplier.get();
-                assumeNonNull(filter);
                 TabModel tabModel = filter.getTabModel();
-                tabModel.getTabCreator().launchNtp();
+                TabCreatorUtil.launchNtp(tabModel.getTabCreator());
                 return;
             }
 
+            Profile profile = filter.getTabModel().getProfile();
+            UrlConstantResolver urlConstantResolver =
+                    UrlConstantResolverFactory.getForProfile(profile);
+
             TabGroupUtils.openUrlInGroup(
                     assumeNonNull(mCurrentTabGroupModelFilterSupplier.get()),
-                    UrlConstants.NTP_URL,
+                    urlConstantResolver.getNtpUrl(),
                     tabsInGroup.get(tabsInGroup.size() - 1).getId(),
                     TabLaunchType.FROM_TAB_GROUP_UI);
             RecordUserAction.record("MobileNewTabOpened." + mComponentName);
@@ -1447,9 +1457,7 @@ public class TabGridDialogMediator
         assumeNonNull(mMessagingBackendService);
         List<PersistentMessage> messages =
                 mMessagingBackendService.getMessagesForGroup(
-                        eitherGroupId,
-                        /* type= */ Optional.of(PersistentNotificationType.DIRTY_TAB));
-
+                        eitherGroupId, /* type= */ PersistentNotificationType.DIRTY_TAB);
         Map<Integer, Integer> collaborationEventCounts = new HashMap<>();
         for (PersistentMessage message : messages) {
             collaborationEventCounts.merge(message.collaborationEvent, 1, Integer::sum);
@@ -1461,8 +1469,7 @@ public class TabGridDialogMediator
 
         // Query for tombstoned entries from backend and look for the tab removals.
         List<PersistentMessage> tombstonedMessages =
-                mMessagingBackendService.getMessages(
-                        Optional.of(PersistentNotificationType.TOMBSTONED));
+                mMessagingBackendService.getMessages(PersistentNotificationType.TOMBSTONED);
         int tabsClosed = 0;
         for (PersistentMessage message : tombstonedMessages) {
             if (message.collaborationEvent != CollaborationEvent.TAB_REMOVED) continue;

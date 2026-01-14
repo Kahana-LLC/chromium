@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "ui/events/ozone/evdev/event_device_info.h"
 
 #include <linux/input.h>
@@ -14,6 +9,7 @@
 #include <array>
 #include <cstring>
 
+#include "base/compiler_specific.h"
 #include "base/containers/fixed_flat_set.h"
 #include "base/containers/span.h"
 #include "base/feature_list.h"
@@ -513,12 +509,13 @@ bool EventDeviceInfo::Initialize(int fd, const base::FilePath& path) {
     if (!HasAbsEvent(i))
       continue;
 
-    memset(request.data(), 0, request.memsize());
+    UNSAFE_TODO(memset(request.data(), 0, request.memsize()));
     request_code = i;
     GetSlotValues(fd, path, request);
 
     std::vector<int32_t>* slots = &slot_values_[i - EVDEV_ABS_MT_FIRST];
-    slots->assign(request.begin() + 1, request.begin() + 1 + max_num_slots);
+    slots->assign(UNSAFE_TODO(request.begin() + 1),
+                  UNSAFE_TODO(request.begin() + 1 + max_num_slots));
   }
 
   if (!GetDeviceName(fd, path, &name_))
@@ -577,7 +574,7 @@ void EventDeviceInfo::SetAbsInfo(unsigned int code,
   if (code > ABS_MAX)
     return;
 
-  memcpy(&abs_info_[code], &abs_info, sizeof(abs_info));
+  UNSAFE_TODO(memcpy(&abs_info_[code], &abs_info, sizeof(abs_info)));
 }
 
 void EventDeviceInfo::SetAbsMtSlots(unsigned int code,
@@ -612,55 +609,55 @@ void EventDeviceInfo::SetName(const std::string& name) {
 bool EventDeviceInfo::HasEventType(unsigned int type) const {
   if (type > EV_MAX)
     return false;
-  return EvdevBitIsSet(ev_bits_.data(), type);
+  return EvdevBitIsSet(ev_bits_, type);
 }
 
 bool EventDeviceInfo::HasKeyEvent(unsigned int code) const {
   if (code > KEY_MAX)
     return false;
-  return EvdevBitIsSet(key_bits_.data(), code);
+  return EvdevBitIsSet(key_bits_, code);
 }
 
 bool EventDeviceInfo::HasRelEvent(unsigned int code) const {
   if (code > REL_MAX)
     return false;
-  return EvdevBitIsSet(rel_bits_.data(), code);
+  return EvdevBitIsSet(rel_bits_, code);
 }
 
 bool EventDeviceInfo::HasAbsEvent(unsigned int code) const {
   if (code > ABS_MAX)
     return false;
-  return EvdevBitIsSet(abs_bits_.data(), code);
+  return EvdevBitIsSet(abs_bits_, code);
 }
 
 bool EventDeviceInfo::HasMscEvent(unsigned int code) const {
   if (code > MSC_MAX)
     return false;
-  return EvdevBitIsSet(msc_bits_.data(), code);
+  return EvdevBitIsSet(msc_bits_, code);
 }
 
 bool EventDeviceInfo::HasSwEvent(unsigned int code) const {
   if (code > SW_MAX)
     return false;
-  return EvdevBitIsSet(sw_bits_.data(), code);
+  return EvdevBitIsSet(sw_bits_, code);
 }
 
 bool EventDeviceInfo::HasLedEvent(unsigned int code) const {
   if (code > LED_MAX)
     return false;
-  return EvdevBitIsSet(led_bits_.data(), code);
+  return EvdevBitIsSet(led_bits_, code);
 }
 
 bool EventDeviceInfo::HasFfEvent(unsigned int code) const {
   if (code > FF_MAX)
     return false;
-  return EvdevBitIsSet(ff_bits_.data(), code);
+  return EvdevBitIsSet(ff_bits_, code);
 }
 
 bool EventDeviceInfo::HasProp(unsigned int code) const {
   if (code > INPUT_PROP_MAX)
     return false;
-  return EvdevBitIsSet(prop_bits_.data(), code);
+  return EvdevBitIsSet(prop_bits_, code);
 }
 
 bool EventDeviceInfo::SupportsHeatmap() const {

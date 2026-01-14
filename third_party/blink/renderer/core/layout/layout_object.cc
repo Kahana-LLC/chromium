@@ -30,6 +30,7 @@
 
 #include <algorithm>
 #include <memory>
+#include <type_traits>
 #include <utility>
 
 #include "base/auto_reset.h"
@@ -41,7 +42,7 @@
 #include "third_party/blink/renderer/core/css/resolver/style_adjuster.h"
 #include "third_party/blink/renderer/core/css/resolver/style_resolver.h"
 #include "third_party/blink/renderer/core/css/style_change_reason.h"
-#include "third_party/blink/renderer/core/css/style_containment_scope_tree.h"
+#include "third_party/blink/renderer/core/css/style_containment_scope.h"
 #include "third_party/blink/renderer/core/css/style_engine.h"
 #include "third_party/blink/renderer/core/display_lock/display_lock_utilities.h"
 #include "third_party/blink/renderer/core/dom/column_pseudo_element.h"
@@ -86,6 +87,7 @@
 #include "third_party/blink/renderer/core/layout/forms/layout_fieldset.h"
 #include "third_party/blink/renderer/core/layout/geometry/transform_state.h"
 #include "third_party/blink/renderer/core/layout/grid/layout_grid.h"
+#include "third_party/blink/renderer/core/layout/grid_lanes/layout_grid_lanes.h"
 #include "third_party/blink/renderer/core/layout/hit_test_result.h"
 #include "third_party/blink/renderer/core/layout/layout_block_flow.h"
 #include "third_party/blink/renderer/core/layout/layout_counter.h"
@@ -106,7 +108,6 @@
 #include "third_party/blink/renderer/core/layout/list/layout_inside_list_marker.h"
 #include "third_party/blink/renderer/core/layout/list/layout_list_item.h"
 #include "third_party/blink/renderer/core/layout/list/layout_outside_list_marker.h"
-#include "third_party/blink/renderer/core/layout/masonry/layout_masonry.h"
 #include "third_party/blink/renderer/core/layout/mathml/layout_mathml_block.h"
 #include "third_party/blink/renderer/core/layout/physical_box_fragment.h"
 #include "third_party/blink/renderer/core/layout/svg/svg_layout_info.h"
@@ -326,8 +327,6 @@ struct SameSizeAsLayoutObject : public GarbageCollected<SameSizeAsLayoutObject>,
 
 ASSERT_SIZE(LayoutObject, SameSizeAsLayoutObject);
 
-bool LayoutObject::affects_parent_block_ = false;
-
 LayoutObject* LayoutObject::CreateObject(Element* element,
                                          const ComputedStyle& style) {
   DCHECK(IsAllowedToModifyLayoutTreeStructure(element->GetDocument()));
@@ -410,10 +409,10 @@ LayoutObject* LayoutObject::CreateObject(Element* element,
     case EDisplay::kInlineGrid:
       UseCounter::Count(element->GetDocument(), WebFeature::kCSSGridLayout);
       return MakeGarbageCollected<LayoutGrid>(element);
-    case EDisplay::kMasonry:
-    case EDisplay::kInlineMasonry:
-      // TODO(ethavar): Add use counter for CSS Masonry.
-      return MakeGarbageCollected<LayoutMasonry>(element);
+    case EDisplay::kGridLanes:
+    case EDisplay::kInlineGridLanes:
+      // TODO(almaher): Add use counter for CSS Grid Lanes.
+      return MakeGarbageCollected<LayoutGridLanes>(element);
     case EDisplay::kMath:
     case EDisplay::kBlockMath:
       return MakeGarbageCollected<LayoutMathMLBlock>(element);
@@ -495,6 +494,20 @@ bool LayoutObject::IsDescendantOf(const LayoutObject* obj) const {
   return false;
 }
 
+bool LayoutObject::IsContainedBy(const LayoutObject* obj) const {
+  NOT_DESTROYED();
+  AncestorSkipInfo skip_info(obj);
+  for (const LayoutObject* r = this; r; r = r->Container(&skip_info)) {
+    if (r == obj) {
+      return true;
+    }
+    if (skip_info.AncestorSkipped()) {
+      return false;
+    }
+  }
+  return false;
+}
+
 bool LayoutObject::IsInlineRuby() const {
   NOT_DESTROYED();
   return IsLayoutInline() && StyleRef().Display() == EDisplay::kRuby;
@@ -548,10 +561,10 @@ bool LayoutObject::IsStyleGenerated() const {
   return !node || node->IsPseudoElement();
 }
 
-void LayoutObject::MarkMayHaveAnchorQuery() {
-  for (LayoutObject* runner = this; runner && !runner->MayHaveAnchorQuery();
+void LayoutObject::MarkMayContainAnchor() {
+  for (LayoutObject* runner = this; runner && !runner->MayContainAnchor();
        runner = runner->Parent()) {
-    runner->SetSelfMayHaveAnchorQuery();
+    runner->SetSelfMayContainAnchor();
   }
 }
 
@@ -705,8 +718,9 @@ void LayoutObject::AddChild(LayoutObject* new_child,
       children->InsertChildNode(this, table, before_child);
     }
     table->AddChild(new_child);
-  } else if (new_child->IsHorizontalWritingMode() || !new_child->IsText())
-      [[likely]] {
+  } else if (!LayoutTextCombine::IsSupportedMode(
+                 new_child->StyleRef().GetWritingMode()) ||
+             !new_child->IsText()) [[likely]] {
     children->InsertChildNode(this, new_child, before_child);
   } else if (IsA<LayoutTextCombine>(*this)) {
     DCHECK(LayoutTextCombine::ShouldBeParentOf(*new_child)) << new_child;
@@ -761,7 +775,16 @@ void LayoutObject::RemoveChild(LayoutObject* old_child) {
   if (!children)
     return;
 
+  LayoutBoxModelObject* previous_sibling =
+      DynamicTo<LayoutBoxModelObject>(old_child->PreviousSibling());
+  LayoutBoxModelObject* next_sibling =
+      DynamicTo<LayoutBoxModelObject>(old_child->NextSibling());
+
   children->RemoveChildNode(this, old_child);
+
+  if (RuntimeEnabledFeatures::LayoutMergeAnonymousFixEnabled()) {
+    LayoutBoxModelObject::AttemptToMerge(previous_sibling, next_sibling);
+  }
 }
 
 bool LayoutObject::IsInTopOrViewTransitionLayer() const {
@@ -1241,7 +1264,6 @@ LayoutBox* LayoutObject::EnclosingBox() const {
     curr = curr->Parent();
   }
 
-  DUMP_WILL_BE_NOTREACHED();
   return nullptr;
 }
 
@@ -1352,11 +1374,11 @@ static inline bool ObjectIsRelayoutBoundary(const LayoutObject* object) {
     return false;
   }
 
-  // Similarly to flex items, we can't relayout a grid item independently of
-  // its container. This also applies to out of flow items of the grid, as we
-  // need the cached information of the grid to recompute the out of flow
-  // item's containing block rect.
-  if (box->ContainingBlock()->IsLayoutGrid()) {
+  // Similarly to flex items, we can't relayout a grid/grid-lanes item
+  // independently of its container. This also applies to out of flow items of
+  // the grid, as we need the cached information of the grid to recompute the
+  // out of flow item's containing block rect.
+  if (box->ContainingBlock()->IsLayoutGridOrGridLanes()) {
     return false;
   }
 
@@ -1382,9 +1404,9 @@ static inline bool ObjectIsRelayoutBoundary(const LayoutObject* object) {
     return false;
   }
 
-  // Anchor queries should be propagated across the layout boundaries, even
-  // when `contain: strict` is explicitly set.
-  if (fragment.HasAnchorQuery()) {
+  // Anchors should be propagated across the layout boundaries, even when
+  // `contain: strict` is explicitly set.
+  if (fragment.HasChildAnchors()) {
     return false;
   }
 
@@ -1622,7 +1644,17 @@ void LayoutObject::MarkParentForSpannerOrOutOfFlowPositionedChange() {
   //
   // Note that this isn't necessary if we're dealing with a column spanner here,
   // but in order to keep things simple, we'll make no difference.
-  object->SetNeedsCollectInlines();
+  bool is_atomic_inline_level = false;
+  if (RuntimeEnabledFeatures::SkipSetNeedsCollectInlinesEnabled()) {
+    if (auto* block_flow = DynamicTo<LayoutBlockFlow>(object)) {
+      if (block_flow->IsAtomicInlineLevel()) {
+        is_atomic_inline_level = true;
+      }
+    }
+  }
+  if (!is_atomic_inline_level) {
+    object->SetNeedsCollectInlines();
+  }
 
   const LayoutBlock* containing_block = ContainingBlock();
   while (object != containing_block) {
@@ -1686,8 +1718,10 @@ static inline bool ShouldInvalidateBeyond(LayoutObject* o) {
 
   // Invalidate past any subgrids. NOTE: we do this in both axes as we don't
   // know what writing-mode the root grid is in.
-  if (o->IsLayoutGrid()) {
+  if (o->IsLayoutGridOrGridLanes()) {
     const auto& style = o->StyleRef();
+    // TODO(almaher): Grid-lanes can only be subgridded in the grid axis, so we
+    // will only need to check in the grid/track sizing axis for grid-lanes.
     if (style.GridTemplateColumns().IsSubgriddedAxis() ||
         style.GridTemplateRows().IsSubgriddedAxis()) {
       return true;
@@ -2235,22 +2269,107 @@ void LayoutObject::InvalidatePaint(
   ObjectPaintInvalidatorWithContext(*this, context).InvalidatePaint();
 }
 
+namespace {
+
+// Applies local-root viewport clipping and remote-root mapping for a rect that
+// has already been mapped to the local root's coordinate space. Returns true
+// on success. Sets |intersects| to false (and empties |rect|) when clipping
+// removes all area, matching the inclusive/intersect semantics expected by
+// callers.
+bool ApplyViewportClippingAndOffsets(gfx::RectF& rect,
+                                     LayoutView& layout_view,
+                                     VisualRectFlags visual_rect_flags,
+                                     bool& intersects) {
+  PhysicalRect physical_rect = PhysicalRect::EnclosingRect(rect);
+  // When requested, skip all ancestor + viewport clipping even for the
+  // GeometryMapper viewport fast path. This keeps the fast path consistent with
+  // the slow path (LayoutBox::ApplyBoxClips and LayoutView's viewport clip) so
+  // callers can compute both unclipped and clipped rectangles using the same
+  // mapping pipeline.
+  const bool apply_local_root_clip =
+      !(visual_rect_flags & VisualRectFlags::kSkipAncestorAndViewportClips) &&
+      !(visual_rect_flags & kDontApplyMainFrameOverflowClip);
+
+  if (apply_local_root_clip) {
+    PhysicalRect viewport_rect = layout_view.ViewRect();
+    if (visual_rect_flags & kEdgeInclusive) {
+      if (!physical_rect.InclusiveIntersect(viewport_rect)) {
+        rect = gfx::RectF();
+        intersects = false;
+        return true;
+      }
+    } else {
+      physical_rect.Intersect(viewport_rect);
+      if (physical_rect.IsEmpty()) {
+        rect = gfx::RectF();
+        intersects = false;
+        return true;
+      }
+    }
+  }
+
+  LocalFrameView* frame_view = layout_view.GetFrameView();
+  if (!frame_view) {
+    return false;
+  }
+  if (!frame_view->MapToVisualRectInRemoteRootFrame(
+          physical_rect, apply_local_root_clip,
+          visual_rect_flags & kVisualRectApplyRemoteViewportTransform)) {
+    return false;
+  }
+  rect = gfx::RectF(physical_rect);
+  return true;
+}
+
+}  // namespace
+
 bool LayoutObject::MapToVisualRectInAncestorSpaceInternalFastPath(
-    const LayoutBoxModelObject* ancestor,
-    gfx::RectF& rect,
+    const LayoutBoxModelObject* ancestor_or_null_for_viewport,
+    gfx::RectF& rect_out,
     VisualRectFlags visual_rect_flags,
     bool& intersects) const {
   NOT_DESTROYED();
-  intersects = true;
-  if (!(visual_rect_flags & kUseGeometryMapper) || !ancestor ||
-      !ancestor->FirstFragment().HasLocalBorderBoxProperties())
+  // Do all mapping work on a local copy so we can safely fall back to the slow
+  // path without mutating the caller's input rect when a fast-path dependency
+  // (e.g. remote root mapping) is unavailable.
+  gfx::RectF rect = rect_out;
+  Document& document = GetDocument();
+  LayoutView* layout_view = document.GetLayoutView();
+  if (!layout_view) {
     return false;
+  }
 
-  if (ancestor == this)
+  // Allow a null ancestor to mean the local root viewport when using the
+  // GeometryMapper fast path, but keep using the slow path for embedded frames
+  // so the embedder chain is walked.
+  const bool map_to_viewport = !ancestor_or_null_for_viewport;
+  if (map_to_viewport && document.LocalOwner()) {
+    // TODO(crbug.com/40187338): Migrate embedded-frame viewport mapping to the
+    // GeometryMapper fast path instead of falling back to the slow embedder
+    // walk.
+    return false;
+  }
+  // Use fast path for viewport mapping if enabled (fall back to slow path).
+  if (map_to_viewport &&
+      !RuntimeEnabledFeatures::BlinkGeometryMapperViewportFastPathEnabled()) {
+    return false;
+  }
+  const LayoutBoxModelObject* ancestor =
+      map_to_viewport ? layout_view : ancestor_or_null_for_viewport;
+
+  intersects = true;
+  if (!(visual_rect_flags & kUseGeometryMapper) ||
+      !ancestor->FirstFragment().HasLocalBorderBoxProperties()) {
+    return false;
+  }
+
+  if (ancestor == this) {
     return true;
+  }
 
   AncestorSkipInfo skip_info(ancestor);
-  PropertyTreeState container_properties(PropertyTreeState::kUninitialized);
+  PropertyTreeStateOrAlias container_properties(
+      PropertyTreeState::kUninitialized);
   const LayoutObject* property_container = GetPropertyContainer(
       &skip_info, &container_properties, visual_rect_flags);
   if (!property_container)
@@ -2262,14 +2381,35 @@ bool LayoutObject::MapToVisualRectInAncestorSpaceInternalFastPath(
   // FirstFragment().LocalBorderBoxProperties() (if this == property_container)
   // or property_container->FirstFragment().ContentsProperties().
   rect.Offset(gfx::Vector2dF(FirstFragment().PaintOffset()));
-  if (property_container != ancestor) {
+
+  // For viewport mapping, run GeometryMapper to reach the local root viewport.
+  if (map_to_viewport) {
+    PropertyTreeState unaliased_container = container_properties.Unalias();
     FloatClipRect clip_rect(rect);
-    intersects = GeometryMapper::LocalToAncestorVisualRect(
-        container_properties, ancestor->FirstFragment().ContentsProperties(),
-        clip_rect, kIgnoreOverlayScrollbarSize, visual_rect_flags);
+    intersects = GeometryMapper::LocalToLocalRootViewportRect(
+        unaliased_container, clip_rect, kIgnoreOverlayScrollbarSize,
+        visual_rect_flags);
     rect = clip_rect.Rect();
+    if (!ApplyViewportClippingAndOffsets(rect, *layout_view, visual_rect_flags,
+                                         intersects)) {
+      return false;
+    }
+  } else {
+    // For ancestor mapping, only map when there's a distance to cover.
+    if (property_container != ancestor) {
+      PropertyTreeState unaliased_container = container_properties.Unalias();
+      PropertyTreeState ancestor_state =
+          ancestor->FirstFragment().ContentsProperties().Unalias();
+      FloatClipRect clip_rect(rect);
+      intersects = GeometryMapper::LocalToAncestorVisualRect(
+          unaliased_container, ancestor_state, clip_rect,
+          kIgnoreOverlayScrollbarSize, visual_rect_flags);
+      rect = clip_rect.Rect();
+    }
+    rect.Offset(-gfx::Vector2dF(ancestor->FirstFragment().PaintOffset()));
   }
-  rect.Offset(-gfx::Vector2dF(ancestor->FirstFragment().PaintOffset()));
+
+  rect_out = rect;
   return true;
 }
 
@@ -2794,7 +2934,9 @@ void LayoutObject::SetStyle(const ComputedStyle* style,
   // animation affecting that property may require paint invalidation.
   diff = AdjustForCompositableAnimationPaint(style_, style, GetNode(), diff);
 
-  StyleWillChange(diff, *style);
+  StyleChangeContext style_change_context;
+
+  StyleWillChange(diff, *style, style_change_context);
 
   const ComputedStyle* old_style = std::move(style_);
   SetStyleInternal(std::move(style));
@@ -2805,7 +2947,7 @@ void LayoutObject::SetStyle(const ComputedStyle* style,
 
   bool does_not_need_layout_or_paint_invalidation = !parent_;
 
-  StyleDidChange(diff, old_style);
+  StyleDidChange(diff, old_style, style_change_context);
 
   // FIXME: |this| might be destroyed here. This can currently happen for a
   // LayoutTextFragment when its first-letter block gets an update in
@@ -2875,8 +3017,9 @@ void LayoutObject::SetStyle(const ComputedStyle* style,
     }
   }
 
-  // Clip Path animations need a property update when they're composited, as it
-  // changes between mask based and path based clip.
+  // Main thread clip path animations always require paint property updates,
+  // and cc thread clip path animations require updates when stopping or
+  // starting. See: AdjustForCompositableAnimationPaint.
   if (old_style && diff.NeedsNormalPaintInvalidation() &&
       diff.ClipPathChanged()) {
     SetNeedsPaintPropertyUpdate();
@@ -2964,7 +3107,8 @@ void LayoutObject::UpdateFirstLineImageObservers(
 }
 
 void LayoutObject::StyleWillChange(StyleDifference diff,
-                                   const ComputedStyle& new_style) {
+                                   const ComputedStyle& new_style,
+                                   StyleChangeContext& style_change_context) {
   NOT_DESTROYED();
   if (style_) {
     bool visibility_changed = style_->Visibility() != new_style.Visibility();
@@ -3015,7 +3159,7 @@ void LayoutObject::StyleWillChange(StyleDifference diff,
           *this);
     }
 
-    affects_parent_block_ =
+    style_change_context.became_normal_flow =
         IsFloatingOrOutOfFlowPositioned() &&
         ((!new_style.IsFloating() ||
           new_style.IsInsideDisplayIgnoringFloatingChildren()) &&
@@ -3029,8 +3173,6 @@ void LayoutObject::StyleWillChange(StyleDifference diff,
       SetFloating(false);
       ClearPositionedState();
     }
-  } else {
-    affects_parent_block_ = false;
   }
 
   // Elements with non-auto touch-action will send a SetTouchAction message
@@ -3069,16 +3211,10 @@ void LayoutObject::StyleWillChange(StyleDifference diff,
   }
 }
 
-static bool AreNonIdenticalCursorListsEqual(const ComputedStyle* a,
-                                            const ComputedStyle* b) {
-  DCHECK_NE(a->Cursors(), b->Cursors());
-  return a->Cursors() && b->Cursors() && *a->Cursors() == *b->Cursors();
-}
-
 static inline bool AreCursorsEqual(const ComputedStyle* a,
                                    const ComputedStyle* b) {
-  return a->Cursor() == b->Cursor() && (a->Cursors() == b->Cursors() ||
-                                        AreNonIdenticalCursorListsEqual(a, b));
+  return a->Cursor() == b->Cursor() &&
+         base::ValuesEquivalent(a->Cursors(), b->Cursors());
 }
 
 void LayoutObject::SetScrollAnchorDisablingStyleChangedOnAncestor() {
@@ -3124,8 +3260,10 @@ bool LayoutObject::BelongsToElementChangingOverflowBehaviour() const {
          IsA<HTMLImageElement>(element);
 }
 
-void LayoutObject::StyleDidChange(StyleDifference diff,
-                                  const ComputedStyle* old_style) {
+void LayoutObject::StyleDidChange(
+    StyleDifference diff,
+    const ComputedStyle* old_style,
+    const StyleChangeContext& style_change_context) {
   NOT_DESTROYED();
   if (HasHiddenBackface()) {
     if (Parent() && Parent()->StyleRef().UsedTransformStyle3D() ==
@@ -3199,8 +3337,9 @@ void LayoutObject::StyleDidChange(StyleDifference diff,
   // it's not affected.
   SetOutlineMayBeAffectedByDescendants(style_->HasOutline());
 
-  if (affects_parent_block_)
+  if (style_change_context.became_normal_flow) {
     HandleDynamicFloatPositionChange(this);
+  }
 
   if (diff.NeedsFullLayout()) {
     // If the in-flow state of an element is changed, disable scroll
@@ -3218,8 +3357,8 @@ void LayoutObject::StyleDidChange(StyleDifference diff,
         }
       }
     } else if (IsBox() &&
-               To<LayoutBox>(this)->IsValidColumnSpanner(*old_style) !=
-                   To<LayoutBox>(this)->IsValidColumnSpanner(*style_)) {
+               To<LayoutBox>(this)->IsValidColumnSpannerInTree(*old_style) !=
+                   To<LayoutBox>(this)->IsValidColumnSpannerInTree(*style_)) {
       MarkParentForSpannerOrOutOfFlowPositionedChange();
     }
 
@@ -3288,7 +3427,7 @@ void LayoutObject::StyleDidChange(StyleDifference diff,
   }
 
   if (StyleRef().AnchorName())
-    MarkMayHaveAnchorQuery();
+    MarkMayContainAnchor();
 
   const bool style_focusability = style_ && style_->IsFocusable();
   const bool old_style_focusability = old_style && old_style->IsFocusable();
@@ -3842,10 +3981,10 @@ void LayoutObject::InsertedIntoTree() {
     Parent()->DirtyLinesFromChangedChild(this);
 
   if (const Element* element = DynamicTo<Element>(GetNode());
-      element && element->HasImplicitlyAnchoredElement()) {
-    MarkMayHaveAnchorQuery();
-  } else if (MayHaveAnchorQuery()) {
-    Parent()->MarkMayHaveAnchorQuery();
+      element && element->MayBeImplicitAnchor()) {
+    MarkMayContainAnchor();
+  } else if (MayContainAnchor()) {
+    Parent()->MarkMayContainAnchor();
   }
 }
 
@@ -3966,23 +4105,11 @@ void LayoutObject::DestroyAndCleanupAnonymousWrappers(
 
     // We need to keep the anonymous parent, if it won't become empty by the
     // removal of this LayoutObject.
-    if (destroy_root->PreviousSibling())
+    if (destroy_root->PreviousSibling()) {
       break;
-    if (const LayoutObject* sibling = destroy_root->NextSibling()) {
-      // TODO(ikilpatrick): Delete this branch - logic unreachable.
-      if (destroy_root->GetNode()) {
-        // When there are inline continuations, there may be multiple layout
-        // objects generated from the same node, and those are special. They
-        // will be removed as part of destroying |this|, in
-        // LayoutInline::WillBeDestroyed(). So if that's all we have left, we
-        // need to realize now that the anonymous containing block will become
-        // empty. So we have to destroy it.
-        while (sibling && sibling->GetNode() == destroy_root->GetNode())
-          sibling = sibling->NextSibling();
-      }
-      if (sibling)
-        break;
-      DCHECK(destroy_root->IsLayoutInline());
+    }
+    if (destroy_root->NextSibling()) {
+      break;
     }
   }
 
@@ -4331,6 +4458,19 @@ void LayoutObject::ImageNotifyFinished(ImageResourceContent* image) {
     ImageElementTiming::From(*window).NotifyImageFinished(*this, image);
   if (LocalFrameView* frame_view = GetFrameView())
     frame_view->GetPaintTimingDetector().NotifyImageFinished(*this, image);
+
+  if (!image->ErrorOccurred() && image->IsAdResource()) {
+    if (auto* element = DynamicTo<Element>(GetNode())) {
+      // Skip setting the ad status for `HTMLFrameOwnerElement`, as frame owners
+      // manage their ad status separately (i.e., requires content frame
+      // notifications and allows untagging).
+      //
+      // TODO(yaoxia): Determine if this can be replaced with a DCHECK.
+      if (!IsA<HTMLFrameOwnerElement>(element)) {
+        element->SetIsAdRelated();
+      }
+    }
+  }
 }
 
 Element* LayoutObject::ScrollParent(const Element* base) const {
@@ -4402,16 +4542,10 @@ Element* LayoutObject::OffsetParent(const Element* base) const {
     return nullptr;
 
   bool in_position_fixed = IsFixedPositioned();
-  if (in_position_fixed &&
-      !RuntimeEnabledFeatures::
-          OffsetParentNewSpecBehaviorForFixedPositionEnabled()) {
-    return nullptr;
-  }
-
   HeapHashSet<Member<TreeScope>> ancestor_tree_scopes;
-  if (base)
+  if (base) {
     ancestor_tree_scopes = base->GetAncestorTreeScopes();
-
+  }
   float effective_zoom = StyleRef().EffectiveZoom();
   Node* node = nullptr;
   for (LayoutObject* ancestor = Parent(); ancestor;
@@ -4426,26 +4560,17 @@ Element* LayoutObject::OffsetParent(const Element* base) const {
     // we will eventually get to a node which is not closed shadow hidden from
     // |base|. https://github.com/w3c/csswg-drafts/issues/159
     if (base && !ancestor_tree_scopes.Contains(&node->GetTreeScope())) {
-      if (RuntimeEnabledFeatures::
-              OffsetParentNewSpecBehaviorForFixedPositionEnabled()) {
-        // If a fixed position containing block is found within the shadow tree,
-        // we should treat it as exiting the fixed position mode.
-        if (ancestor->CanContainFixedPositionObjects()) {
-          in_position_fixed = false;
-        } else if (ancestor->IsFixedPositioned()) {
-          in_position_fixed = true;
-        }
-      } else {
-        if (ancestor->IsFixedPositioned()) {
-          return nullptr;
-        }
+      // If a fixed position containing block is found within the shadow tree,
+      // we should treat it as exiting the fixed position mode.
+      if (ancestor->CanContainFixedPositionObjects()) {
+        in_position_fixed = false;
+      } else if (ancestor->IsFixedPositioned()) {
+        in_position_fixed = true;
       }
       continue;
     }
 
-    if (RuntimeEnabledFeatures::
-            OffsetParentNewSpecBehaviorForFixedPositionEnabled() &&
-        in_position_fixed) {
+    if (in_position_fixed) {
       // If the computed value of the position property of ancestor is fixed,
       // and no ancestor establishes a fixed position containing block,
       // terminate this algorithm and return null.

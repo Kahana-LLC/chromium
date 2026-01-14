@@ -24,9 +24,13 @@ try_.defaults.set(
     os = os.LINUX_DEFAULT,
     compilator_cores = 8,
     execution_timeout = try_constants.DEFAULT_EXECUTION_TIMEOUT,
+    experiments = {
+        "chromium_tests.resultdb_module": 100,
+    },
     orchestrator_cores = 2,
     orchestrator_siso_remote_jobs = siso.remote_jobs.HIGH_JOBS_FOR_CQ,
     service_account = try_constants.DEFAULT_SERVICE_ACCOUNT,
+    siso_keep_going = siso.KEEP_GOING,
     siso_project = siso.project.DEFAULT_UNTRUSTED,
     siso_remote_linking = True,
 )
@@ -55,10 +59,6 @@ try_.builder(
         ),
     executable = "recipe:compile_size_trybot",
     gn_args = gn_args.config(
-        args = {
-            # Disable clang modules to detect header size change in non-module build.
-            "use_clang_modules": False,
-        },
         configs = [
             "release_try_builder",
             "remoteexec",
@@ -82,7 +82,7 @@ try_.builder(
         },
         # Catches a couple of CLs per week that are either actionable or
         # worthy of discussion.
-        "size_threshold_mib": 250,
+        "size_threshold_mib": 200,
     },
     tryjob = try_.job(),
 )
@@ -120,16 +120,18 @@ try_.builder(
 )
 
 try_.builder(
-    name = "linux-trees-in-viz-rel",
-    mirrors = ["ci/linux-trees-in-viz-rel"],
+    name = "linux-structured-test-ids-rel-fyi",
+    mirrors = ["ci/linux-structured-test-ids-rel-fyi"],
     gn_args = gn_args.config(
         configs = [
-            "ci/linux-trees-in-viz-rel",
-            "try_builder",
-            "no_symbols",
+            "ci/linux-structured-test-ids-rel-fyi",
+            "release_try_builder",
         ],
     ),
-    contact_team_email = "chrome-compositor@google.com",
+    contact_team_email = "chrome-browser-infra-team@google.com",
+    experiments = {
+        "chromium_tests.resultdb_module": 100,
+    },
     siso_remote_jobs = siso.remote_jobs.LOW_JOBS_FOR_CQ,
 )
 
@@ -200,6 +202,20 @@ try_.builder(
         ],
     ),
     contact_team_email = "chrome-security-architecture@google.com",
+    cq_settings = try_.cq_settings(
+        location_filters = [
+            r"chrome/browser/renderer_host/javascript_optimizer_feature_browsertest\.cc$",
+            r"chrome/browser/policy/test/v8_optimizer_policy_browsertest\.cc$",
+            r"chrome/browser/site_protection/.*\.(cc|h)$",
+            r"content/browser/agent_cluster_key.+",
+            r"content/browser/child_process_security_policy.+",
+            r"content/browser/process_lock.+",
+            r"content/browser/renderer_host/render_frame_host_manager.+",
+            r"content/browser/site_info\.(cc|h)$",
+            r"content/browser/site_instance.*\.(cc|h)$",
+            r"content/public/browser/site_instance.*\.(cc|h)$",
+        ],
+    ),
     siso_remote_jobs = siso.remote_jobs.LOW_JOBS_FOR_CQ,
 )
 
@@ -221,14 +237,6 @@ try_.builder(
             "try_builder",
         ],
     ),
-    siso_remote_jobs = siso.remote_jobs.LOW_JOBS_FOR_CQ,
-)
-
-try_.builder(
-    name = "linux-blink-wpt-3pcd-fyi-rel",
-    mirrors = ["ci/linux-blink-wpt-3pcd-fyi-rel"],
-    gn_args = "ci/linux-blink-wpt-3pcd-fyi-rel",
-    contact_team_email = "potassium-engprod-team@twosync.google.com",
     siso_remote_jobs = siso.remote_jobs.LOW_JOBS_FOR_CQ,
 )
 
@@ -515,7 +523,7 @@ try_.builder(
     coverage_test_types = ["unit", "overall"],
     tryjob = try_.job(
         location_filters = [
-            "chrome/browser/.+(ui|browser)test.+",
+            "chrome/browser/.+uitest.+",
             "chrome/browser/ui/views/.+test.+",
             "chrome/browser/ui/views/tabs/.+",
             "testing/xvfb\\.py",
@@ -919,16 +927,16 @@ try_.builder(
 )
 
 try_.builder(
-    name = "linux-modules-compile-fyi-rel",
+    name = "linux-no-modules-compile-rel",
     mirrors = [
-        "ci/linux-modules-compile-fyi-rel",
+        "ci/linux-no-modules-compile-rel",
     ],
-    gn_args = "ci/linux-modules-compile-fyi-rel",
+    gn_args = "ci/linux-no-modules-compile-rel",
     cores = 32,
     ssd = True,
     contact_team_email = "chrome-build-team@google.com",
     execution_timeout = 6 * time.hour,
-    siso_keep_going = True,
+    siso_keep_going = 0,
 )
 
 try_.builder(
@@ -1033,7 +1041,6 @@ gpu.try_.optional_tests_builder(
             target_bits = 64,
             target_platform = builder_config.target_platform.LINUX,
         ),
-        build_gs_bucket = "chromium-gpu-fyi-archive",
     ),
     builder_config_settings = builder_config.try_settings(
         retry_failed_shards = False,
@@ -1062,38 +1069,12 @@ gpu.try_.optional_tests_builder(
     builderless = True,
     ssd = None,
     free_space = None,
+    alerts_enabled = False,
     contact_team_email = "chrome-gpu-infra@google.com",
     main_list_view = "try",
     max_concurrent_builds = 7,
     tryjob = try_.job(
-        location_filters = [
-            # Inclusion filters.
-            cq.location_filter(path_regexp = "chrome/browser/vr/.+"),
-            cq.location_filter(path_regexp = "content/browser/xr/.+"),
-            cq.location_filter(path_regexp = "content/test/data/gpu/.+"),
-            cq.location_filter(path_regexp = "content/test/gpu/.+"),
-            cq.location_filter(path_regexp = "gpu/.+"),
-            cq.location_filter(path_regexp = "media/audio/.+"),
-            cq.location_filter(path_regexp = "media/base/.+"),
-            cq.location_filter(path_regexp = "media/capture/.+"),
-            cq.location_filter(path_regexp = "media/filters/.+"),
-            cq.location_filter(path_regexp = "media/gpu/.+"),
-            cq.location_filter(path_regexp = "media/mojo/.+"),
-            cq.location_filter(path_regexp = "media/renderers/.+"),
-            cq.location_filter(path_regexp = "media/video/.+"),
-            cq.location_filter(path_regexp = "testing/buildbot/tryserver.chromium.linux.json"),
-            cq.location_filter(path_regexp = "testing/trigger_scripts/.+"),
-            cq.location_filter(path_regexp = "third_party/blink/renderer/modules/mediastream/.+"),
-            cq.location_filter(path_regexp = "third_party/blink/renderer/modules/webcodecs/.+"),
-            cq.location_filter(path_regexp = "third_party/blink/renderer/modules/webgl/.+"),
-            cq.location_filter(path_regexp = "third_party/blink/renderer/modules/webgpu/.+"),
-            cq.location_filter(path_regexp = "third_party/blink/renderer/platform/graphics/gpu/.+"),
-            cq.location_filter(path_regexp = "tools/clang/scripts/update.py"),
-            cq.location_filter(path_regexp = "ui/gl/.+"),
-
-            # Exclusion filters.
-            cq.location_filter(exclude = True, path_regexp = ".*\\.md"),
-        ],
+        location_filters = gpu.try_.optional_trybot_location_filters.LINUX,
     ),
 )
 
@@ -1179,3 +1160,11 @@ try_.builder(
     use_javascript_coverage = True,
 )
 ############### Coverage Builders End ##################
+
+try_.builder(
+    name = "linux-metadata-validator",
+    description_html = "Validate README.chromium files.",
+    executable = "recipe:security/metadata_validator",
+    builderless = True,
+    contact_team_email = "chops-security-core@google.com",
+)

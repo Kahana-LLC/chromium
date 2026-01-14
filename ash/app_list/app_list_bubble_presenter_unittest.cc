@@ -14,7 +14,6 @@
 #include "ash/app_list/views/app_list_bubble_apps_page.h"
 #include "ash/app_list/views/app_list_bubble_view.h"
 #include "ash/app_list/views/search_box_view.h"
-#include "ash/assistant/ui/assistant_view_ids.h"
 #include "ash/constants/ash_features.h"
 #include "ash/public/cpp/shell_window_ids.h"
 #include "ash/public/cpp/test/app_list_test_api.h"
@@ -31,15 +30,14 @@
 #include "base/test/icu_test_util.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
-#include "chromeos/ash/services/assistant/public/cpp/features.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/compositor/layer.h"
-#include "ui/compositor/scoped_animation_duration_scale_mode.h"
 #include "ui/compositor/test/layer_animation_stopped_waiter.h"
 #include "ui/display/display.h"
 #include "ui/events/event_constants.h"
 #include "ui/events/keycodes/keyboard_codes.h"
 #include "ui/gfx/geometry/vector2d.h"
+#include "ui/gfx/scoped_animation_duration_scale_mode.h"
 #include "ui/views/controls/textfield/textfield.h"
 #include "ui/views/test/test_widget_builder.h"
 #include "ui/views/widget/widget.h"
@@ -77,7 +75,7 @@ size_t NumberOfWidgetsInAppListContainer(int64_t display_id) {
 
 class AppListBubblePresenterTest : public AshTestBase {
  public:
-  AppListBubblePresenterTest() {}
+  AppListBubblePresenterTest() = default;
   ~AppListBubblePresenterTest() override = default;
 
   // testing::Test:
@@ -370,8 +368,8 @@ TEST_F(AppListBubblePresenterTest, CanShowWhileAnimatingClosed) {
   presenter->Show(GetPrimaryDisplay().id());
 
   // Enable animations.
-  ui::ScopedAnimationDurationScaleMode duration(
-      ui::ScopedAnimationDurationScaleMode::NON_ZERO_DURATION);
+  gfx::ScopedAnimationDurationScaleMode duration(
+      gfx::ScopedAnimationDurationScaleMode::NON_ZERO_DURATION);
 
   presenter->Dismiss();
   // Widget is not considered showing because it is animating closed.
@@ -389,8 +387,8 @@ TEST_F(AppListBubblePresenterTest, CanShowWhileAnimatingClosed) {
 // Regression test for https://crbug.com/1302026
 TEST_F(AppListBubblePresenterTest, DismissWhileWaitingForZeroStateSearch) {
   // Simulate production behavior for animations and zero-state search results.
-  ui::ScopedAnimationDurationScaleMode duration(
-      ui::ScopedAnimationDurationScaleMode::NON_ZERO_DURATION);
+  gfx::ScopedAnimationDurationScaleMode duration(
+      gfx::ScopedAnimationDurationScaleMode::NON_ZERO_DURATION);
   GetTestAppListClient()->set_run_zero_state_callback_immediately(false);
 
   AppListBubblePresenter* presenter = GetBubblePresenter();
@@ -426,10 +424,10 @@ TEST_F(AppListBubblePresenterTest, DismissWhileWaitingForZeroStateSearch) {
 }
 
 TEST_F(AppListBubblePresenterTest, SearchKeyOpensToAppsPage) {
-  // Simulate production behavior for animations, assistant, and zero-state
+  // Simulate production behavior for animations, and zero-state
   // search results.
-  ui::ScopedAnimationDurationScaleMode duration(
-      ui::ScopedAnimationDurationScaleMode::NON_ZERO_DURATION);
+  gfx::ScopedAnimationDurationScaleMode duration(
+      gfx::ScopedAnimationDurationScaleMode::NON_ZERO_DURATION);
   GetTestAppListClient()->set_run_zero_state_callback_immediately(false);
 
   PressAndReleaseKey(ui::VKEY_LWIN);  // Search key.
@@ -554,8 +552,8 @@ TEST_F(AppListBubblePresenterTest, CreatingChildWidgetDoesNotCloseBubble) {
 // Regression test for https://crbug.com/1285443.
 TEST_F(AppListBubblePresenterTest, CanOpenBubbleThenOpenSystemTray) {
   // Enable animations.
-  ui::ScopedAnimationDurationScaleMode duration(
-      ui::ScopedAnimationDurationScaleMode::NON_ZERO_DURATION);
+  gfx::ScopedAnimationDurationScaleMode duration(
+      gfx::ScopedAnimationDurationScaleMode::NON_ZERO_DURATION);
 
   // Create a widget, which will activate itself when the launcher closes.
   std::unique_ptr<views::Widget> widget =
@@ -971,8 +969,8 @@ TEST_F(AppListBubblePresenterTest, ContextMenuStaysOpenAfterDismissAppList) {
   presenter->Show(GetPrimaryDisplay().id());
 
   // Enable animations.
-  ui::ScopedAnimationDurationScaleMode duration(
-      ui::ScopedAnimationDurationScaleMode::NON_ZERO_DURATION);
+  gfx::ScopedAnimationDurationScaleMode duration(
+      gfx::ScopedAnimationDurationScaleMode::NON_ZERO_DURATION);
 
   // Spawn a context menu by right-clicking outside the bubble's bounds.
   views::Widget* bubble_widget = presenter->bubble_widget_for_test();

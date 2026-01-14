@@ -18,8 +18,6 @@ namespace manta {
 
 namespace {
 constexpr base::TimeDelta kMockTimeout = base::Seconds(100);
-constexpr char kMockOAuthConsumerName[] = "mock_oauth_consumer_name";
-constexpr char kMockScope[] = "mock_scope";
 constexpr char kMockEndpoint[] = "https://my-endpoint.com";
 constexpr endpoint_fetcher::HttpMethod kHttpMethod =
     endpoint_fetcher::HttpMethod::kPost;
@@ -36,7 +34,6 @@ FakeBaseProvider::~FakeBaseProvider() = default;
 
 void FakeBaseProvider::RequestInternal(
     const GURL& url,
-    const std::string& oauth_consumer_name,
     const net::NetworkTrafficAnnotationTag& annotation_tag,
     manta::proto::Request& request,
     const MantaMetricType metric_type,
@@ -51,12 +48,11 @@ void FakeBaseProvider::RequestInternal(
       /*url_loader_factory=*/url_loader_factory_,
       identity_manager_observation_.GetSource(),
       EndpointFetcher::RequestParams::Builder(kHttpMethod, annotation_tag)
-          .SetConsentLevel(signin::ConsentLevel::kSync)
+          .SetConsentLevel(signin::ConsentLevel::kSignin)
           .SetContentType(kMockContentType)
           .SetTimeout(kMockTimeout)
           .SetUrl(GURL{kMockEndpoint})
-          .SetOauthScopes(std::vector<std::string>{kMockScope})
-          .SetOauthConsumerName(kMockOAuthConsumerName)
+          .SetOAuthConsumerId(signin::OAuthConsumerId::kManta)
           .SetPostData(request.SerializeAsString())
           .Build());
 
@@ -73,8 +69,8 @@ BaseProviderTest::~BaseProviderTest() = default;
 
 void BaseProviderTest::SetUp() {
   identity_test_env_ = std::make_unique<signin::IdentityTestEnvironment>();
-  identity_test_env_->MakePrimaryAccountAvailable(kEmail,
-                                                  signin::ConsentLevel::kSync);
+  identity_test_env_->MakePrimaryAccountAvailable(
+      kEmail, signin::ConsentLevel::kSignin);
   identity_test_env_->SetAutomaticIssueOfAccessTokens(true);
 }
 

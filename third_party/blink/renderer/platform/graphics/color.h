@@ -73,11 +73,14 @@ class PLATFORM_EXPORT Color {
     kSRGB,
     kSRGBLinear,
     kDisplayP3,
+    kDisplayP3Linear,
     kA98RGB,
     kProPhotoRGB,
     kRec2020,
+    kRec2100Linear,
     kXYZD50,
     kXYZD65,
+
     // Serializes to lab(). The value of `param0_` is lightness and is
     // guaranteed to be non-negative. The value of `param1_` and `param2_` are
     // the a-axis and b-axis values and are unbounded.
@@ -93,22 +96,20 @@ class PLATFORM_EXPORT Color {
     kOklch,
     // Serializes to rgb() or rgba().
     // The values of `params0_`, `params1_`, and `params2_` are red, green, and
-    // blue sRGB values, and are guaranteed to be present and in the [0, 1]
+    // blue sRGB values, and are guaranteed to be present and in the [0, 255]
     // interval.
     kSRGBLegacy,
     // Serializes to rgb() or rgba() for non-relative colors and to hsl() for
     // unresolved relative colors.
     // The values of `params0_`, `params1_`, and `params2_` are Hue, Saturation,
-    // and Ligthness. These can be none. Hue is a namber in the range from 0.0
-    // to 6.0, and the rest are in the rance from 0.0 to 1.0.
-    // interval.
+    // and Lightness. These can be none. Hue is in the [0, 6] interval, and the
+    // rest are in the [0, 1] interval.
     kHSL,
     // Serializes to rgb() or rgba() for non-relative colors and to hwb() for
     // unresolved relative colors.
     // The values of `params0_`, `params1_`, and `params2_` are Hue, White,
-    // and Black. These can be none. Hue is a namber in the range from 0.0
-    // to 6.0, and the rest are in the rance from 0.0 to 1.0.
-    // interval.
+    // and Black. These can be none. Hue is in the [0, 6] interval, and the rest
+    // are in the [0, 1] interval.
     kHWB,
     // An uninitialized color.
     kNone,
@@ -122,9 +123,11 @@ class PLATFORM_EXPORT Color {
     return color_space == ColorSpace::kSRGB ||
            color_space == ColorSpace::kSRGBLinear ||
            color_space == ColorSpace::kDisplayP3 ||
+           color_space == ColorSpace::kDisplayP3Linear ||
            color_space == ColorSpace::kA98RGB ||
            color_space == ColorSpace::kProPhotoRGB ||
            color_space == ColorSpace::kRec2020 ||
+           color_space == ColorSpace::kRec2100Linear ||
            color_space == ColorSpace::kXYZD50 ||
            color_space == ColorSpace::kXYZD65;
   }
@@ -373,7 +376,6 @@ class PLATFORM_EXPORT Color {
            param1_ == other.param1_ && param2_ == other.param2_ &&
            alpha_ == other.alpha_;
   }
-  inline bool operator!=(const Color& other) const { return !(*this == other); }
 
   unsigned GetHash() const;
 
@@ -429,10 +431,15 @@ class PLATFORM_EXPORT Color {
     return x < 0 ? 0 : (x > 255 ? 255 : x);
   }
 
-  std::tuple<float, float, float> ExportAsXYZD50Floats() const;
+  // Convert to XYZD50. Apply experimental gamut mapping to oklch and oklab if
+  // `gamut_map` is true.
+  std::tuple<float, float, float> ToXYZD50(bool gamut_map = false) const;
 
-  // Common helper function to toSkColor4f and ToGradientStopSkColor4f.
-  SkColor4f ToSkColor4fInternal(bool gamut_map_oklab_oklch) const;
+  // Convert to sRGB. This will call into ToXYZD50 for most spaces, but has some
+  // optimized conversions.
+  std::tuple<float, float, float> ToSRGB(bool gamut_map = false) const;
+
+  std::tuple<float, float, float> ExportAsXYZD50Floats() const;
 
   float PremultiplyColor();
   void UnpremultiplyColor();

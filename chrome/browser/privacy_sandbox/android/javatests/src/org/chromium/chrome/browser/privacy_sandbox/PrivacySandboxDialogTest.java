@@ -138,7 +138,7 @@ public final class PrivacySandboxDialogTest {
                                 ThreadUtils.runOnUiThreadBlocking(() -> RenderTestRule.sanitize(v));
                                 mRenderTestRule.render(v, renderId);
                             } catch (IOException e) {
-                                assert false : "Render test failed due to " + e;
+                                throw new AssertionError(e);
                             }
                         });
     }
@@ -529,7 +529,8 @@ public final class PrivacySandboxDialogTest {
                 .startSettings(
                         any(Context.class),
                         eq(PrivacySandboxSettingsFragment.class),
-                        any(Bundle.class));
+                        any(Bundle.class),
+                        eq(false));
     }
 
     @Test
@@ -704,7 +705,7 @@ public final class PrivacySandboxDialogTest {
         // page isn't actually shown, but covered .
         mFakePrivacySandboxBridge.setRequiredPromptType(PromptType.M1_NOTICE_ROW);
         // Launch a basic activity and click a button
-        mActivityTestRule.loadUrl(mTestPage);
+        mActivityTestRule.getActivityTestRule().loadUrlNoWaiting(mTestPage);
 
         onViewWaiting(withId(R.id.privacy_sandbox_dialog), true);
         tryClickOn(withId(R.id.ack_button));
@@ -793,9 +794,9 @@ public final class PrivacySandboxDialogTest {
 
         // Accept the consent and verify the spinner it's shown.
         tryClickOn(withId(R.id.ack_button));
-        onViewWaiting(withId(R.id.privacy_sandbox_m1_consent_title), true)
+        onView(withId(R.id.privacy_sandbox_m1_consent_title))
+                .inRoot(isDialog())
                 .check(matches(not(isDisplayed())));
-
         onView(withId(R.id.progress_bar_container))
                 .inRoot(isDialog())
                 .check(matches(isDisplayed()));
@@ -814,7 +815,8 @@ public final class PrivacySandboxDialogTest {
 
         // Decline the consent and verify the spinner it's shown.
         tryClickOn(withId(R.id.no_button));
-        onViewWaiting(withId(R.id.privacy_sandbox_m1_consent_title), true)
+        onView(withId(R.id.privacy_sandbox_m1_consent_title))
+                .inRoot(isDialog())
                 .check(matches(not(isDisplayed())));
 
         onView(withId(R.id.progress_bar_container))
@@ -893,7 +895,8 @@ public final class PrivacySandboxDialogTest {
                 .startSettings(
                         any(Context.class),
                         eq(PrivacySandboxSettingsFragment.class),
-                        any(Bundle.class));
+                        any(Bundle.class),
+                        eq(false));
     }
 
     @Test
@@ -952,7 +955,8 @@ public final class PrivacySandboxDialogTest {
                 .startSettings(
                         any(Context.class),
                         eq(PrivacySandboxSettingsFragment.class),
-                        any(Bundle.class));
+                        any(Bundle.class),
+                        eq(false));
     }
 
     @Test

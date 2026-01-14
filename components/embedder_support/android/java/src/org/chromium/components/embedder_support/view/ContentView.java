@@ -35,6 +35,7 @@ import org.chromium.build.annotations.EnsuresNonNullIf;
 import org.chromium.build.annotations.NullUnmarked;
 import org.chromium.build.annotations.Nullable;
 import org.chromium.components.embedder_support.util.TouchEventFilter;
+import org.chromium.components.embedder_support.virtual_structure.VirtualStructureProvider;
 import org.chromium.content_public.browser.GestureListenerManager;
 import org.chromium.content_public.browser.ImeAdapter;
 import org.chromium.content_public.browser.RenderCoordinates;
@@ -85,6 +86,9 @@ public class ContentView extends FrameLayout
 
     // TODO(b/422918648): Remove this.
     @Nullable private MotionEvent mPendingTwoFingerSwipeDownEvent;
+    @Nullable private VirtualStructureProvider mVirtualStructureProvider;
+
+    private final ObserverList<View.OnHoverListener> mHoverListeners = new ObserverList<>();
 
     /**
      * The desired size of this view in {@link MeasureSpec}. Set by the host when it should be
@@ -202,6 +206,10 @@ public class ContentView extends FrameLayout
         mStylusWritingIconSupplier = iconSupplier;
     }
 
+    public void setVirtualStructureProvider(VirtualStructureProvider virtualStructureProvider) {
+        mVirtualStructureProvider = virtualStructureProvider;
+    }
+
     @Override
     public void setKeepScreenOn(boolean keepScreenOn) {
         if (mDeferKeepScreenOnChanges) {
@@ -219,6 +227,24 @@ public class ContentView extends FrameLayout
     public void setDesiredMeasureSpec(int width, int height) {
         mDesiredWidthMeasureSpec = width;
         mDesiredHeightMeasureSpec = height;
+    }
+
+    /**
+     * Registers the given listener to receive hover events.
+     *
+     * @param listener Listener to receive hover events.
+     */
+    public void addOnHoverListener(View.OnHoverListener listener) {
+        mHoverListeners.addObserver(listener);
+    }
+
+    /**
+     * Unregisters the given listener from receiving hover events.
+     *
+     * @param listener Listener that doesn't want to receive hover events.
+     */
+    public void removeOnHoverListener(View.OnHoverListener listener) {
+        mHoverListeners.removeObserver(listener);
     }
 
     @Override
@@ -463,12 +489,14 @@ public class ContentView extends FrameLayout
     }
 
     /**
-     * Mouse move events are sent on hover enter, hover move and hover exit.
-     * They are sent on hover exit because sometimes it acts as both a hover
-     * move and hover exit.
+     * Mouse move events are sent on hover enter, hover move and hover exit. They are sent on hover
+     * exit because sometimes it acts as both a hover move and hover exit.
      */
     @Override
     public boolean onHoverEvent(MotionEvent event) {
+        for (View.OnHoverListener listener : mHoverListeners) {
+            listener.onHover(this, event);
+        }
         EventForwarder forwarder = getEventForwarder();
         boolean consumed = forwarder != null ? forwarder.onHoverEvent(event) : false;
         if (!AccessibilityState.isTouchExplorationEnabled()) super.onHoverEvent(event);
@@ -639,6 +667,12 @@ public class ContentView extends FrameLayout
 
     @Override
     public void onProvideVirtualStructure(final ViewStructure structure) {
+        if (hasValidWebContents() && mVirtualStructureProvider != null) {
+            mVirtualStructureProvider.provideVirtualStructureForWebContents(
+                    structure, mWebContents);
+            return;
+        }
+
         WebContentsAccessibility wcax = getWebContentsAccessibility();
         if (wcax != null) wcax.onProvideVirtualStructure(structure, false);
     }

@@ -9,10 +9,14 @@ import org.jni_zero.CalledByNative;
 
 import org.chromium.base.ServiceLoaderUtil;
 import org.chromium.components.optimization_guide.proto.ModelExecutionProto.ModelExecutionFeature;
+import org.chromium.on_device_model.mojom.DownloaderParams;
 import org.chromium.on_device_model.mojom.GenerateOptions;
 import org.chromium.on_device_model.mojom.InputPiece;
 import org.chromium.on_device_model.mojom.SessionParams;
 import org.chromium.on_device_model.mojom.Token;
+
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * Helper class to verify the JNI bridge. Invoked by native unit tests:
@@ -27,6 +31,9 @@ public class OnDeviceModelBridgeNativeUnitTestHelper {
         // If true, the onComplete callback will be called asynchronously through
         // resumeOnCompleteCallback. This field should be set before generate() is called.
         private boolean mCompleteAsync;
+        // If true, the callbacks will be called asynchronously through a different thread. This
+        // field should be set before generate() is called.
+        private boolean mCallbackOnDifferentThread;
         private @GenerateResult int mGenerateResult;
         private boolean mNativeDestroyed;
         // Below are the params received in the generate() call.
@@ -72,6 +79,15 @@ public class OnDeviceModelBridgeNativeUnitTestHelper {
                         break;
                 }
             }
+            if (mCallbackOnDifferentThread) {
+                new Thread(
+                                () -> {
+                                    responder.onResponse(sb.toString());
+                                    responder.onComplete(mGenerateResult);
+                                })
+                        .start();
+                return;
+            }
             responder.onResponse(sb.toString());
             if (mCompleteAsync) {
                 mResponder = responder;
@@ -99,8 +115,21 @@ public class OnDeviceModelBridgeNativeUnitTestHelper {
      * to simulate the download status change.
      */
     public static class MockAiCoreModelDownloaderBackend implements AiCoreModelDownloaderBackend {
+        // Below are the params received in the constructor.
+        private final ModelExecutionFeature mFeature;
+        private final DownloaderParams mParams;
+
         private DownloaderResponder mResponder;
         private boolean mNativeDestroyed;
+        // If true, the callbacks will be called asynchronously through a different thread. This
+        // field should be set before startDownload() is called.
+        private boolean mCallbackOnDifferentThread;
+
+        public MockAiCoreModelDownloaderBackend(
+                ModelExecutionFeature feature, DownloaderParams params) {
+            mFeature = feature;
+            mParams = params;
+        }
 
         @Override
         public void startDownload(DownloaderResponder responder) {
@@ -114,20 +143,32 @@ public class OnDeviceModelBridgeNativeUnitTestHelper {
 
         public void onAvailable(String name, String version) {
             if (!mNativeDestroyed) {
-                mResponder.onAvailable(name, version);
+                if (mCallbackOnDifferentThread) {
+                    new Thread(() -> mResponder.onAvailable(name, version)).start();
+                } else {
+                    mResponder.onAvailable(name, version);
+                }
             }
         }
 
         public void onUnavailable(@DownloadFailureReason int reason) {
             if (!mNativeDestroyed) {
-                mResponder.onUnavailable(reason);
+                if (mCallbackOnDifferentThread) {
+                    new Thread(
+                                    () -> {
+                                        mResponder.onUnavailable(reason);
+                                    })
+                            .start();
+                } else {
+                    mResponder.onUnavailable(reason);
+                }
             }
         }
     }
 
     /** A mock implementation of AiCoreFactory. */
     public static class MockAiCoreFactory implements AiCoreFactory {
-        MockAiCoreSessionBackend mSessionBackend;
+        List<MockAiCoreSessionBackend> mSessionBackends = new ArrayList<>();
         MockAiCoreModelDownloaderBackend mDownloaderBackend;
 
         public MockAiCoreFactory() {}
@@ -135,14 +176,21 @@ public class OnDeviceModelBridgeNativeUnitTestHelper {
         @Override
         public AiCoreSessionBackend createSessionBackend(
                 ModelExecutionFeature feature, SessionParams params) {
-            mSessionBackend = new MockAiCoreSessionBackend(feature, params);
-            return mSessionBackend;
+            MockAiCoreSessionBackend sessionBackend = new MockAiCoreSessionBackend(feature, params);
+            mSessionBackends.add(sessionBackend);
+            return sessionBackend;
         }
 
         @Override
-        public AiCoreModelDownloaderBackend createModelDownloader(ModelExecutionFeature feature) {
-            mDownloaderBackend = new MockAiCoreModelDownloaderBackend();
+        public AiCoreModelDownloaderBackend createModelDownloader(
+                ModelExecutionFeature feature, DownloaderParams params) {
+            mDownloaderBackend = new MockAiCoreModelDownloaderBackend(feature, params);
             return mDownloaderBackend;
+        }
+
+        public MockAiCoreSessionBackend getLastSessionBackend() {
+            assert !mSessionBackends.isEmpty();
+            return mSessionBackends.get(mSessionBackends.size() - 1);
         }
     }
 
@@ -154,18 +202,28 @@ public class OnDeviceModelBridgeNativeUnitTestHelper {
     }
 
     @CalledByNative
-    public void verifySessionParams(int feature, int topK, float temperature) {
+    public void verifySessionParams(int index, int feature, int topK, float temperature) {
         ModelExecutionFeature modelExecutionFeatureId = ModelExecutionFeature.forNumber(feature);
-        assertEquals(modelExecutionFeatureId, mMockAiCoreFactory.mSessionBackend.mFeature);
-        SessionParams params = mMockAiCoreFactory.mSessionBackend.mParams;
+        MockAiCoreSessionBackend sessionBackend = mMockAiCoreFactory.mSessionBackends.get(index);
+        assertEquals(modelExecutionFeatureId, sessionBackend.mFeature);
+        SessionParams params = sessionBackend.mParams;
         assertEquals(topK, params.topK);
         assertEquals(temperature, params.temperature, 0.01f);
     }
 
     @CalledByNative
-    public void verifyGenerateOptions(int maxOutputTokens) {
-        GenerateOptions generateOptions = mMockAiCoreFactory.mSessionBackend.mGenerateOptions;
+    public void verifyGenerateOptions(int index, int maxOutputTokens) {
+        GenerateOptions generateOptions =
+                mMockAiCoreFactory.mSessionBackends.get(index).mGenerateOptions;
         assertEquals(maxOutputTokens, generateOptions.maxOutputTokens);
+    }
+
+    @CalledByNative
+    public void verifyDownloaderParams(int feature, boolean requirePersistentMode) {
+        ModelExecutionFeature modelExecutionFeatureId = ModelExecutionFeature.forNumber(feature);
+        MockAiCoreModelDownloaderBackend downloaderBackend = mMockAiCoreFactory.mDownloaderBackend;
+        assertEquals(modelExecutionFeatureId, downloaderBackend.mFeature);
+        assertEquals(requirePersistentMode, downloaderBackend.mParams.requirePersistentMode);
     }
 
     @CalledByNative
@@ -176,17 +234,27 @@ public class OnDeviceModelBridgeNativeUnitTestHelper {
 
     @CalledByNative
     public void setCompleteAsync() {
-        mMockAiCoreFactory.mSessionBackend.mCompleteAsync = true;
+        mMockAiCoreFactory.getLastSessionBackend().mCompleteAsync = true;
+    }
+
+    @CalledByNative
+    public void setCallbackOnDifferentThread() {
+        mMockAiCoreFactory.getLastSessionBackend().mCallbackOnDifferentThread = true;
     }
 
     @CalledByNative
     public void resumeOnCompleteCallback() {
-        mMockAiCoreFactory.mSessionBackend.resumeOnCompleteCallback();
+        mMockAiCoreFactory.getLastSessionBackend().resumeOnCompleteCallback();
     }
 
     @CalledByNative
     public void setGenerateResult(int generateResult) {
-        mMockAiCoreFactory.mSessionBackend.mGenerateResult = generateResult;
+        mMockAiCoreFactory.getLastSessionBackend().mGenerateResult = generateResult;
+    }
+
+    @CalledByNative
+    public void setDownloaderCallbackOnDifferentThread() {
+        mMockAiCoreFactory.mDownloaderBackend.mCallbackOnDifferentThread = true;
     }
 
     @CalledByNative

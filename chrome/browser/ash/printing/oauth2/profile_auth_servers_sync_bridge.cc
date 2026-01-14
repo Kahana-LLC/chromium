@@ -11,7 +11,6 @@
 #include <vector>
 
 #include "base/check.h"
-#include "base/containers/contains.h"
 #include "base/functional/bind.h"
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
@@ -258,7 +257,7 @@ std::unique_ptr<syncer::DataBatch>
 ProfileAuthServersSyncBridge::GetDataForCommit(StorageKeyList storage_keys) {
   auto batch = std::make_unique<syncer::MutableDataBatch>();
   for (const std::string& key : storage_keys) {
-    if (base::Contains(servers_uris_, key)) {
+    if (servers_uris_.contains(key)) {
       batch->Put(key, ToEntityDataPtr(key));
     }
   }
@@ -283,6 +282,12 @@ std::string ProfileAuthServersSyncBridge::GetStorageKey(
     const syncer::EntityData& entity_data) const {
   DCHECK(entity_data.specifics.has_printers_authorization_server());
   return entity_data.specifics.printers_authorization_server().uri();
+}
+
+bool ProfileAuthServersSyncBridge::IsEntityDataValid(
+    const syncer::EntityData& entity_data) const {
+  DCHECK(entity_data.specifics.has_printers_authorization_server());
+  return !entity_data.specifics.printers_authorization_server().uri().empty();
 }
 
 void ProfileAuthServersSyncBridge::OnCommit(

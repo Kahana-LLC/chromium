@@ -14,7 +14,6 @@
 #include "ash/constants/ash_switches.h"
 #include "ash/game_dashboard/game_dashboard_delegate.h"
 #include "ash/public/cpp/app_types_util.h"
-#include "ash/public/cpp/assistant/assistant_state.h"
 #include "ash/public/cpp/new_window_delegate.h"
 #include "ash/public/cpp/tab_strip_delegate.h"
 #include "ash/shell_delegate.h"
@@ -35,7 +34,6 @@
 #include "chrome/browser/ash/arc/arc_util.h"
 #include "chrome/browser/ash/arc/locked_fullscreen/arc_locked_fullscreen_manager.h"
 #include "chrome/browser/ash/arc/session/arc_service_launcher.h"
-#include "chrome/browser/ash/assistant/assistant_util.h"
 #include "chrome/browser/ash/browser_delegate/browser_controller.h"
 #include "chrome/browser/ash/browser_delegate/browser_delegate.h"
 #include "chrome/browser/ash/file_manager/path_util.h"
@@ -56,7 +54,6 @@
 #include "chrome/browser/ui/ash/back_gesture/back_gesture_contextual_nudge_delegate.h"
 #include "chrome/browser/ui/ash/boca/chrome_tab_strip_delegate.h"
 #include "chrome/browser/ui/ash/capture_mode/chrome_capture_mode_delegate.h"
-#include "chrome/browser/ui/ash/clipboard/clipboard_history_controller_delegate_impl.h"
 #include "chrome/browser/ui/ash/desks/chrome_saved_desk_delegate.h"
 #include "chrome/browser/ui/ash/focus_mode/chrome_focus_mode_delegate.h"
 #include "chrome/browser/ui/ash/game_dashboard/chrome_game_dashboard_delegate.h"
@@ -84,6 +81,8 @@
 #include "chromeos/ash/components/browser_context_helper/browser_context_helper.h"
 #include "chromeos/ash/components/channel/channel_info.h"
 #include "chromeos/ash/components/specialized_features/feedback.h"
+#include "chromeos/ash/experiences/clipboard/clipboard_history_controller_delegate_impl.h"
+#include "chromeos/ash/experiences/clipboard/clipboard_image_model_factory_impl.h"
 #include "chromeos/ash/services/multidevice_setup/multidevice_setup_service.h"
 #include "components/ui_devtools/devtools_server.h"
 #include "components/ui_devtools/views/server_holder.h"
@@ -161,6 +160,11 @@ ChromeShellDelegate::CreateCaptureModeDelegate(PrefService* local_state) const {
 std::unique_ptr<ash::ClipboardHistoryControllerDelegate>
 ChromeShellDelegate::CreateClipboardHistoryControllerDelegate() const {
   return std::make_unique<ClipboardHistoryControllerDelegateImpl>();
+}
+
+std::unique_ptr<ash::ClipboardImageModelFactory>
+ChromeShellDelegate::CreateClipboardImageModelFactory() const {
+  return std::make_unique<ClipboardImageModelFactoryImpl>();
 }
 
 std::unique_ptr<ash::CoralDelegate> ChromeShellDelegate::CreateCoralDelegate()
@@ -373,11 +377,6 @@ void ChromeShellDelegate::SetUpEnvironmentForLockedFullscreen(
       arc::IsArcAllowedForProfile(profile)) {
     arc_service_launcher->arc_locked_fullscreen_manager()
         ->UpdateForLockedFullscreenMode(locked);
-  }
-
-  if (assistant::IsAssistantAllowedForProfile(profile) ==
-      ash::assistant::AssistantAllowedState::ALLOWED) {
-    ash::AssistantState::Get()->NotifyLockedFullScreenStateChanged(locked);
   }
 
   // If a window is entering locked fullscreen, then we should close any

@@ -7,6 +7,11 @@
 
 #import <UIKit/UIKit.h>
 
+@class PageActionMenuFeature;
+
+// Page Menu Action Feature types.
+typedef NS_ENUM(NSInteger, PageActionMenuFeatureType);
+
 // The mutator for the page action menu.
 @protocol PageActionMenuMutator
 
@@ -21,6 +26,40 @@
 
 // Returns whether Reader mode is currently active.
 - (BOOL)isReaderModeActive;
+
+// Returns whether a page action menu feature is currently available.
+- (BOOL)isFeatureAvailable:(PageActionMenuFeatureType)featureType;
+
+// Returns the current translate language pair.
+- (NSString*)translateLanguagePair;
+
+// Returns the number of blocked popups.
+- (NSInteger)blockedPopupCount;
+
+// Returns the current site domain for permission context.
+- (NSString*)currentSiteDomain;
+
+// Updates the specified permission for the current site.
+- (void)updatePermission:(BOOL)granted
+              forFeature:(PageActionMenuFeatureType)featureType;
+
+// Returns array of currently active features to display.
+- (NSArray<PageActionMenuFeature*>*)activeFeatures;
+
+// Allows all blocked popups for the current site.
+- (void)allowBlockedPopups;
+
+// Reverts the page translation to show the original language.
+- (void)revertTranslation;
+
+// Opens the price insights contextual panel.
+- (void)openPriceInsightsPanel;
+
+// Opens the translation settings modal.
+- (void)openTranslateOptions;
+
+// Returns whether the AI entry points should be shown.
+- (BOOL)shouldShowFeatureEntryPoints;
 
 @end
 

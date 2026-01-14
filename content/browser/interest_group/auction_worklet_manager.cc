@@ -45,7 +45,6 @@
 #include "content/common/content_export.h"
 #include "content/services/auction_worklet/public/cpp/auction_downloader.h"
 #include "content/services/auction_worklet/public/cpp/auction_network_events_delegate.h"
-#include "content/services/auction_worklet/public/mojom/auction_network_events_handler.mojom-forward.h"
 #include "content/services/auction_worklet/public/mojom/auction_network_events_handler.mojom.h"
 #include "content/services/auction_worklet/public/mojom/auction_shared_storage_host.mojom.h"
 #include "content/services/auction_worklet/public/mojom/bidder_worklet.mojom.h"
@@ -602,8 +601,6 @@ void AuctionWorkletManager::WorkletOwner::LoadWorkletIfReady(
       base::BindRepeating(&Delegate::GetTrustedURLLoaderFactory,
                           base::Unretained(delegate)),
       base::BindOnce(&Delegate::PreconnectSocket, base::Unretained(delegate)),
-      base::BindRepeating(&Delegate::GetCookieDeprecationLabel,
-                          base::Unretained(delegate)),
       base::BindRepeating(&WorkletOwner::GetDevtoolsAuctionIds,
                           weak_ptr_factory_.GetWeakPtr()),
       /*force_reload=*/rfh->reload_type() == ReloadType::BYPASSING_CACHE,

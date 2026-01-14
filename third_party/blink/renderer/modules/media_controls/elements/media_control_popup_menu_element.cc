@@ -161,10 +161,9 @@ void MediaControlPopupMenuElement::DefaultEventHandler(Event& event) {
   } else if (event.type() == event_type_names::kFocusout) {
     GetDocument()
         .GetTaskRunner(TaskType::kMediaElementEvent)
-        ->PostTask(
-            FROM_HERE,
-            WTF::BindOnce(&MediaControlPopupMenuElement::HideIfNotFocused,
-                          WrapWeakPersistent(this)));
+        ->PostTask(FROM_HERE,
+                   BindOnce(&MediaControlPopupMenuElement::HideIfNotFocused,
+                            WrapWeakPersistent(this)));
   } else if (event.type() == event_type_names::kClick &&
              event.RawTarget() != this) {
     // Since event.target() != this, we know that one of our children was
@@ -237,14 +236,14 @@ void MediaControlPopupMenuElement::SetPosition() {
   DCHECK(bounding_client_rect);
   DCHECK(dom_window);
 
-  WTF::String bottom_str_value =
-      WTF::String::Number(dom_window->innerHeight() -
-                          bounding_client_rect->bottom() + kPopupMenuMarginPx) +
-      kPx;
-  WTF::String right_str_value =
-      WTF::String::Number(dom_window->innerWidth() -
-                          bounding_client_rect->right() + kPopupMenuMarginPx) +
-      kPx;
+  String bottom_str_value = StrCat(
+      {String::Number(dom_window->innerHeight() -
+                      bounding_client_rect->bottom() + kPopupMenuMarginPx),
+       kPx});
+  String right_str_value = StrCat(
+      {String::Number(dom_window->innerWidth() - bounding_client_rect->right() +
+                      kPopupMenuMarginPx),
+       kPx});
 
   style()->setProperty(dom_window, "bottom", bottom_str_value, kImportant,
                        ASSERT_NO_EXCEPTION);

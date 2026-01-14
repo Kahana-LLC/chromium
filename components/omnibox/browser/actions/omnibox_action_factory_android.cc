@@ -24,7 +24,7 @@ base::LazyInstance<base::android::ScopedJavaGlobalRef<jobject>>::
 
 /* static */ void JNI_OmniboxActionFactory_SetFactory(
     JNIEnv* env,
-    const base::android::JavaParamRef<jobject>& factory) {
+    const base::android::JavaRef<jobject>& factory) {
   if (factory) {
     g_java_factory.Get().Reset(factory);
   } else {
@@ -53,6 +53,7 @@ base::android::ScopedJavaGlobalRef<jobject> BuildOmniboxActionInSuggest(
     const std::u16string& accessibility_hint,
     int action_type,
     const std::string& action_uri,
+    int tab_id,
     bool show_as_action_button) {
   return base::android::ScopedJavaGlobalRef<jobject>(
       Java_OmniboxActionFactory_buildActionInSuggest(
@@ -60,19 +61,7 @@ base::android::ScopedJavaGlobalRef<jobject> BuildOmniboxActionInSuggest(
           base::android::ConvertUTF16ToJavaString(env, hint),
           base::android::ConvertUTF16ToJavaString(env, accessibility_hint),
           action_type, base::android::ConvertUTF8ToJavaString(env, action_uri),
-          show_as_action_button));
-}
-
-base::android::ScopedJavaGlobalRef<jobject> BuildOmniboxAnswerAction(
-    JNIEnv* env,
-    intptr_t instance,
-    const std::u16string& hint,
-    const std::u16string& accessibility_hint) {
-  return base::android::ScopedJavaGlobalRef<jobject>(
-      Java_OmniboxActionFactory_buildOmniboxAnswerAction(
-          env, g_java_factory.Get(), instance,
-          base::android::ConvertUTF16ToJavaString(env, hint),
-          base::android::ConvertUTF16ToJavaString(env, accessibility_hint)));
+          tab_id, show_as_action_button));
 }
 
 // Convert a vector of OmniboxActions to Java counterpart.
@@ -97,3 +86,5 @@ std::vector<jni_zero::ScopedJavaLocalRef<jobject>> ToJavaOmniboxActionsList(
   // actions were found, but none was applicable to Android.
   return ret;
 }
+
+DEFINE_JNI(OmniboxActionFactory)

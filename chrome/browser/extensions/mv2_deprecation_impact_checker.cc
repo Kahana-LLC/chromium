@@ -4,17 +4,20 @@
 
 #include "chrome/browser/extensions/mv2_deprecation_impact_checker.h"
 
+#include <algorithm>
 #include <string>
 #include <vector>
 
-#include "base/containers/contains.h"
 #include "base/no_destructor.h"
 #include "base/strings/string_split.h"
 #include "chrome/browser/extensions/extension_management.h"
 #include "chrome/browser/extensions/mv2_experiment_stage.h"
+#include "extensions/buildflags/buildflags.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_features.h"
 #include "extensions/common/manifest.h"
+
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
 
 namespace extensions {
 
@@ -76,7 +79,7 @@ bool MV2DeprecationImpactChecker::IsExtensionAffected(
   }
 
   // Extensions with a temporary exception.
-  if (base::Contains(GetHashedExceptionList(), hashed_id.value())) {
+  if (std::ranges::contains(GetHashedExceptionList(), hashed_id.value())) {
     return false;
   }
 

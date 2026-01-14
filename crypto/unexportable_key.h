@@ -7,7 +7,11 @@
 
 #include <memory>
 #include <optional>
+#include <string>
+#include <vector>
 
+#include "base/compiler_specific.h"
+#include "base/time/time.h"
 #include "build/build_config.h"
 #include "crypto/crypto_export.h"
 #include "crypto/signature_verifier.h"
@@ -17,6 +21,9 @@
 #endif  // BUILDFLAG(IS_MAC)
 
 namespace crypto {
+
+class StatefulUnexportableSigningKey;
+class StatefulUnexportableKeyProvider;
 
 // UnexportableSigningKey provides a hardware-backed signing oracle on platforms
 // that support it. Current support is:
@@ -73,6 +80,24 @@ class CRYPTO_EXPORT UnexportableSigningKey {
   // instance.
   virtual SecKeyRef GetSecKeyRef() const = 0;
 #endif  // BUILDFLAG(IS_MAC)
+
+  // Typesafe downcast to `StatefulUnexportableSigningKey`. Returns nullptr if
+  // the key is not stateful.
+  virtual StatefulUnexportableSigningKey* AsStatefulUnexportableSigningKey()
+      LIFETIME_BOUND = 0;
+};
+
+// StatefulUnexportableSigningKey is an interface for keys that are backed by
+// some permanent state, such as the keychain on macOS.
+class CRYPTO_EXPORT StatefulUnexportableSigningKey
+    : public UnexportableSigningKey {
+ public:
+  // Returns the tag of the stateful key stored by the platform. For example,
+  // on macOS, this is the application tag set when creating the key.
+  virtual std::string GetKeyTag() const = 0;
+
+  // Returns the creation time of the key.
+  virtual base::Time GetCreationTime() const = 0;
 };
 
 // UnexportableKeyProvider creates |UnexportableSigningKey|s.
@@ -146,15 +171,54 @@ class CRYPTO_EXPORT UnexportableKeyProvider {
   virtual std::unique_ptr<UnexportableSigningKey> FromWrappedSigningKeySlowly(
       base::span<const uint8_t> wrapped_key) = 0;
 
-  // Unexportable key implementations may be stateful. This is the case for
-  // macOS. |DeleteSigningKey| deletes all state associated with a given signing
-  // key on such implementations. For stateless implementations, this is a
-  // no-op.
-  // Returns true on successful deletion, false otherwise.
+  // Typesafe downcast to `StatefulUnexportableKeyProvider`. Returns nullptr if
+  // the provider is not stateful.
+  virtual StatefulUnexportableKeyProvider* AsStatefulUnexportableKeyProvider()
+      LIFETIME_BOUND = 0;
+};
+
+// StatefulUnexportableKeyProvider provides an interface for managing keys that
+// are backed by some permanent state, such as the keychain on macOS.
+class CRYPTO_EXPORT StatefulUnexportableKeyProvider
+    : public UnexportableKeyProvider {
+ public:
+  // `GetAllSigningKeysSlowly()` returns all previously stored keys matching
+  // `Config` or nullopt in case of failures.
+  //
+  // NOTE: For macOS this will perform prefix matching on
+  // `Config::application_tag`. That is, if `Config::application_tag` is
+  // "com.example.foo", this will return keys with application tags like
+  // "com.example.foo.1", "com.example.foo.1234", etc.
+  //
   // This can sometimes block, and therefore must not be called from the UI
   // thread.
-  virtual bool DeleteSigningKeySlowly(
-      base::span<const uint8_t> wrapped_key) = 0;
+  virtual std::optional<std::vector<std::unique_ptr<UnexportableSigningKey>>>
+  GetAllSigningKeysSlowly() = 0;
+
+  // Deletes all state associated with all signing keys matching `Config` that
+  // match one of the provided wrapped keys. Returns the number of keys deleted,
+  // or nullopt if unsuccessful. This can sometimes block, and therefore must
+  // not be called from the UI thread.
+  //
+  // NOTE: For macOS this will perform prefix matching on
+  // `Config::application_tag`. That is, if `Config::application_tag` is
+  // "com.example.foo", this will delete keys with application tags like
+  // "com.example.foo.1", "com.example.foo.1234", etc, assuming the wrapped key
+  // matches exactly.
+  virtual std::optional<size_t> DeleteSigningKeysSlowly(
+      base::span<const base::span<const uint8_t>> wrapped_keys) = 0;
+
+  // `DeleteAllSigningKeysSlowly()` deletes all state associated with all
+  // signing keys matching `UnexportableKeyProvider::Config`.
+  //
+  // NOTE: For macOS, this will perform prefix matching iff
+  // `Config::application_tag` is set. That is, if `Config::application_tag` is
+  // "com.example.foo", this will delete keys with application tags like
+  // "com.example.foo.1", "com.example.foo.1234", etc.
+  //
+  // Returns the number of keys deleted, or nullopt if unsuccessful. This can
+  // sometimes block, and therefore must not be called from the UI thread.
+  virtual std::optional<size_t> DeleteAllSigningKeysSlowly() = 0;
 };
 
 // This is an experimental API as it uses an unofficial Windows API.

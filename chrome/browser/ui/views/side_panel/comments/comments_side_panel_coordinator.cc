@@ -5,15 +5,17 @@
 #include "chrome/browser/ui/views/side_panel/comments/comments_side_panel_coordinator.h"
 
 #include "base/functional/callback.h"
+#include "chrome/browser/tab_group_sync/tab_group_sync_service_factory.h"
+#include "chrome/browser/ui/browser_actions.h"
 #include "chrome/browser/ui/browser_element_identifiers.h"
 #include "chrome/browser/ui/browser_window/public/browser_window_features.h"
 #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
 #include "chrome/browser/ui/tabs/saved_tab_groups/saved_tab_group_utils.h"
 #include "chrome/browser/ui/tabs/tab_strip_model_observer.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
-#include "chrome/browser/ui/views/side_panel/side_panel_coordinator.h"
 #include "chrome/browser/ui/views/side_panel/side_panel_entry.h"
 #include "chrome/browser/ui/views/side_panel/side_panel_registry.h"
+#include "chrome/browser/ui/views/side_panel/side_panel_ui.h"
 #include "chrome/browser/ui/views/side_panel/side_panel_web_ui_view.h"
 #include "chrome/browser/ui/views/toolbar/pinned_toolbar_actions_container.h"
 #include "chrome/browser/ui/views/toolbar/pinned_toolbar_actions_controller.h"
@@ -39,16 +41,16 @@ CommentsSidePanelCoordinator::CommentsSidePanelCoordinator(
     BrowserWindowInterface* browser)
     : browser_(browser),
       tab_group_sync_service_(
-          tab_groups::SavedTabGroupUtils::GetServiceForProfile(
+          tab_groups::TabGroupSyncServiceFactory::GetForProfile(
               browser_->GetProfile())) {
   browser_->GetTabStripModel()->AddObserver(this);
-  tab_groups::SavedTabGroupUtils::GetServiceForProfile(browser_->GetProfile())
+  tab_groups::TabGroupSyncServiceFactory::GetForProfile(browser_->GetProfile())
       ->AddObserver(this);
 }
 
 CommentsSidePanelCoordinator::~CommentsSidePanelCoordinator() {
   browser_->GetTabStripModel()->RemoveObserver(this);
-  tab_groups::SavedTabGroupUtils::GetServiceForProfile(browser_->GetProfile())
+  tab_groups::TabGroupSyncServiceFactory::GetForProfile(browser_->GetProfile())
       ->RemoveObserver(this);
 }
 
@@ -151,14 +153,14 @@ void CommentsSidePanelCoordinator::UpdateCommentsActionVisibility(
 
 void CommentsSidePanelCoordinator::UpdateCommentsSidePanelVisibility(
     bool should_show_comments_action) {
-  SidePanelCoordinator* side_panel_coordinator =
-      browser_->GetFeatures().side_panel_coordinator();
+  SidePanelUI* const side_panel_ui = browser_->GetFeatures().side_panel_ui();
+
+  SidePanelEntry::Key side_panel_entry_key(SidePanelEntry::Id::kComments);
 
   // TODO(crbug.com/430352059): This should also handle when a different side
   // panel is open.
   const bool side_panel_showing =
-      side_panel_coordinator->IsSidePanelEntryShowing(
-          SidePanelEntry::Key(SidePanelEntry::Id::kComments));
+      side_panel_ui->IsSidePanelEntryShowing(side_panel_entry_key);
 
   if (should_show_comments_action == side_panel_showing) {
     // Do nothing if the side panel is in the correct state.
@@ -166,17 +168,18 @@ void CommentsSidePanelCoordinator::UpdateCommentsSidePanelVisibility(
   }
 
   if (side_panel_showing) {
+    SidePanelEntry* const side_panel_entry =
+        SidePanelRegistry::From(browser_)->GetEntryForKey(side_panel_entry_key);
     // Close the side panel, setting the flag to recall the state when the
     // comments action is shown again.
-    side_panel_coordinator->Close();
+    side_panel_ui->Close(side_panel_entry->type());
     side_panel_should_be_resumed_ = true;
     return;
   }
 
   if (side_panel_should_be_resumed_) {
     // Resume the side panel if it was closed due to changing the active tab.
-    side_panel_coordinator->Show(
-        SidePanelEntry::Key(SidePanelEntry::Id::kComments));
+    side_panel_ui->Show(SidePanelEntry::Key(SidePanelEntry::Id::kComments));
     side_panel_should_be_resumed_ = false;
   }
 }
@@ -211,10 +214,8 @@ void CommentsSidePanelCoordinator::UpdateSidePanelTitle(
           : l10n_util::GetStringUTF16(
                 IDS_COLLABORATION_SHARED_TAB_GROUPS_COMMENTS_TITLE);
 
-  SidePanelCoordinator* side_panel =
-      browser_->GetFeatures().side_panel_coordinator();
-  actions::ActionItem* action_item = side_panel->GetActionItem(
-      SidePanelEntry::Key(SidePanelEntry::Id::kComments));
+  actions::ActionItem* action_item = actions::ActionManager::Get().FindAction(
+      kActionSidePanelShowComments, browser_->GetActions()->root_action_item());
 
   if (title != action_item->GetText()) {
     action_item->SetText(title);

@@ -28,6 +28,7 @@
 
 #define LOG_E(...) ((void)__android_log_print(ANDROID_LOG_ERROR, "linker-jni", __VA_ARGS__))
 
+#include "base/android/linker/ashmem.h"
 // Must come after all headers that specialize FromJniType() / ToJniType().
 #include "base/android/linker/linker_jni.h"
 
@@ -243,7 +244,6 @@ bool CallJniOnLoad(void* handle) {
   LOG_INFO("Done");
   return true;
 }
-
 }  // namespace
 
 String::String(JNIEnv* env, jstring str) {
@@ -331,122 +331,6 @@ bool FindWebViewReservation(uintptr_t* out_address, size_t* out_size) {
   close(fd);
   return result;
 }
-
-/* Callback used with __system_property_read_callback. */
-static void prop_read_int(void* cookie,
-                          const char* name,
-                          const char* value,
-                          uint32_t serial) {
-  *static_cast<int *>(cookie) = atoi(value);
-  (void)name;
-  (void)serial;
-}
-
-static int system_property_get_int(const char* name) {
-  int result = 0;
-  if (__builtin_available(android 26, *)) {
-    const prop_info* info = __system_property_find(name);
-    if (info)
-      __system_property_read_callback(info, &prop_read_int, &result);
-  } else {
-    char value[PROP_VALUE_MAX] = {};
-    if (__system_property_get(name, value) >= 1)
-      result = atoi(value);
-  }
-  return result;
-}
-
-static int vendor_api_level() {
-  static int v_api_level = -1;
-  if (v_api_level < 0)
-    v_api_level = system_property_get_int("ro.vendor.api_level");
-  return v_api_level;
-}
-
-static int memfd_create_region(const char *name, size_t size) {
-  int fd = syscall(__NR_memfd_create, name, MFD_CLOEXEC | MFD_ALLOW_SEALING);
-  if (fd < 0) {
-    LOG_E("memfd_create(%s, %zd) failed: %m", name, size);
-    return fd;
-  }
-
-  int ret = ftruncate(fd, size);
-  if (ret < 0) {
-    LOG_E("ftruncate(%s, %zd) failed: %m", name, size);
-    goto error;
-  }
-
-  ret = fcntl(fd, F_ADD_SEALS, F_SEAL_GROW | F_SEAL_SHRINK);
-  if (ret < 0) {
-    LOG_E("memfd_create(%s, %zd) fcntl(F_ADD_SEALS) failed: %m", name, size);
-    goto error;
-  }
-
-  return fd;
-
-error:
-  close(fd);
-  return ret;
-}
-
-// Starting with API level 26 (Android O) the following functions from
-// libandroid.so should be used to create shared memory regions to ensure
-// compatibility with the future versions:
-// * ASharedMemory_create()
-// * ASharedMemory_setProt()
-//
-// This is inspired by //third_party/ashmem/ashmem-dev.c, which cannot be
-// referenced from the linker library to avoid increasing binary size.
-//
-// *Not* threadsafe.
-struct SharedMemoryFunctions {
-  SharedMemoryFunctions() {
-    library_handle = dlopen("libandroid.so", RTLD_NOW);
-    /*
-     * When a device conforms to the VSR for API level 202604 (Android 17),
-     * ASharedMemory will allocate memfds and attempt to relabel them by using
-     * fsetxattr() to workaround how SELinux handles memfds.
-     *
-     * fsetxattr() is not allowlisted in our seccomp filter, and allowlisting
-     * it may be unsafe. Since memfds from Chromium should be accessible with
-     * the existing sepolicy for appdomain_tmpfs files, just allocate memfds
-     * directly if the device conforms to the VSR for API level 202604.
-     *
-     * The rest of the functions work fine with ASharedMemory, as it can recognize
-     * memfds and act accordingly.
-     */
-    if (vendor_api_level() >= 202604)
-      create = &memfd_create_region;
-    else
-      create = reinterpret_cast<CreateFunction>(
-          dlsym(library_handle, "ASharedMemory_create"));
-
-    set_protection = reinterpret_cast<SetProtectionFunction>(
-        dlsym(library_handle, "ASharedMemory_setProt"));
-  }
-
-  bool IsWorking() const {
-    if (!create || !set_protection) {
-      LOG_ERROR("Cannot get the shared memory functions from libandroid");
-      return false;
-    }
-    return true;
-  }
-
-  ~SharedMemoryFunctions() {
-    if (library_handle) {
-      dlclose(library_handle);
-    }
-  }
-
-  typedef int (*CreateFunction)(const char*, size_t);
-  typedef int (*SetProtectionFunction)(int fd, int prot);
-
-  CreateFunction create;
-  SetProtectionFunction set_protection;
-
-  void* library_handle = nullptr;
-};
 
 void NativeLibInfo::ExportLoadInfoToJava() const {
   if (!env_) {
@@ -597,8 +481,7 @@ bool NativeLibInfo::LoadWithDlopenExt(const String& path, void** handle) {
   return true;
 }
 
-bool NativeLibInfo::CreateSharedRelroFd(
-    const SharedMemoryFunctions& functions) {
+bool NativeLibInfo::CreateSharedRelroFd() {
   LOG_INFO("Entering");
   if (!relro_start_ || !relro_size_) {
     LOG_ERROR("RELRO region is not populated");
@@ -606,13 +489,13 @@ bool NativeLibInfo::CreateSharedRelroFd(
   }
 
   // Create a writable shared memory region.
-  int shared_mem_fd = functions.create("cr_relro", relro_size_);
+  int shared_mem_fd = SharedMemoryRegionCreate("cr_relro", relro_size_);
   if (shared_mem_fd == -1) {
     LOG_ERROR("Cannot create the shared memory file");
     return false;
   }
   int rw_flags = PROT_READ | PROT_WRITE;
-  functions.set_protection(shared_mem_fd, rw_flags);
+  SharedMemoryRegionSetProtectionFlags(shared_mem_fd, rw_flags);
 
   // Map the region as writable.
   void* relro_copy_addr =
@@ -636,7 +519,7 @@ bool NativeLibInfo::CreateSharedRelroFd(
   // writable memory mappings, since they are not directly affected by the
   // change of region's protection flags.
   munmap(relro_copy_addr, relro_size_);
-  if (functions.set_protection(shared_mem_fd, PROT_READ) == -1) {
+  if (SharedMemoryRegionSetProtectionFlags(shared_mem_fd, PROT_READ) == -1) {
     LOG_ERROR("Failed to set the RELRO FD as read-only.");
     close(shared_mem_fd);
     return false;
@@ -646,8 +529,7 @@ bool NativeLibInfo::CreateSharedRelroFd(
   return true;
 }
 
-bool NativeLibInfo::ReplaceRelroWithSharedOne(
-    const SharedMemoryFunctions& functions) const {
+bool NativeLibInfo::ReplaceRelroWithSharedOne() const {
   LOG_INFO("Entering");
   if (relro_fd_ == -1 || !relro_start_ || !relro_size_) {
     LOG_ERROR("Replacement RELRO not ready");
@@ -706,15 +588,11 @@ bool NativeLibInfo::LoadLibrary(const String& library_path,
 
   // Spawn RELRO to a shared memory region by copying and remapping on top of
   // itself.
-  SharedMemoryFunctions functions;
-  if (!functions.IsWorking()) {
-    return false;
-  }
-  if (!CreateSharedRelroFd(functions)) {
+  if (!CreateSharedRelroFd()) {
     LOG_ERROR("Failed to create shared RELRO");
     return false;
   }
-  if (!ReplaceRelroWithSharedOne(functions)) {
+  if (!ReplaceRelroWithSharedOne()) {
     LOG_ERROR("Failed to convert RELRO to shared memory");
     CloseRelroFd();
     return false;
@@ -729,8 +607,7 @@ bool NativeLibInfo::LoadLibrary(const String& library_path,
 }
 
 bool NativeLibInfo::RelroIsIdentical(
-    const NativeLibInfo& other_lib_info,
-    const SharedMemoryFunctions& functions) const {
+    const NativeLibInfo& other_lib_info) const {
   // Abandon sharing if contents of the incoming RELRO region does not match the
   // current one. This can be useful for debugging, but should never happen in
   // the field.
@@ -779,12 +656,7 @@ bool NativeLibInfo::CompareRelroAndReplaceItBy(
     return false;
   }
 
-  SharedMemoryFunctions functions;
-  if (!functions.IsWorking()) {
-    s_relro_sharing_status = RelroSharingStatus::NO_SHMEM_FUNCTIONS;
-    return false;
-  }
-  if (!RelroIsIdentical(other_lib_info, functions)) {
+  if (!RelroIsIdentical(other_lib_info)) {
     LOG_ERROR("RELRO is not identical");
     s_relro_sharing_status = RelroSharingStatus::NOT_IDENTICAL;
     return false;
@@ -798,7 +670,7 @@ bool NativeLibInfo::CompareRelroAndReplaceItBy(
   //  * It does not rely on disallowing mprotect(PROT_WRITE)
   //  * This way |ReplaceRelroWithSharedOne()| is reused across spawning RELRO
   //    and receiving it
-  if (!other_lib_info.ReplaceRelroWithSharedOne(functions)) {
+  if (!other_lib_info.ReplaceRelroWithSharedOne()) {
     LOG_ERROR("Failed to use relro_fd");
     s_relro_sharing_status = RelroSharingStatus::REMAP_FAILED;
     return false;
@@ -811,17 +683,7 @@ bool NativeLibInfo::CompareRelroAndReplaceItBy(
 bool NativeLibInfo::CreateSharedRelroFdForTesting() {
   // The library providing these functions will be dlclose()-ed after returning
   // from this context. The extra overhead of dlopen() is OK for testing.
-  SharedMemoryFunctions functions;
-  if (!functions.IsWorking()) {
-    abort();
-  }
-  return CreateSharedRelroFd(functions);
-}
-
-// static
-bool NativeLibInfo::SharedMemoryFunctionsSupportedForTesting() {
-  SharedMemoryFunctions functions;
-  return functions.IsWorking();
+  return CreateSharedRelroFd();
 }
 
 JNI_ZERO_BOUNDARY_EXPORT void
@@ -849,7 +711,7 @@ Java_org_chromium_base_library_1loader_LinkerJni_nativeReserveMemoryForLibrary(
   s_lib_info_fields.SetLoadInfo(env, lib_info_obj, address, size);
 }
 
-JNI_ZERO_BOUNDARY_EXPORT jboolean
+JNI_ZERO_BOUNDARY_EXPORT bool
 Java_org_chromium_base_library_1loader_LinkerJni_nativeFindRegionReservedByWebViewZygote(
     JNIEnv* env,
     jclass clazz,
@@ -864,13 +726,13 @@ Java_org_chromium_base_library_1loader_LinkerJni_nativeFindRegionReservedByWebVi
   return true;
 }
 
-JNI_ZERO_BOUNDARY_EXPORT jboolean
+JNI_ZERO_BOUNDARY_EXPORT bool
 Java_org_chromium_base_library_1loader_LinkerJni_nativeLoadLibrary(
     JNIEnv* env,
     jclass clazz,
     jstring jdlopen_ext_path,
     jobject lib_info_obj,
-    jboolean spawn_relro_region) {
+    bool spawn_relro_region) {
   LOG_INFO("Entering");
 
   // Copy the contents from the Java-side LibInfo object.
@@ -886,7 +748,7 @@ Java_org_chromium_base_library_1loader_LinkerJni_nativeLoadLibrary(
   return true;
 }
 
-JNI_ZERO_BOUNDARY_EXPORT jboolean
+JNI_ZERO_BOUNDARY_EXPORT bool
 Java_org_chromium_base_library_1loader_LinkerJni_nativeUseRelros(
     JNIEnv* env,
     jclass clazz,
@@ -912,11 +774,11 @@ Java_org_chromium_base_library_1loader_LinkerJni_nativeUseRelros(
   return true;
 }
 
-JNI_ZERO_BOUNDARY_EXPORT jint
+JNI_ZERO_BOUNDARY_EXPORT int32_t
 Java_org_chromium_base_library_1loader_LinkerJni_nativeGetRelroSharingResult(
     JNIEnv* env,
     jclass clazz) {
-  return static_cast<jint>(s_relro_sharing_status);
+  return static_cast<int32_t>(s_relro_sharing_status);
 }
 
 bool LinkerJNIInit(JavaVM* vm, JNIEnv* env) {

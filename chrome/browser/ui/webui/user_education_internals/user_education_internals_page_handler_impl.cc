@@ -23,7 +23,7 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_finder.h"
-#include "chrome/browser/ui/browser_window.h"
+#include "chrome/browser/ui/interaction/browser_elements.h"
 #include "chrome/browser/ui/user_education/browser_user_education_interface.h"
 #include "chrome/browser/ui/webui/user_education_internals/user_education_internals.mojom-forward.h"
 #include "chrome/browser/user_education/user_education_service.h"
@@ -432,13 +432,13 @@ std::string GetTutorialTypeString(
 auto GetNtpPromoData(
     const std::string& id,
     const user_education::NtpPromoSpecification& spec,
-    Profile* profile,
+    const user_education::UserEducationContextPtr& context,
     const user_education::UserEducationStorageService& storage) {
   const auto data =
       storage.ReadNtpPromoData(id).value_or(user_education::NtpPromoData());
   std::vector<FeaturePromoDemoPageDataPtr> result;
   std::string eligibility = [&]() {
-    switch (spec.eligibility_callback().Run(profile)) {
+    switch (spec.eligibility_callback().Run(context)) {
       case user_education::NtpPromoSpecification::Eligibility::kEligible:
         return "Eligible";
       case user_education::NtpPromoSpecification::Eligibility::kIneligible:
@@ -510,7 +510,8 @@ void UserEducationInternalsPageHandlerImpl::StartTutorial(
   std::string result;
   if (tutorial_service) {
     const ui::ElementContext context =
-        chrome::FindBrowserWithProfile(profile_)->window()->GetElementContext();
+        BrowserElements::From(chrome::FindBrowserWithProfile(profile_))
+            ->GetContext();
     tutorial_service->StartTutorial(tutorial_id, context);
     if (!tutorial_service->IsRunningTutorial()) {
       result = "Failed to start tutorial " + tutorial_id;
@@ -931,6 +932,11 @@ void UserEducationInternalsPageHandlerImpl::GetNtpPromos(
   if (service && service->ntp_promo_registry()) {
     auto* const registry = service->ntp_promo_registry();
     auto& storage = service->user_education_storage_service();
+    auto context =
+        BrowserUserEducationInterface::MaybeGetForWebContentsInTab(
+            web_ui_->GetWebContents())
+            ->GetUserEducationContext(
+                base::PassKey<UserEducationInternalsPageHandlerImpl>());
     for (const auto& id : registry->GetNtpPromoIdentifiers()) {
       const auto& spec = *registry->GetNtpPromoSpecification(id);
       promos.emplace_back(FeaturePromoDemoPageInfo::New(
@@ -940,7 +946,7 @@ void UserEducationInternalsPageHandlerImpl::GetNtpPromos(
           GetSupportedPlatforms(spec.metadata().platforms),
           GetRequiredFeatures(spec.metadata().required_features),
           std::vector<std::string>(), "",
-          GetNtpPromoData(id, spec, profile_, storage)));
+          GetNtpPromoData(id, spec, context, storage)));
     }
   }
 

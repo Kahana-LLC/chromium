@@ -35,6 +35,7 @@
 #include "third_party/blink/renderer/core/layout/geometry/fragment_geometry.h"
 #include "third_party/blink/renderer/core/layout/geometry/writing_mode_converter.h"
 #include "third_party/blink/renderer/core/layout/grid/grid_layout_algorithm.h"
+#include "third_party/blink/renderer/core/layout/grid_lanes/grid_lanes_layout_algorithm.h"
 #include "third_party/blink/renderer/core/layout/inline/inline_cursor.h"
 #include "third_party/blink/renderer/core/layout/inline/inline_node.h"
 #include "third_party/blink/renderer/core/layout/layout_block_flow.h"
@@ -49,7 +50,6 @@
 #include "third_party/blink/renderer/core/layout/length_utils.h"
 #include "third_party/blink/renderer/core/layout/list/layout_list_item.h"
 #include "third_party/blink/renderer/core/layout/logical_box_fragment.h"
-#include "third_party/blink/renderer/core/layout/masonry/masonry_layout_algorithm.h"
 #include "third_party/blink/renderer/core/layout/mathml/math_fraction_layout_algorithm.h"
 #include "third_party/blink/renderer/core/layout/mathml/math_layout_utils.h"
 #include "third_party/blink/renderer/core/layout/mathml/math_operator_layout_algorithm.h"
@@ -172,8 +172,8 @@ NOINLINE void DetermineAlgorithmAndRun(const LayoutAlgorithmParams& params,
     DetermineMathMLAlgorithmAndRun(box, params, callback);
   } else if (box.IsLayoutGrid()) {
     CreateAlgorithmAndRun<GridLayoutAlgorithm>(params, callback);
-  } else if (box.IsLayoutMasonry()) {
-    CreateAlgorithmAndRun<MasonryLayoutAlgorithm>(params, callback);
+  } else if (box.IsLayoutGridLanes()) {
+    CreateAlgorithmAndRun<GridLanesLayoutAlgorithm>(params, callback);
   } else if (box.IsLayoutReplaced()) {
     CreateAlgorithmAndRun<ReplacedLayoutAlgorithm>(params, callback);
   } else if (box.IsFieldset()) {
@@ -241,7 +241,7 @@ bool CanUseCachedIntrinsicInlineSizes(const ConstraintSpace& constraint_space,
   // "grid-template-columns: repeat(auto-fill, 50px); min-width: 50%;"
   // In this specific case our min/max sizes are now dependent on what
   // "min-width" resolves to - which is unique to grid.
-  if (node.IsGrid() || node.IsMasonry()) {
+  if (node.IsGrid() || node.IsGridLanes()) {
     if (style.LogicalMinWidth().HasPercentOrStretch() ||
         style.LogicalMaxWidth().HasPercentOrStretch()) {
       return false;
@@ -532,8 +532,7 @@ const LayoutResult* BlockNode::Layout(
 
 #if DCHECK_IS_ON()
     if (layout_result) {
-      layout_result->CheckSameForSimplifiedLayout(
-          *previous_result, /* check_same_block_size */ !block_flow);
+      layout_result->CheckSameForSimplifiedLayout(*previous_result);
     }
 #endif
   } else if (cache_status == LayoutCacheStatus::kCanReuseLines) {
@@ -563,7 +562,7 @@ const LayoutResult* BlockNode::Layout(
   std::optional<PhysicalSize> optional_old_box_size;
   if (layout_result->Status() == LayoutResult::kSuccess &&
       !layout_result->GetPhysicalFragment().GetBreakToken()) {
-    optional_old_box_size = box_->Size();
+    optional_old_box_size = box_->StitchedSize();
   }
 
   FinishLayout(block_flow, constraint_space, break_token, layout_result,
@@ -610,7 +609,7 @@ const LayoutResult* BlockNode::Layout(
       // We need to clear any previous results when scrollbars change. For
       // example - we may have stored a "measure" layout result which will be
       // incorrect if we try and reuse it.
-      PhysicalSize old_box_size = box_->Size();
+      PhysicalSize old_box_size = box_->StitchedSize();
       params.previous_result = nullptr;
       box_->SetShouldSkipLayoutCache(true);
 
@@ -900,7 +899,7 @@ void BlockNode::FinishLayout(
 
   if (!layout_result->GetPhysicalFragment().GetBreakToken()) {
     DCHECK(old_box_size);
-    if (box_->Size() != *old_box_size) {
+    if (box_->StitchedSize() != *old_box_size) {
       box_->SizeChanged();
     }
   }
@@ -954,12 +953,12 @@ MinMaxSizesResult BlockNode::ComputeMinMaxSizes(
   };
 
   const bool is_in_perform_layout = box_->GetFrameView()->IsInPerformLayout();
-  // In some scenarios, Grid, Masonry and Flex will run layout on their items
+  // In some scenarios, Grid, Grid-lanes and Flex will run layout on their items
   // during MinMaxSizes computation. Instead of running (and possible caching
   // incorrect results), when we're not performing layout, just use border +
   // padding.
   if (!is_in_perform_layout &&
-      (IsGrid() || IsMasonry() ||
+      (IsGrid() || IsGridLanes() ||
        (IsFlexibleBox() && Style().ResolvedIsColumnFlexDirection()))) {
     const FragmentGeometry& fragment_geometry = IntrinsicFragmentGeometry();
     const BoxStrut border_padding =
@@ -1291,7 +1290,7 @@ bool BlockNode::UseParentPercentageResolutionBlockSizeForChildren() const {
   }
 
   return !block->IsLayoutReplaced() && !block->IsTableCell() &&
-         !block->IsOutOfFlowPositioned() && !block->IsLayoutGrid() &&
+         !block->IsOutOfFlowPositioned() && !block->IsLayoutGridOrGridLanes() &&
          !block->IsFlexibleBox() && !block->IsLayoutCustom();
 }
 
@@ -1522,7 +1521,8 @@ void BlockNode::UpdateMarginPaddingInfoIfNeeded(
     // is able to return the correct value. This isn't ideal, but eventually
     // we'll answer these queries from the fragment.
     const auto* containing_block = box_->ContainingBlock();
-    if (containing_block && containing_block->IsLayoutGrid()) [[unlikely]] {
+    if (containing_block && containing_block->IsLayoutGridOrGridLanes())
+        [[unlikely]] {
       box_->SetOverrideContainingBlockContentLogicalWidth(
           space.MarginPaddingPercentageResolutionSize().inline_size);
     }

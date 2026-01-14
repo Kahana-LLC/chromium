@@ -14,11 +14,11 @@
 #include "base/memory/raw_ptr.h"
 #include "base/path_service.h"
 #include "base/run_loop.h"
+#include "base/strings/utf_string_conversions.h"
 #include "base/threading/thread.h"
 #include "build/chromeos_buildflags.h"
 #include "chrome/browser/extensions/scoped_test_mv2_enabler.h"
 #include "chrome/browser/extensions/test_extension_system.h"
-#include "chrome/browser/extensions/unpacked_installer.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile.h"
@@ -37,6 +37,7 @@
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/scripting_utils.h"
 #include "extensions/browser/test_extension_registry_observer.h"
+#include "extensions/browser/unpacked_installer.h"
 #include "extensions/common/extension_features.h"
 #include "extensions/common/url_pattern_set.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -70,6 +71,8 @@ std::optional<base::Value::Dict> LoadManifestFile(const base::FilePath path,
   return std::move(*manifest).TakeDict();
 }
 
+// TODO(crbug.com/41317803): Continue removing std::string error and
+// replacing with std::u16string.
 scoped_refptr<Extension> LoadExtension(const std::string& filename,
                                        std::string* error) {
   base::FilePath path;
@@ -81,8 +84,12 @@ scoped_refptr<Extension> LoadExtension(const std::string& filename,
   if (!manifest) {
     return nullptr;
   }
-  return Extension::Create(path.DirName(), mojom::ManifestLocation::kUnpacked,
-                           *manifest, Extension::NO_FLAGS, error);
+  std::u16string utf16_error;
+  scoped_refptr<Extension> extension =
+      Extension::Create(path.DirName(), mojom::ManifestLocation::kUnpacked,
+                        *manifest, Extension::NO_FLAGS, &utf16_error);
+  *error = base::UTF16ToUTF8(utf16_error);
+  return extension;
 }
 
 }  // namespace

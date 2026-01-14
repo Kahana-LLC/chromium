@@ -27,7 +27,6 @@ import android.os.SystemClock;
 import android.util.DisplayMetrics;
 import android.view.View;
 
-import androidx.test.espresso.Espresso;
 import androidx.test.filters.LargeTest;
 import androidx.test.filters.MediumTest;
 import androidx.test.filters.SmallTest;
@@ -40,6 +39,7 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
+import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.ApplicationTestUtils;
 import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.base.test.util.CommandLineFlags;
@@ -72,7 +72,9 @@ import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.chrome.test.R;
 import org.chromium.chrome.test.transit.AutoResetCtaTransitTestRule;
 import org.chromium.chrome.test.transit.ChromeTransitTestRules;
+import org.chromium.chrome.test.transit.ntp.IncognitoNewTabPageStation;
 import org.chromium.chrome.test.transit.page.CtaPageStation;
+import org.chromium.chrome.test.transit.page.WebPageStation;
 import org.chromium.chrome.test.util.ChromeTabUtils;
 import org.chromium.chrome.test.util.NewTabPageTestUtils;
 import org.chromium.components.javascript_dialogs.JavascriptTabModalDialog;
@@ -159,6 +161,8 @@ public class TabsTest {
     @Feature({"Navigation"})
     @Restriction(RESTRICTION_TYPE_NON_LOW_END_DEVICE)
     @CommandLineFlags.Add(ContentSwitches.DISABLE_POPUP_BLOCKING)
+    // TODO(crbug.com/457847264): Change to @Restriction(DeviceFormFactor.PHONE) after launch
+    @DisableFeatures(ChromeFeatureList.ANDROID_OPEN_INCOGNITO_AS_WINDOW)
     public void testSpawnPopupOnBackgroundTab() {
         mActivityTestRule.loadUrl(getUrl(TEST_FILE_PATH));
         final Tab tab = mActivityTestRule.getActivityTab();
@@ -188,6 +192,8 @@ public class TabsTest {
 
     @Test
     @MediumTest
+    // TODO(crbug.com/457847264): Change to @Restriction(DeviceFormFactor.PHONE) after launch
+    @DisableFeatures(ChromeFeatureList.ANDROID_OPEN_INCOGNITO_AS_WINDOW)
     public void testAlertDialogDoesNotChangeActiveModel() {
         mActivityTestRule.newIncognitoTabFromMenu();
         mActivityTestRule.loadUrl(getUrl(TEST_FILE_PATH));
@@ -279,7 +285,6 @@ public class TabsTest {
                             mActivityTestRule
                                     .getKeyboardDelegate()
                                     .isKeyboardShowing(
-                                            mActivityTestRule.getActivity(),
                                             mActivityTestRule.getActivity().getTabsView());
                     Criteria.checkThat(isKeyboardShowing, Matchers.is(show));
                 });
@@ -476,7 +481,13 @@ public class TabsTest {
                             WebContents webContents = mActivityTestRule.getWebContents();
                             webContents
                                     .getEventForwarder()
-                                    .startFling(SystemClock.uptimeMillis(), 0, -2000, false, true);
+                                    .startFling(
+                                            SystemClock.uptimeMillis(),
+                                            0,
+                                            -2000,
+                                            false,
+                                            true,
+                                            false);
                         });
         ChromeTabUtils.closeCurrentTab(
                 InstrumentationRegistry.getInstrumentation(), mActivityTestRule.getActivity());
@@ -508,7 +519,7 @@ public class TabsTest {
             TabUiTestHelper.enterTabSwitcher(cta);
 
             // Switch back to the tab view from the tab-switcher mode.
-            Espresso.pressBack();
+            TabUiTestHelper.leaveTabSwitcher(cta);
 
             assertEquals(
                     "URL mismatch after switching back to the tab from tab-switch mode",
@@ -522,11 +533,11 @@ public class TabsTest {
     @MediumTest
     @Feature({"Android-TabSwitcher"})
     public void testOpenIncognitoTab() {
-        mActivityTestRule.newIncognitoTabFromMenu();
-
+        IncognitoNewTabPageStation incognitoNtp =
+                mActivityTestRule.startOnBlankPage().openNewIncognitoTabOrWindowFast();
         assertTrue(
                 "Current Tab should be an incognito tab.",
-                mActivityTestRule.getActivityTab().isIncognito());
+                ThreadUtils.runOnUiThreadBlocking(incognitoNtp::getTab).isIncognitoBranded());
     }
 
     /** Test that orientation changes cause the live tab reflow. */
@@ -566,7 +577,7 @@ public class TabsTest {
     public void testLastClosedUndoableTabGetsHidden() {
         final TabModel model =
                 mActivityTestRule.getActivity().getTabModelSelector().getCurrentModel();
-        final Tab tab = TabModelUtils.getCurrentTab(model);
+        final Tab tab = mActivityTestRule.getActivityTab();
 
         assertEquals("Too many tabs at startup", 1, getTabCountOnUiThread(model));
 
@@ -631,7 +642,8 @@ public class TabsTest {
         final View urlBar = mActivityTestRule.getActivity().findViewById(R.id.url_bar);
         final TabModel model =
                 mActivityTestRule.getActivity().getTabModelSelector().getCurrentModel();
-        final Tab oldTab = TabModelUtils.getCurrentTab(model);
+        final Tab oldTab =
+                ThreadUtils.runOnUiThreadBlocking(() -> TabModelUtils.getCurrentTab(model));
 
         assertNotNull("Tab should have a view", oldTab.getView());
 
@@ -686,9 +698,7 @@ public class TabsTest {
         CriteriaHelper.pollUiThread(
                 () -> {
                     boolean keyboardVisible =
-                            mActivityTestRule
-                                    .getKeyboardDelegate()
-                                    .isKeyboardShowing(mActivityTestRule.getActivity(), urlBar);
+                            mActivityTestRule.getKeyboardDelegate().isKeyboardShowing(urlBar);
                     Criteria.checkThat(keyboardVisible, Matchers.is(true));
                 });
 
@@ -708,9 +718,7 @@ public class TabsTest {
         CriteriaHelper.pollUiThread(
                 () -> {
                     boolean keyboardVisible =
-                            mActivityTestRule
-                                    .getKeyboardDelegate()
-                                    .isKeyboardShowing(mActivityTestRule.getActivity(), urlBar);
+                            mActivityTestRule.getKeyboardDelegate().isKeyboardShowing(urlBar);
                     Criteria.checkThat(keyboardVisible, Matchers.is(true));
                 });
 
@@ -724,9 +732,7 @@ public class TabsTest {
         CriteriaHelper.pollUiThread(
                 () -> {
                     boolean keyboardVisible =
-                            mActivityTestRule
-                                    .getKeyboardDelegate()
-                                    .isKeyboardShowing(mActivityTestRule.getActivity(), urlBar);
+                            mActivityTestRule.getKeyboardDelegate().isKeyboardShowing(urlBar);
                     Criteria.checkThat(keyboardVisible, Matchers.is(false));
                 });
     }
@@ -803,7 +809,7 @@ public class TabsTest {
     public void testLastClosedTabTriggersNotifyChangedCall() {
         final TabModel model =
                 mActivityTestRule.getActivity().getTabModelSelector().getCurrentModel();
-        final Tab tab = TabModelUtils.getCurrentTab(model);
+        final Tab tab = mActivityTestRule.getActivityTab();
         final TabModelSelector selector = mActivityTestRule.getActivity().getTabModelSelector();
         mNotifyChangedCalled = false;
 
@@ -869,20 +875,21 @@ public class TabsTest {
     @Test
     @MediumTest
     @Feature({"Android-TabSwitcher"})
-    @DisableFeatures({ChromeFeatureList.ANDROID_TAB_DECLUTTER_RESCUE_KILLSWITCH})
+    @DisabledTest(message = "https://crbug.com/471243722")
     public void testIncognitoTabsNotRestoredAfterSwipe() throws Exception {
         mActivityTestRule.loadUrl(getUrl(TEST_PAGE_FILE_PATH));
 
-        mActivityTestRule.newIncognitoTabFromMenu();
+        IncognitoNewTabPageStation incognitoNtp =
+                mActivityTestRule.startOnBlankPage().openNewIncognitoTabOrWindowFast();
         // Tab states are not saved for empty NTP tabs, so navigate to any page to trigger a file
         // to be saved.
-        mActivityTestRule.loadUrl(getUrl(TEST_PAGE_FILE_PATH));
+        WebPageStation incognitoWebPage =
+                incognitoNtp.loadWebPageProgrammatically(getUrl(TEST_PAGE_FILE_PATH));
 
         File tabStateDir = TabStateDirectory.getOrCreateTabbedModeStateDirectory();
         TabModel normalModel =
                 mActivityTestRule.getActivity().getTabModelSelector().getModel(false);
-        TabModel incognitoModel =
-                mActivityTestRule.getActivity().getTabModelSelector().getModel(true);
+        TabModel incognitoModel = incognitoWebPage.getTabModel();
         File normalTabFile =
                 new File(
                         tabStateDir,
@@ -908,6 +915,9 @@ public class TabsTest {
         // Although we're destroying the activity, the Application will still live on since its in
         // the same process as this test.
         ApplicationTestUtils.finishActivity(mActivityTestRule.getActivity());
+        if (incognitoWebPage.getActivity().isIncognitoWindow()) {
+            ApplicationTestUtils.finishActivity(incognitoWebPage.getActivity());
+        }
 
         // Activity will be started without a savedInstanceState.
         mActivityTestRule.getActivityTestRule().startMainActivityOnBlankPage();

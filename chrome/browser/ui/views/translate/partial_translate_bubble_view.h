@@ -5,7 +5,6 @@
 #ifndef CHROME_BROWSER_UI_VIEWS_TRANSLATE_PARTIAL_TRANSLATE_BUBBLE_VIEW_H_
 #define CHROME_BROWSER_UI_VIEWS_TRANSLATE_PARTIAL_TRANSLATE_BUBBLE_VIEW_H_
 
-#include <map>
 #include <memory>
 #include <string>
 
@@ -30,7 +29,7 @@
 #include "ui/views/controls/tabbed_pane/tabbed_pane.h"
 #include "ui/views/controls/tabbed_pane/tabbed_pane_listener.h"
 #include "ui/views/controls/throbber.h"
-#include "ui/views/window/non_client_view.h"
+#include "ui/views/window/frame_view.h"
 
 namespace views {
 class Combobox;
@@ -47,7 +46,7 @@ class PartialTranslateBubbleView : public LocationBarBubbleDelegateView,
 
  public:
   // Item IDs for the option button's menu.
-  enum OptionsMenuItem { CHANGE_TARGET_LANGUAGE, CHANGE_SOURCE_LANGUAGE };
+  enum class OptionsMenuItem { kChangeTargetLanguage, kChangeSourceLanguage };
 
   // Element IDs for ui::ElementTracker
   DECLARE_CLASS_ELEMENT_IDENTIFIER_VALUE(kIdentifier);
@@ -130,6 +129,8 @@ class PartialTranslateBubbleView : public LocationBarBubbleDelegateView,
                            SourceLanguageTabSelectedLogged);
   FRIEND_TEST_ALL_PREFIXES(PartialTranslateBubbleViewTest,
                            TranslateFullPageButton);
+  FRIEND_TEST_ALL_PREFIXES(PartialTranslateBubbleViewTest,
+                           TranslatedTextIsSelectable);
 
   // views::TabbedPaneListener:
   void TabSelectedAt(int index) override;

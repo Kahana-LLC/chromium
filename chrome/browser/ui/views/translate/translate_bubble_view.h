@@ -5,7 +5,6 @@
 #ifndef CHROME_BROWSER_UI_VIEWS_TRANSLATE_TRANSLATE_BUBBLE_VIEW_H_
 #define CHROME_BROWSER_UI_VIEWS_TRANSLATE_TRANSLATE_BUBBLE_VIEW_H_
 
-#include <map>
 #include <memory>
 #include <string>
 
@@ -31,7 +30,7 @@
 #include "ui/views/controls/menu/menu_runner.h"
 #include "ui/views/controls/tabbed_pane/tabbed_pane.h"
 #include "ui/views/controls/tabbed_pane/tabbed_pane_listener.h"
-#include "ui/views/window/non_client_view.h"
+#include "ui/views/window/frame_view.h"
 
 class Browser;
 
@@ -53,13 +52,13 @@ class TranslateBubbleView : public LocationBarBubbleDelegateView,
 
  public:
   // Item IDs for the option button's menu.
-  enum OptionsMenuItem {
-    ALWAYS_TRANSLATE_LANGUAGE,
-    NEVER_TRANSLATE_LANGUAGE,
-    NEVER_TRANSLATE_SITE,
-    CHANGE_TARGET_LANGUAGE,
-    CHANGE_SOURCE_LANGUAGE,
-    OPEN_LANGUAGE_SETTINGS
+  enum class OptionsMenuItem {
+    kAlwaysTranslateLanguage,
+    kNeverTranslateLanguage,
+    kNeverTranslateSite,
+    kChangeTargetLanguage,
+    kChangeSourceLanguage,
+    kOpenLanguageSettings
   };
 
   // Element IDs for ui::ElementTracker.

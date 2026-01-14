@@ -4,6 +4,7 @@
 
 #import "ios/chrome/browser/tips_notifications/model/tips_notification_client.h"
 
+#import "base/functional/callback_helpers.h"
 #import "base/metrics/histogram_functions.h"
 #import "base/metrics/user_metrics.h"
 #import "base/metrics/user_metrics_action.h"
@@ -164,13 +165,12 @@ void TipsNotificationClient::OptInIfAuthorized(
       AuthenticationServiceFactory::GetForProfile(profile);
   id<SystemIdentity> identity =
       authService->GetPrimaryIdentity(signin::ConsentLevel::kSignin);
-  const std::string& gaiaID = base::SysNSStringToUTF8(identity.gaiaID);
   PushNotificationService* service =
       GetApplicationContext()->GetPushNotificationService();
   // Set `permitted_` here so that the OnPermittedPrefChanged exits early.
   permitted_ = true;
-  service->SetPreference(base::SysUTF8ToNSString(gaiaID),
-                         PushNotificationClientId::kTips, true);
+  service->SetPreference(identity.gaiaId, PushNotificationClientId::kTips,
+                         true);
 }
 
 std::optional<UIBackgroundFetchResult>
@@ -259,15 +259,9 @@ void TipsNotificationClient::OnPendingRequestFound(
 
   // Check for the one-time default browser notification.
   if (base::FeatureList::IsEnabled(kIOSOneTimeDefaultBrowserNotification)) {
-    ProfileIOS* profile = GetActiveForegroundProfile();
-    if (profile) {
-      TipsNotificationType type = TipsNotificationType::kDefaultBrowser;
-      std::unique_ptr<TipsNotificationCriteria> criteria =
-          std::make_unique<TipsNotificationCriteria>(profile, local_state_,
-                                                     CanSendReactivation());
-      if (criteria->ShouldSendNotification(type)) {
-        one_time_type_ = type;
-      }
+    TipsNotificationType type = TipsNotificationType::kDefaultBrowser;
+    if (IsNotificationValid(type)) {
+      one_time_type_ = type;
     }
   }
 
@@ -283,6 +277,14 @@ void TipsNotificationClient::OnPendingRequestFound(
   interacted_type_ = std::nullopt;
 
   std::optional<TipsNotificationType> type = ParseTipsNotificationType(request);
+
+  // It is possible that the scheduled notification doesn't meet the trigger
+  // criteria anymore. If so, remove it from the queue.
+  if (type.has_value() && !IsNotificationValid(type.value())) {
+    ClearAllRequestedNotifications();
+    MarkNotificationTypeNotSent(type.value());
+    MaybeRequestNotification(base::DoNothing());
+  }
 
   if (CanSendReactivation()) {
     ClearAllRequestedNotifications();
@@ -559,6 +561,24 @@ bool TipsNotificationClient::CanSendReactivation() const {
   return local_state_->GetInteger(kReactivationNotificationsCanceledCount) <
              2 ||
          forced_type_.has_value();
+}
+
+bool TipsNotificationClient::IsNotificationValid(
+    TipsNotificationType type) const {
+  if (forced_type_.has_value() && forced_type_.value() == type) {
+    return true;
+  }
+
+  ProfileIOS* profile = GetActiveForegroundProfile();
+  if (profile) {
+    std::unique_ptr<TipsNotificationCriteria> criteria =
+        std::make_unique<TipsNotificationCriteria>(profile, local_state_,
+                                                   CanSendReactivation());
+    return criteria->ShouldSendNotification(type);
+  }
+
+  // If cannot determine, consider the notification invalid.
+  return false;
 }
 
 void TipsNotificationClient::UpdateProvisionalAllowed() {

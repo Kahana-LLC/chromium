@@ -11,6 +11,7 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/time/time.h"
 #include "base/trace_event/trace_log.h"
+#include "base/tracing/protos/chrome_enums.pbzero.h"
 #include "build/build_config.h"
 #include "services/tracing/public/cpp/perfetto/trace_string_lookup.h"
 #include "third_party/perfetto/include/perfetto/tracing/internal/track_event_internal.h"
@@ -20,7 +21,7 @@
 #include "third_party/perfetto/protos/perfetto/trace/track_event/thread_descriptor.gen.h"
 
 #if BUILDFLAG(IS_ANDROID)
-#include "base/android/build_info.h"
+#include "base/android/apk_info.h"
 #endif
 
 namespace tracing {
@@ -47,10 +48,10 @@ void FillThreadTrack(const perfetto::ThreadTrack& track, const char* name) {
   desc.mutable_thread()->set_pid(static_cast<int>(
       base::trace_event::TraceLog::GetInstance()->process_id()));
   desc.mutable_thread()->set_thread_name(name);
-  auto thread_type =
-      static_cast<ChromeThreadDescriptor::ThreadType>(GetThreadType(name));
-  if (thread_type != ChromeThreadDescriptor::THREAD_UNSPECIFIED) {
-    desc.mutable_chrome_thread()->set_thread_type(thread_type);
+  pbzero_enums::ThreadType thread_type = GetThreadType(name);
+  if (thread_type != pbzero_enums::THREAD_UNSPECIFIED) {
+    desc.mutable_chrome_thread()->set_thread_type(
+        static_cast<int32_t>(thread_type));
   }
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_AIX)
   if (base::GetCurrentProcId() !=
@@ -84,6 +85,8 @@ void SetThreadTrackDescriptors() {
 
 }  // namespace
 
+bool TrackNameRecorder::record_host_app_package_name_ = false;
+
 void TrackNameRecorder::SetProcessTrackDescriptor(
     const std::string& process_name,
     pbzero_enums::ProcessType process_type) {
@@ -104,8 +107,7 @@ void TrackNameRecorder::SetProcessTrackDescriptor(
     // processes that "belong" to the same WebView app.
     if (process_type == pbzero_enums::PROCESS_RENDERER ||
         process_type == pbzero_enums::PROCESS_BROWSER) {
-      host_package_name =
-          base::android::BuildInfo::GetInstance()->host_package_name();
+      host_package_name = base::android::apk_info::host_package_name();
     }
   }
 #endif  // BUILDFLAG(IS_ANDROID)
@@ -145,12 +147,7 @@ TrackNameRecorder::GenerateProcessTrackDescriptor(
 
   auto* chrome_process = process_track_desc.mutable_chrome_process();
   if (process_type != pbzero_enums::PROCESS_UNSPECIFIED) {
-    // TODO(crbug.com/429457813): When chrome_enums.proto is rolled into
-    // Perfetto, update ChromeProcessDescriptor to use it and remove this cast.
-    chrome_process->set_process_type(
-        static_cast<
-            perfetto::protos::gen::ChromeProcessDescriptor::ProcessType>(
-            process_type));
+    chrome_process->set_process_type(static_cast<int32_t>(process_type));
   }
 
   if (crash_trace_id) {
@@ -167,7 +164,7 @@ TrackNameRecorder::GenerateProcessTrackDescriptor(
 TrackNameRecorder::TrackNameRecorder()
     : process_start_timestamp_(
           TRACE_TIME_TICKS_NOW().since_origin().InNanoseconds()) {
-  perfetto::internal::TrackRegistry::InitializeInstance();
+  CHECK(perfetto::Tracing::IsInitialized());
   base::ThreadIdNameManager::GetInstance()->AddObserver(this);
   base::CurrentProcess::GetInstance().SetDelegate(this, {});
   base::TrackEvent::AddSessionObserver(this);
@@ -186,22 +183,14 @@ void TrackNameRecorder::OnSetup(const perfetto::DataSourceBase::SetupArgs&) {
   SetProcessTrackDescriptor();
 }
 
-void TrackNameRecorder::OnStop(const perfetto::DataSourceBase::StopArgs&) {
-  SetProcessTrackDescriptor();
-}
-
 void TrackNameRecorder::OnThreadNameChanged(const char* name) {
-  // If tracing is not initialized, the thread name is lost, but this should
-  // never happen outside of tests.
   FillThreadTrack(perfetto::ThreadTrack::Current(), name);
 }
 
 void TrackNameRecorder::OnProcessNameChanged(
     const std::string& process_name,
     base::CurrentProcessType process_type) {
-  if (perfetto::Tracing::IsInitialized()) {
-    SetProcessTrackDescriptor(process_name, process_type);
-  }
+  SetProcessTrackDescriptor(process_name, process_type);
 }
 
 int TrackNameRecorder::GetNewProcessLabelId() {
@@ -215,12 +204,10 @@ void TrackNameRecorder::UpdateProcessLabel(int label_id,
     return RemoveProcessLabel(label_id);
   }
 
-  if (perfetto::Tracing::IsInitialized()) {
-    auto track = perfetto::ProcessTrack::Current();
-    auto desc = track.Serialize();
-    desc.mutable_process()->add_process_labels(current_label);
-    base::TrackEvent::SetTrackDescriptor(track, std::move(desc));
-  }
+  auto track = perfetto::ProcessTrack::Current();
+  auto desc = track.Serialize();
+  desc.mutable_process()->add_process_labels(current_label);
+  base::TrackEvent::SetTrackDescriptor(track, std::move(desc));
 
   base::AutoLock lock(lock_);
   process_labels_[label_id] = current_label;
@@ -237,6 +224,7 @@ void TrackNameRecorder::SetProcessTrackDescriptor() {
   SetProcessTrackDescriptor(process_name, process_type);
 }
 
+// static
 void TrackNameRecorder::SetRecordHostAppPackageName(
     bool record_host_app_package_name) {
   record_host_app_package_name_ = record_host_app_package_name;

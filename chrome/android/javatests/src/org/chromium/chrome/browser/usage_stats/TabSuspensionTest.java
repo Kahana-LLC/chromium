@@ -130,7 +130,7 @@ public class TabSuspensionTest {
                     mPageViewObserver =
                             new PageViewObserver(
                                     mActivity,
-                                    mActivity.getActivityTabProvider(),
+                                    mActivity.getActivityTabProvider().asObservable(),
                                     mEventTracker,
                                     mTokenTracker,
                                     mSuspensionTracker,
@@ -284,7 +284,7 @@ public class TabSuspensionTest {
                     mPageViewObserver2 =
                             new PageViewObserver(
                                     activity2,
-                                    activity2.getActivityTabProvider(),
+                                    activity2.getActivityTabProvider().asObservable(),
                                     mEventTracker,
                                     mTokenTracker,
                                     mSuspensionTracker,
@@ -418,16 +418,6 @@ public class TabSuspensionTest {
 
         startLoadingUrl(tab2, mStartingUrl);
         waitForSuspendedTabToShow(tab2, STARTING_FQDN);
-    }
-
-    @Test
-    @MediumTest
-    public void testSuspendUninitializedCurrentTab() {
-        mActivityTestRule.loadUrl(mStartingUrl);
-        ThreadUtils.runOnUiThreadBlocking(() -> mTab.destroy());
-
-        doReturn(true).when(mSuspensionTracker).isWebsiteSuspended(STARTING_FQDN);
-        suspendDomain(STARTING_FQDN);
     }
 
     private void startLoadingUrl(Tab tab, String url) {

@@ -53,10 +53,12 @@ public class PermissionParamsListBuilderUnitTest {
         assertEquals(0, permissions.size());
     }
 
+    // TODO(crbug.com/450954710): This test fails on SDK 36.
+    @Config(sdk = 29)
     @Test
     public void addSingleEntryAndBuild() {
         mPermissionParamsListBuilder.addPermissionEntry(
-                "Foo", "foo", ContentSettingsType.COOKIES, true);
+                "Foo", "foo", ContentSettingsType.COOKIES, true, false);
 
         List<PermissionObject> permissions = mPermissionParamsListBuilder.build();
         assertEquals(1, permissions.size());
@@ -64,11 +66,13 @@ public class PermissionParamsListBuilderUnitTest {
         assertTrue(perm.allowed);
     }
 
+    // TODO(crbug.com/450954710): This test fails on SDK 36.
+    @Config(sdk = 29)
     @Test
     public void addLocationEntryAndBuildWhenSystemLocationDisabled() {
         LocationSettingsTestUtil.setSystemLocationSettingEnabled(false);
         mPermissionParamsListBuilder.addPermissionEntry(
-                "Test", "test", ContentSettingsType.GEOLOCATION, true);
+                "Test", "test", ContentSettingsType.GEOLOCATION, true, false);
 
         List<PermissionObject> permissions = mPermissionParamsListBuilder.build();
         assertEquals(1, permissions.size());
@@ -77,11 +81,13 @@ public class PermissionParamsListBuilderUnitTest {
         assertEquals(R.string.page_info_android_location_blocked, perm.warningTextResource);
     }
 
+    // TODO(crbug.com/450954710): This test fails on SDK 36.
+    @Config(sdk = 29)
     @Test
     public void arNotificationWhenCameraBlocked() {
         FakePermissionDelegate.blockPermission(android.Manifest.permission.CAMERA);
         mPermissionParamsListBuilder.addPermissionEntry(
-                "Test", "test", ContentSettingsType.AR, true);
+                "Test", "test", ContentSettingsType.AR, true, false);
 
         List<PermissionObject> permissions = mPermissionParamsListBuilder.build();
         assertEquals(1, permissions.size());

@@ -26,6 +26,7 @@ import org.chromium.base.ApplicationStatus;
 import org.chromium.base.CommandLine;
 import org.chromium.base.Holder;
 import org.chromium.base.Log;
+import org.chromium.base.ResettersForTesting;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.BaseActivityTestRule;
 import org.chromium.base.test.util.CallbackHelper;
@@ -131,6 +132,7 @@ public class ChromeActivityTestRule<T extends ChromeActivity> extends BaseActivi
         Tracker tracker = Mockito.mock(Tracker.class);
         when(tracker.shouldTriggerHelpUi(anyString())).thenReturn(false);
         TrackerFactory.setTrackerForTests(tracker);
+        ResettersForTesting.register(() -> Mockito.reset(tracker));
     }
 
     private void slowDownPulseDrawableAnimations() {
@@ -317,6 +319,20 @@ public class ChromeActivityTestRule<T extends ChromeActivity> extends BaseActivi
     /** {@link #loadUrl(String) */
     public LoadUrlResult loadUrl(GURL url) throws IllegalArgumentException {
         return loadUrl(url.getSpec());
+    }
+
+    public LoadUrlResult loadUrlNoWaiting(String url) throws IllegalArgumentException {
+        Tab tab = getActivityTab();
+        LoadUrlResult result =
+                ThreadUtils.runOnUiThreadBlocking(
+                        () -> {
+                            return tab.loadUrl(
+                                    new LoadUrlParams(
+                                            url,
+                                            PageTransition.TYPED
+                                                    | PageTransition.FROM_ADDRESS_BAR));
+                        });
+        return result;
     }
 
     /**

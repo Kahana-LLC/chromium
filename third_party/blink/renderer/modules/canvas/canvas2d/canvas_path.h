@@ -33,9 +33,7 @@
 #include "base/check.h"
 #include "base/check_op.h"
 #include "base/compiler_specific.h"
-#include "third_party/blink/public/common/privacy_budget/identifiable_token.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_union_dompointinit_unrestricteddouble.h"
-#include "third_party/blink/renderer/modules/canvas/canvas2d/identifiability_study_helper.h"
 #include "third_party/blink/renderer/modules/modules_export.h"
 #include "third_party/blink/renderer/platform/geometry/path.h"
 #include "third_party/blink/renderer/platform/geometry/path_builder.h"
@@ -50,7 +48,7 @@
 #include "ui/gfx/geometry/rect_f.h"
 
 // https://github.com/include-what-you-use/include-what-you-use/issues/1546
-// IWYU pragma: no_forward_declare WTF::internal::__thisIsHereToForceASemicolonAfterThisMacro
+// IWYU pragma: no_forward_declare internal::__thisIsHereToForceASemicolonAfterThisMacro
 
 // IWYU pragma: no_include "third_party/blink/renderer/platform/heap/visitor.h"
 
@@ -138,10 +136,6 @@ class MODULES_EXPORT CanvasPath : public GarbageCollectedMixin {
     return AffineTransform();
   }
 
-  IdentifiableToken GetIdentifiableToken() const {
-    return identifiability_study_helper_.GetToken();
-  }
-
   // Returns the path types that would result in a high entropy canvas operation
   // when these are drawn on the canvas. Because of the high entropy associated
   // with the operation, this reveals information about the user's device and
@@ -190,8 +184,6 @@ class MODULES_EXPORT CanvasPath : public GarbageCollectedMixin {
   // than necessary.
   gfx::RectF BoundingRect() const;
 
-  void Trace(Visitor*) const override;
-
  protected:
   CanvasPath() { path_builder_.SetIsVolatile(true); }
   explicit CanvasPath(const Path& path) : path_builder_(path) {
@@ -218,8 +210,6 @@ class MODULES_EXPORT CanvasPath : public GarbageCollectedMixin {
   // GetTransform() remains virtual, which is okay because it is only called in
   // code paths that handle non-invertible transforms.
   bool is_transform_invertible_ = true;
-
-  IdentifiabilityStudyHelper identifiability_study_helper_;
 
   // The path types that would result in a high entropy canvas operation when
   // these are drawn on the canvas. These could be used for fingerprinting.

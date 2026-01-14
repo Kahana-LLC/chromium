@@ -159,10 +159,16 @@ class MockAutocompleteProviderClient
   MOCK_CONST_METHOD0(IsLensEnabled, bool());
   MOCK_CONST_METHOD0(AreLensEntrypointsVisible, bool());
   MOCK_CONST_METHOD0(IsPagePaywalled, std::optional<bool>());
+  MOCK_METHOD(bool, ShouldSendContextualUrlSuggestParam, (), (const));
+  MOCK_METHOD(bool, ShouldSendPageTitleSuggestParam, (), (const));
   MOCK_CONST_METHOD1(GetLensSuggestInputsWhenReady,
                      base::CallbackListSubscription(
                          LensOverlaySuggestInputsCallback callback));
   MOCK_METHOD(bool, IsAimEligible, (), (const));
+  MOCK_METHOD(bool,
+              IsOmniboxNextFeatureParamEnabled,
+              (const std::string&),
+              (const));
 
   MOCK_METHOD6(
       Classify,

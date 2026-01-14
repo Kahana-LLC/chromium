@@ -4,8 +4,12 @@
 
 #include "third_party/blink/renderer/modules/webaudio/audio_context.h"
 
+#include <atomic>
+
+#include "base/functional/callback_helpers.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/strings/strcat.h"
 #include "base/strings/to_string.h"
 #include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
@@ -24,16 +28,17 @@
 #include "third_party/blink/renderer/bindings/modules/v8/v8_audio_context_options.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_audio_timestamp.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_union_audiocontextlatencycategory_double.h"
+#include "third_party/blink/renderer/bindings/modules/v8/v8_union_audiocontextrendersizecategory_unsignedlong.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_union_audiosinkinfo_string.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/html/media/html_media_element.h"
 #include "third_party/blink/renderer/core/inspector/console_message.h"
+#include "third_party/blink/renderer/core/page/page.h"
 #include "third_party/blink/renderer/core/probe/core_probes.h"
 #include "third_party/blink/renderer/core/timing/dom_window_performance.h"
 #include "third_party/blink/renderer/core/timing/window_performance.h"
 #include "third_party/blink/renderer/modules/mediastream/media_stream.h"
-#include "third_party/blink/renderer/modules/peerconnection/peer_connection_dependency_factory.h"
 #include "third_party/blink/renderer/modules/permissions/permission_utils.h"
 #include "third_party/blink/renderer/modules/webaudio/audio_listener.h"
 #include "third_party/blink/renderer/modules/webaudio/audio_playout_stats.h"
@@ -42,7 +47,6 @@
 #include "third_party/blink/renderer/modules/webaudio/media_stream_audio_destination_node.h"
 #include "third_party/blink/renderer/modules/webaudio/media_stream_audio_source_node.h"
 #include "third_party/blink/renderer/modules/webaudio/realtime_audio_destination_node.h"
-#include "third_party/blink/renderer/modules/webrtc/webrtc_audio_device_impl.h"
 #include "third_party/blink/renderer/platform/audio/audio_utilities.h"
 #include "third_party/blink/renderer/platform/audio/vector_math.h"
 #include "third_party/blink/renderer/platform/bindings/exception_messages.h"
@@ -124,8 +128,8 @@ const char* LatencyCategoryToString(
 String GetAudioContextLogString(const WebAudioLatencyHint& latency_hint,
                                 std::optional<float> sample_rate) {
   StringBuilder builder;
-  builder.AppendFormat("({latency_hint=%s}",
-                       LatencyCategoryToString(latency_hint.Category()));
+  UNSAFE_TODO(builder.AppendFormat(
+      "({latency_hint=%s}", LatencyCategoryToString(latency_hint.Category())));
   if (latency_hint.Category() == WebAudioLatencyHint::kCategoryExact) {
     builder.AppendFormat(", {seconds=%.3f}", latency_hint.Seconds());
   }
@@ -153,6 +157,55 @@ bool IsAudible(const AudioBus* rendered_data) {
 }
 
 }  // namespace
+
+// Helper class that decides if the AudioPlayoutStats should be updated.
+// It implements Privacy & Security mitigations as described here:
+// https://wicg.github.io/audio-context-playout-stats/#mitigations
+class AudioContext::StatsUpdateRestrictor {
+ public:
+  StatsUpdateRestrictor() : clock_(base::DefaultTickClock::GetInstance()) {}
+
+  // Should only be called from the audio thread.
+  bool StatUpdateAllowed() {
+    // Stats should only be updated if the page is visible or the application
+    // has audio capture permission.
+    if (!(visible_.load(std::memory_order_relaxed) ||
+          has_capture_permission_.load(std::memory_order_relaxed))) {
+      return false;
+    }
+
+    static const base::TimeDelta kMinTimeBetweenStatUpdates = base::Seconds(1);
+    base::TimeTicks now_time = clock_->NowTicks();
+    if (now_time - last_update_time_ < kMinTimeBetweenStatUpdates) {
+      return false;
+    }
+
+    last_update_time_ = now_time;
+    return true;
+  }
+
+  void SetVisible(bool visible) {
+    visible_.store(visible, std::memory_order_relaxed);
+  }
+
+  void SetCapturePermission(mojom::blink::PermissionStatus status) {
+    has_capture_permission_.store(
+        status == mojom::blink::PermissionStatus::GRANTED,
+        std::memory_order_relaxed);
+  }
+
+  void SetClockForTesting(const base::TickClock* clock) { clock_ = clock; }
+
+ private:
+  // Only accessed on the audio thread.
+  base::TimeTicks last_update_time_;
+  raw_ptr<const base::TickClock> clock_;
+
+  // `visible_` and `has_capture_permission_` are read on the audio thread and
+  // set on the main thread, so they need to be atomic.
+  std::atomic<bool> visible_ = false;
+  std::atomic<bool> has_capture_permission_ = false;
+};
 
 AudioContext::SetSinkIdResolver::SetSinkIdResolver(
     ScriptState* script_state,
@@ -370,6 +423,26 @@ AudioContext* AudioContext::Create(ExecutionContext* context,
     sample_rate = context_options->sampleRate();
   }
 
+  std::optional<uint32_t> render_quantum_frames = 128;
+  if (RuntimeEnabledFeatures::WebAudioConfigurableRenderQuantumEnabled() &&
+      context_options->hasRenderSizeHint()) {
+    const auto* hint = context_options->renderSizeHint();
+    switch (hint->GetContentType()) {
+      case V8UnionAudioContextRenderSizeCategoryOrUnsignedLong::ContentType::
+          kUnsignedLong:
+        render_quantum_frames = hint->GetAsUnsignedLong();
+        break;
+      case V8UnionAudioContextRenderSizeCategoryOrUnsignedLong::ContentType::
+          kAudioContextRenderSizeCategory:
+        if (hint->GetAsAudioContextRenderSizeCategory() ==
+            V8AudioContextRenderSizeCategory::Enum::kHardware) {
+          // Use `nullopt` to indicate a "hardware" hint.
+          render_quantum_frames.reset();
+        }
+        break;
+    }
+  }
+
   // The empty string means the default audio device.
   auto frame_token = window.GetLocalFrameToken();
   WebAudioSinkDescriptor sink_descriptor(g_empty_string, frame_token);
@@ -405,12 +478,48 @@ AudioContext* AudioContext::Create(ExecutionContext* context,
     return nullptr;
   }
 
+  // Pre-validation for renderSizeHint if sampleRate is provided. This prevents
+  // allocating excessive memory for clearly invalid renderSizeHint values
+  // before the AudioContext is fully constructed.
+  bool render_quantum_frames_validated = false;
+  if (sample_rate.has_value() && render_quantum_frames.has_value()) {
+    if (!audio_utilities::IsValidRenderQuantumSize(
+            render_quantum_frames.value(), sample_rate.value())) {
+      exception_state.ThrowDOMException(
+          DOMExceptionCode::kNotSupportedError,
+          ExceptionMessages::IndexOutsideRange(
+              "renderSizeHint", render_quantum_frames.value(),
+              audio_utilities::MinRenderQuantumSize(),
+              ExceptionMessages::kInclusiveBound,
+              audio_utilities::MaxRenderQuantumSize(sample_rate.value()),
+              ExceptionMessages::kInclusiveBound));
+      return nullptr;
+    }
+    render_quantum_frames_validated = true;
+  }
+
   SCOPED_UMA_HISTOGRAM_TIMER("WebAudio.AudioContext.CreateTime");
   AudioContext* audio_context = MakeGarbageCollected<AudioContext>(
       window, latency_hint, sample_rate, sink_descriptor,
-      update_echo_cancellation_on_first_start);
+      update_echo_cancellation_on_first_start, render_quantum_frames);
   ++hardware_context_count;
   audio_context->UpdateStateIfNeeded();
+
+  // If the render quantum size was not able to be validated before due to the
+  // sample rate or hardware buffer size not being known, validate it here.
+  if (!render_quantum_frames_validated &&
+      !audio_utilities::IsValidRenderQuantumSize(
+          audio_context->renderQuantumSize(), audio_context->sampleRate())) {
+    exception_state.ThrowDOMException(
+        DOMExceptionCode::kNotSupportedError,
+        ExceptionMessages::IndexOutsideRange(
+            "renderSizeHint", audio_context->renderQuantumSize(),
+            audio_utilities::MinRenderQuantumSize(),
+            ExceptionMessages::kInclusiveBound,
+            audio_utilities::MaxRenderQuantumSize(audio_context->sampleRate()),
+            ExceptionMessages::kInclusiveBound));
+    return nullptr;
+  }
 
   // This starts the audio thread. The destination node's
   // provideInput() method will now be called repeatedly to render
@@ -448,9 +557,13 @@ AudioContext::AudioContext(LocalDOMWindow& window,
                            const WebAudioLatencyHint& latency_hint,
                            std::optional<float> sample_rate,
                            WebAudioSinkDescriptor sink_descriptor,
-                           bool update_echo_cancellation_on_first_start)
-    : BaseAudioContext(&window, ContextType::kRealtimeContext),
+                           bool update_echo_cancellation_on_first_start,
+                           std::optional<uint32_t> render_quantum_frames)
+    : BaseAudioContext(&window,
+                       ContextType::kRealtimeContext,
+                       render_quantum_frames.value_or(128)),
       FrameVisibilityObserver(GetLocalFrame()),
+      PageVisibilityObserver(GetPageFromFrame()),
       context_id_(context_id++),
       audio_context_manager_(&window),
       permission_service_(&window),
@@ -464,7 +577,8 @@ AudioContext::AudioContext(LocalDOMWindow& window,
       player_id_(GetNextMediaPlayerId()),
       media_player_host_(&window),
       media_player_receiver_(this, &window),
-      media_player_observer_(&window) {
+      media_player_observer_(&window),
+      stats_update_restrictor_(std::make_unique<StatsUpdateRestrictor>()) {
   RecordAudioContextOperation(AudioContextOperation::kCreate);
   SendLogMessage(__func__, GetAudioContextLogString(latency_hint, sample_rate));
 
@@ -558,6 +672,8 @@ AudioContext::AudioContext(LocalDOMWindow& window,
   if (audio_context_manager_.is_bound()) {
     audio_context_manager_->AudioContextCreated(context_id_);
   }
+
+  stats_update_restrictor_->SetVisible(GetPage() && GetPage()->IsPageVisible());
 }
 
 void AudioContext::Uninitialize() {
@@ -616,6 +732,7 @@ void AudioContext::Trace(Visitor* visitor) const {
   visitor->Trace(media_player_observer_);
   BaseAudioContext::Trace(visitor);
   FrameVisibilityObserver::Trace(visitor);
+  PageVisibilityObserver::Trace(visitor);
 }
 
 ScriptPromise<IDLUndefined> AudioContext::suspendContext(
@@ -726,39 +843,21 @@ bool AudioContext::IsPullingAudioGraph() const {
 
 AudioTimestamp* AudioContext::getOutputTimestamp(
     ScriptState* script_state) const {
-  AudioTimestamp* result = AudioTimestamp::Create();
-
   DCHECK_CALLED_ON_VALID_SEQUENCE(main_thread_sequence_checker_);
+
+  AudioTimestamp* result = AudioTimestamp::Create();
   LocalDOMWindow* window = LocalDOMWindow::From(script_state);
   if (!window) {
     return result;
   }
-
-  if (!destination()) {
-    result->setContextTime(0.0);
-    result->setPerformanceTime(0.0);
-    return result;
-  }
-
   WindowPerformance* performance = DOMWindowPerformance::performance(*window);
   DCHECK(performance);
 
-  AudioIOPosition position = OutputPosition();
-
-  // The timestamp of what is currently being played (contextTime) cannot be
-  // later than what is being rendered. (currentTime)
-  if (position.position > currentTime()) {
-    position.position = currentTime();
-  }
-
+  DeferredTaskHandler::GraphAutoLocker locker(this);
   double performance_time = performance->MonotonicTimeToDOMHighResTimeStamp(
-      base::TimeTicks() + base::Seconds(position.timestamp));
-  if (performance_time < 0.0) {
-    performance_time = 0.0;
-  }
-
-  result->setContextTime(position.position);
-  result->setPerformanceTime(performance_time);
+      base::TimeTicks() + base::Seconds(output_position_.timestamp));
+  result->setContextTime(output_position_.position);
+  result->setPerformanceTime(performance_time < 0.0 ? 0.0 : performance_time);
   return result;
 }
 
@@ -1146,11 +1245,19 @@ bool AudioContext::HandlePreRenderTasks(
     // Update the dirty state of the AudioListenerHandler.
     listener()->Handler().UpdateState();
 
-    // Update output timestamp and metric.
+    // Update output timestamp and metric. The timestamp of what is currently
+    // being played (e.g. getOutputTimestamp().contextTime) cannot be later
+    // than what is being rendered. (AudioContext.currentTime)
     output_position_ = *output_position;
+    if (output_position_.position > currentTime()) {
+      output_position_.position = currentTime();
+    }
+
     callback_metric_ = *metric;
 
-    audio_frame_stats_.Absorb(pending_audio_frame_stats_);
+    if (stats_update_restrictor_->StatUpdateAllowed()) {
+      audio_frame_stats_.Absorb(pending_audio_frame_stats_);
+    }
 
     unlock();
   }
@@ -1245,11 +1352,6 @@ void AudioContext::ResolvePromisesForUnpause() {
   }
 }
 
-AudioIOPosition AudioContext::OutputPosition() const {
-  DeferredTaskHandler::GraphAutoLocker locker(this);
-  return output_position_;
-}
-
 void AudioContext::NotifyAudibleAudioStopped() {
   DCHECK(!audible_start_timestamp_.is_null());
   total_audible_duration_ += base::TimeTicks::Now() - audible_start_timestamp_;
@@ -1306,6 +1408,7 @@ void AudioContext::OnPermissionStatusChange(
     mojom::blink::PermissionStatus status) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(main_thread_sequence_checker_);
 
+  stats_update_restrictor_->SetCapturePermission(status);
   microphone_permission_status_ = status;
   if (is_media_device_service_initialized_) {
     CHECK_LT(pending_device_list_updates_, std::numeric_limits<int>::max());
@@ -1330,6 +1433,7 @@ void AudioContext::DidInitialPermissionCheck(
     // avoids listening the future permission change in this AudioContext's
     // lifetime. This is acceptable because the current UI pattern asks to
     // reload the page when the permission is taken away.
+    stats_update_restrictor_->SetCapturePermission(status);
     microphone_permission_status_ = status;
     permission_receiver_.reset();
     return;
@@ -1533,6 +1637,11 @@ void AudioContext::FrameVisibilityChanged(
   }
 }
 
+void AudioContext::PageVisibilityChanged() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(main_thread_sequence_checker_);
+  stats_update_restrictor_->SetVisible(GetPage() && GetPage()->IsPageVisible());
+}
+
 void AudioContext::UninitializeMediaDeviceService() {
   if (media_device_service_.is_bound()) {
     media_device_service_.reset();
@@ -1561,10 +1670,6 @@ bool AudioContext::IsValidSinkDescriptor(
 
 void AudioContext::OnRenderError() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(main_thread_sequence_checker_);
-
-  if (!RuntimeEnabledFeatures::AudioContextOnErrorEnabled()) {
-    return;
-  }
 
   CHECK(GetExecutionContext());
   render_error_occurred_ = true;
@@ -1688,6 +1793,10 @@ void AudioContext::invoke_onrendererror_from_platform_for_testing() {
       .invoke_onrendererror_from_platform_for_testing();
 }
 
+void AudioContext::set_clock_for_testing(const base::TickClock* clock) {
+  stats_update_restrictor_->SetClockForTesting(clock);
+}
+
 void AudioContext::SendLogMessage(const char* const function_name,
                                   const String& message) {
   WebRtcLogMessage(base::StrCat(
@@ -1703,6 +1812,15 @@ LocalFrame* AudioContext::GetLocalFrame() const {
   }
 
   return window->GetFrame();
+}
+
+Page* AudioContext::GetPageFromFrame() const {
+  LocalFrame* frame = GetLocalFrame();
+  if (!frame) {
+    return nullptr;
+  }
+
+  return frame->GetPage();
 }
 
 void AudioContext::EnsureMediaPlayerConnection() {

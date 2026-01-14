@@ -11,7 +11,6 @@
 #include <vector>
 
 #include "base/containers/span.h"
-#include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
 #include "base/time/time.h"
 #include "components/device_reauth/device_authenticator.h"
@@ -114,12 +113,6 @@ std::vector<password_manager::PasswordForm> FindBestMatches(
 const password_manager::PasswordForm* FindFormByUsername(
     base::span<const password_manager::PasswordForm> forms,
     const std::u16string& username_value);
-
-// Returns a form from |submitted_manager|'s best matches with
-// `kChangeSubmission` type that matches |submitted_manager|'s pending
-// credentials on username. Returns nullptr if such form is not found.
-const password_manager::PasswordForm* FindLoginWithChangedPassword(
-    const password_manager::PasswordFormManagerForUI& submitted_manager);
 
 // Returns a form from |submitted_manager|'s best matches with
 // `kChangeSubmission` type that matches |submitted_manager|'s pending

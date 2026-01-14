@@ -19,9 +19,9 @@ assert(!is_fuchsia, "Fuchsia shouldn't use anything in //chrome")
 
 group("resources") {
   public_deps = [
-    "connectors_internals:resources",
     "saved_tab_groups_unsupported:resources",
     "segmentation_internals:resources",
+    "//components/enterprise/connectors/resources",
   ]
 
   if (enable_extensions_core) {
@@ -40,6 +40,7 @@ group("resources") {
       "bookmarks:resources",
       "certificate_manager:resources",
       "commerce/product_specifications:resources",
+      "contextual_tasks:resources",
       "data_sharing:resources",
       "downloads:resources",
       "feedback:resources",
@@ -47,6 +48,7 @@ group("resources") {
       "history:resources",
       "inspect:resources",
       "key_value_pair_viewer_shared:resources",
+      "legion_internals:resources",
       "lens/overlay:resources",
       "lens/shared:resources",
       "management:resources",
@@ -81,7 +83,9 @@ group("resources") {
       "web_app_internals:resources",
       "webui_browser:resources",
       "webui_gallery:resources",
+      "webui_toolbar:resources",
       "whats_new:resources",
+      "//components/browser_apis/tab_strip/resources",
     ]
     if (is_chrome_branded) {
       public_deps += [ "media_router/cast_feedback:resources" ]
@@ -107,6 +111,7 @@ group("resources") {
 
   if (is_mac) {
     public_deps += [
+      "unexportable_keys_internals:resources",
       "//chrome/browser/resources/media/mei_preload:component",
       "//components/privacy_sandbox/privacy_sandbox_attestations/preload:component",
     ]
@@ -123,6 +128,7 @@ group("resources") {
       "browser_switch:resources",
       "on_device_translation_internals:resources",
       "signin/history_sync_optin:resources",
+      "updater:resources",
     ]
   }
 
@@ -173,6 +179,7 @@ group("resources") {
     public_deps += [
       "glic:resources",
       "glic/fre:resources",
+      "glic/shared:resources",
     ]
   }
 
@@ -215,7 +222,7 @@ if (enable_extensions_core) {
     # build time so we include them as explicit dependencies here
     if (is_chromeos) {
       deps = [
-        "chromeos/accessibility/braille_ime:ts_build",
+        "chromeos/accessibility/braille_ime:build_ts",
         "chromeos/contact_center_insights:generate_ccaas_deps",
         "chromeos/desk_api:generate_desk_api_bundle",
       ]
@@ -318,6 +325,7 @@ group("dev_ui_resources") {
   if (is_android) {
     public_deps += [
       "//chrome/browser/resources/feed_internals:resources",
+      "//chrome/browser/resources/notifications_internals:resources",
       "//chrome/browser/resources/webapks:resources",
     ]
   } else {
@@ -391,6 +399,7 @@ repack("dev_ui_paks") {
   if (is_android) {
     sources += [
       "$root_gen_dir/chrome/feed_internals_resources.pak",
+      "$root_gen_dir/chrome/notifications_internals_resources.pak",
       "$root_gen_dir/chrome/webapks_resources.pak",
     ]
   } else {

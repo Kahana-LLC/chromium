@@ -330,7 +330,7 @@ IN_PROC_BROWSER_TEST_F(OmniboxFocusInteractiveTest, OmniboxFocusStealing) {
 
   // Navigate to an extension resource.
   GURL ext_url = extension->GetResourceURL("ext.html");
-  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), ext_url));
+  ASSERT_TRUE(NavigateToURL(GetActiveWebContents(), ext_url));
 
   // Focus the location bar / omnibox.
   chrome::FocusLocationBar(browser());
@@ -408,8 +408,8 @@ IN_PROC_BROWSER_TEST_F(OmniboxFocusInteractiveTest, TabFocusStealingFromOopif) {
   // will not be triggered by the regular BeginNavigation path, but instead
   // will go through content::RenderFrameProxyHost::OpenURL.
   content::RenderFrameHost* main_frame = web_contents->GetPrimaryMainFrame();
-  EXPECT_NE(subframe->GetLastCommittedURL().scheme(),
-            main_frame->GetLastCommittedURL().scheme());
+  EXPECT_NE(subframe->GetLastCommittedURL().GetScheme(),
+            main_frame->GetLastCommittedURL().GetScheme());
   EXPECT_NE(subframe->GetProcess()->GetDeprecatedID(),
             main_frame->GetProcess()->GetDeprecatedID());
 

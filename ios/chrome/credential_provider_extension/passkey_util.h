@@ -17,14 +17,6 @@ class WebauthnCredentialSpecifics_Encrypted;
 
 @protocol Credential;
 
-// Enum which represents possible user verification preferences.
-enum class UserVerificationPreference {
-  kRequired = 0,
-  kPreferred,
-  kDiscouraged,
-  kOther,
-};
-
 // Decrypts the credential's secrets, like the private key and the hmac secret.
 // Can be used to verify if any of the security_domain_secrets from the provided
 // array is valid. If the decryption is successful, the results will be stored
@@ -44,7 +36,8 @@ struct PasskeyCreationOutput {
 // `prf_inputs` is provided. Otherwise, returns a structure with nil members.
 //
 // `prf_inputs` is provided is PRF support is requested, otherwise, it should be
-// nil.
+// nil. `did_complete_uv` should be true iff user verification was completed for
+// this operation.
 PasskeyCreationOutput PerformPasskeyCreation(
     NSData* client_data_hash,
     NSString* rp_id,
@@ -52,7 +45,8 @@ PasskeyCreationOutput PerformPasskeyCreation(
     NSData* user_handle,
     NSString* gaia,
     NSArray<NSData*>* security_domain_secrets,
-    NSArray<NSData*>* prf_inputs);
+    NSArray<NSData*>* prf_inputs,
+    bool did_complete_uv);
 
 // Credential and extension data returned by the passkey assertion process.
 struct PasskeyAssertionOutput {
@@ -65,21 +59,33 @@ struct PasskeyAssertionOutput {
 // to if `prf_inputs` is provided. Otherwise, returns a structure with nil
 // members.
 //
-// `prf_inputs` is provided is PRF support is requested, otherwise, it should be
-// nil.
+// `prf_inputs` is provided if PRF support is requested, otherwise, it should be
+// nil. `did_complete_uv` should be true iff user verification was completed for
+// this operation.
 PasskeyAssertionOutput PerformPasskeyAssertion(
     id<Credential> credential,
     NSData* client_data_hash,
     NSArray<NSData*>* allowed_credentials,
     NSArray<NSData*>* security_domain_secrets,
-    NSArray<NSData*>* prf_inputs);
+    NSArray<NSData*>* prf_inputs,
+    bool did_complete_uv);
 
 // Returns whether or not the user should be asked to re-authenticate depending
 // on the provided `user_verification_preference_string` and whether biometric
-// authentication is enabled for the device.
+// authentication is enabled for the device. If the request is a conditional
+// create, then the user verification should not be performed.
 BOOL ShouldPerformUserVerificationForPreference(
     ASAuthorizationPublicKeyCredentialUserVerificationPreference
         user_verification_preference_string,
-    BOOL is_biometric_authentication_enabled);
+    BOOL is_biometric_authentication_enabled,
+    BOOL is_conditional_create);
+
+// Saves a passkey credential to the user defaults credential store. This
+// credential store will be read by Chrome if it is currently running, or the
+// next time it runs, to sync the newly created passkeys in the user's account.
+//
+// Additionally, updates ASCredentialIdentityStore so that the passkey is
+// correctly surfaced or hidden from the sign-in sheet.
+void SavePasskeyCredential(id<Credential> credential);
 
 #endif  // IOS_CHROME_CREDENTIAL_PROVIDER_EXTENSION_PASSKEY_UTIL_H_

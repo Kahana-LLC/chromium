@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
-#pragma allow_unsafe_buffers
-#endif
-
 #ifndef PARTITION_ALLOC_PAGE_ALLOCATOR_H_
 #define PARTITION_ALLOC_PAGE_ALLOCATOR_H_
 
@@ -25,6 +20,12 @@
 #endif
 
 namespace partition_alloc {
+
+// LINT.IfChange(CHROME_RESULT_CODE_TERMINATED_BY_OTHER_PROCESS_ON_COMMIT_FAILURE)
+// Exit code to use when another process is terminated on commit failure.
+// This is defined here to avoid a dependency on Chrome.
+static constexpr unsigned int kTerminateOnCommitFailureExitCode = 39;
+// LINT.ThenChange(/chrome/common/chrome_result_codes.h:CHROME_RESULT_CODE_TERMINATED_BY_OTHER_PROCESS_ON_COMMIT_FAILURE)
 
 struct PageAccessibilityConfiguration {
   enum Permissions {

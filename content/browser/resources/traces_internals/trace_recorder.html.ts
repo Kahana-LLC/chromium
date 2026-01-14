@@ -55,10 +55,10 @@ function getBufferConfigurationCardHtml(this: TraceRecorderElement) {
             <h3>Recording mode</h3>
             <select class="md-select" value="${this.bufferFillPolicy}"
                 @change="${this.onBufferFillPolicyChanged_}">
-              <option value=${this.fillPolicyEnum.RING_BUFFER}>
+              <option value="${this.fillPolicyEnum.RING_BUFFER}">
                 RING BUFFER
               </option>
-              <option value=${this.fillPolicyEnum.DISCARD}>
+              <option value="${this.fillPolicyEnum.DISCARD}">
                 DISCARD
               </option>
             </select>
@@ -86,16 +86,17 @@ function getEtwConfigurationCardHtml(this: TraceRecorderElement) {
             <div>Flag</div>
             <div>Description</div>
           </div>
-          ${this.etwProducers.map(producer => html`
+          ${this.etwEvents.map(event => html`
             <div class="row">
               <cr-toggle
                 class="config-toggle"
-                ?checked="${this.isEtwProducerEnabled(producer.flag)}"
+                ?checked="${
+                    this.isEtwEventEnabled(event.provider, event.keyword)}"
                 @change="${(e: CustomEvent<boolean>) =>
-                    this.onEtwProducerChange_(e, producer.flag)}">
+                    this.onEtwEVentChange_(e, event.provider, event.keyword)}">
               </cr-toggle>
-              <div>${producer.name}</div>
-              <div>${producer.description}</div>
+              <div>${event.name}</div>
+              <div>${event.description}</div>
             </div>
           `)}
         </div>
@@ -170,7 +171,7 @@ function getTrackEventCategoriesCardHtml(this: TraceRecorderElement) {
                 .checked="${this.isCategoryEnabled(category)}"
                 @change="${
                   (e: Event) => this.onCategoryChange_(e, category.name)}"/>
-              <div>${category.name}</div>
+              <div>${this.canonicalCategoryName(category)}</div>
               <div>${category.tags.join(', ')}</div>
               <div>${category.description}</div>
             </div>

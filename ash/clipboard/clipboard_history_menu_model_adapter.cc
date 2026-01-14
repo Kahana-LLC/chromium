@@ -50,6 +50,7 @@
 #include "ui/views/layout/box_layout.h"
 #include "ui/views/layout/box_layout_view.h"
 #include "ui/views/layout/flex_layout_types.h"
+#include "ui/views/metadata/view_factory.h"
 #include "ui/views/view_class_properties.h"
 #include "ui/views/widget/widget.h"
 
@@ -72,9 +73,6 @@ bool IsFooterRequired(
     crosapi::mojom::ClipboardHistoryControllerShowSource show_source,
     const std::optional<base::Time>& menu_last_time_shown,
     const std::optional<base::Time>& nudge_last_time_shown) {
-  // A footer is always required when the menu is shown via Ctrl+V long press.
-  using crosapi::mojom::ClipboardHistoryControllerShowSource;
-
   // A footer is required if the menu hasn't been shown in the past 60 days.
   if (TimeSince(menu_last_time_shown.value_or(base::Time())) >=
       base::Days(60)) {

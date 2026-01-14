@@ -18,9 +18,9 @@ import static org.chromium.chrome.browser.tasks.tab_management.MessageCardViewPr
 import static org.chromium.chrome.browser.tasks.tab_management.MessageCardViewProperties.SHOULD_KEEP_AFTER_REVIEW;
 import static org.chromium.chrome.browser.tasks.tab_management.MessageCardViewProperties.UI_ACTION_PROVIDER;
 import static org.chromium.chrome.browser.tasks.tab_management.MessageCardViewProperties.UI_DISMISS_ACTION_PROVIDER;
-import static org.chromium.chrome.browser.tasks.tab_management.MessageService.MessageType.TAB_GROUP_SUGGESTION_MESSAGE;
 import static org.chromium.chrome.browser.tasks.tab_management.TabListModel.CardProperties.CARD_ALPHA;
 import static org.chromium.chrome.browser.tasks.tab_management.TabListModel.CardProperties.CARD_TYPE;
+import static org.chromium.chrome.browser.tasks.tab_management.TabSwitcherMessageManager.MessageType.TAB_GROUP_SUGGESTION_MESSAGE;
 
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.chrome.browser.tasks.tab_management.MessageCardViewProperties.MessageCardScope;
@@ -54,7 +54,7 @@ public class TabGroupSuggestionMessageViewModel {
                 .with(IS_CLOSE_BUTTON_VISIBLE, true)
                 .with(ACTION_BUTTON_VISIBLE, true)
                 .with(IS_ICON_VISIBLE, false)
-                .with(IS_INCOGNITO, true)
+                .with(IS_INCOGNITO, false)
                 .with(CARD_TYPE, ModelType.MESSAGE)
                 .with(CARD_ALPHA, 1f)
                 .build();

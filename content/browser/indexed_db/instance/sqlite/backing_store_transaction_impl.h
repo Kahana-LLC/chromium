@@ -35,9 +35,9 @@ class BackingStoreTransactionImpl : public BackingStore::Transaction {
   blink::mojom::IDBTransactionMode mode() const { return mode_; }
 
   // BackingStore::Transaction:
-  void Begin(std::vector<PartitionedLock> locks) override;
-  Status CommitPhaseOne(BlobWriteCallback callback,
-                        SerializeFsaCallback serialize_fsa) override;
+  Status Begin(std::vector<PartitionedLock> locks) override;
+  StatusOr<bool> CommitPhaseOne(BlobWriteCallback callback,
+                                SerializeFsaCallback serialize_fsa) override;
   Status CommitPhaseTwo() override;
   void Rollback() override;
   Status SetDatabaseVersion(int64_t version) override;

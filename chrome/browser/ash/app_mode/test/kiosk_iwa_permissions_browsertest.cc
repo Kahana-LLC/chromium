@@ -7,24 +7,24 @@
 #include <string_view>
 #include <utility>
 
-#include "ash/constants/ash_features.h"
 #include "base/strings/string_util.h"
-#include "base/test/scoped_feature_list.h"
 #include "chrome/browser/ash/app_mode/test/kiosk_mixin.h"
 #include "chrome/browser/ash/app_mode/test/kiosk_test_utils.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
-#include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_update_server_mixin.h"
+#include "chrome/browser/web_applications/isolated_web_apps/test/fake_iwa_runtime_data_provider_mixin.h"
 #include "chrome/browser/web_applications/isolated_web_apps/test/isolated_web_app_builder.h"
-#include "chrome/browser/web_applications/isolated_web_apps/test/test_signed_web_bundle_builder.h"
-#include "chrome/common/url_constants.h"
+#include "chrome/browser/web_applications/isolated_web_apps/test/isolated_web_app_test_update_server.h"
 #include "chrome/test/base/mixin_based_in_process_browser_test.h"
+#include "chrome/test/base/ui_test_utils.h"
 #include "components/web_package/signed_web_bundles/signed_web_bundle_id.h"
 #include "components/web_package/test_support/signed_web_bundles/key_pair.h"
+#include "components/webapps/isolated_web_apps/scheme.h"
+#include "components/webapps/isolated_web_apps/test_support/signing_keys.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "net/base/host_port_pair.h"
-#include "services/network/public/mojom/permissions_policy/permissions_policy_feature.mojom-data-view.h"
+#include "services/network/public/mojom/permissions_policy/permissions_policy_feature.mojom-shared.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
@@ -171,7 +171,10 @@ class KioskIwaPermissionsBaseTest : public MixinBasedInProcessBrowserTest {
  public:
   explicit KioskIwaPermissionsBaseTest(
       std::unique_ptr<web_app::BundledIsolatedWebApp> test_app) {
-    iwa_server_mixin_.AddBundle(std::move(test_app));
+    iwa_test_update_server_.AddBundle(std::move(test_app));
+    data_provider_->Update([&](auto& update) {
+      update.AddToManagedAllowlist(GetTestWebBundleId());
+    });
   }
 
   ~KioskIwaPermissionsBaseTest() override = default;
@@ -181,10 +184,10 @@ class KioskIwaPermissionsBaseTest : public MixinBasedInProcessBrowserTest {
 
   void SetUpOnMainThread() override {
     MixinBasedInProcessBrowserTest::SetUpOnMainThread();
-
+    ui_test_utils::BrowserCreatedObserver browser_created_observer;
     ASSERT_TRUE(WaitKioskLaunched());
+    SetBrowser(browser_created_observer.Wait());
 
-    SelectFirstBrowser();
     ASSERT_NE(web_contents(), nullptr);
     ASSERT_EQ(web_contents()->GetVisibleURL(), kExpectedOrigin.GetURL());
     WaitForPageLoad(web_contents());
@@ -199,17 +202,16 @@ class KioskIwaPermissionsBaseTest : public MixinBasedInProcessBrowserTest {
 
  private:
   const url::Origin kExpectedOrigin =
-      url::Origin::CreateFromNormalizedTuple(chrome::kIsolatedAppScheme,
+      url::Origin::CreateFromNormalizedTuple(webapps::kIsolatedAppScheme,
                                              GetTestWebBundleId().id(),
                                              /*port=*/0);
 
-  base::test::ScopedFeatureList feature_list_{
-      ash::features::kIsolatedWebAppKiosk};
-  web_app::IsolatedWebAppUpdateServerMixin iwa_server_mixin_{&mixin_host_};
+  web_app::IsolatedWebAppTestUpdateServer iwa_test_update_server_;
+  web_app::FakeIwaRuntimeDataProviderMixin data_provider_{&mixin_host_};
   KioskMixin kiosk_{
       &mixin_host_,
       GetKioskIwaAutolaunchConfig(
-          iwa_server_mixin_.GetUpdateManifestUrl(GetTestWebBundleId()))};
+          iwa_test_update_server_.GetUpdateManifestUrl(GetTestWebBundleId()))};
 };
 
 class KioskIwaCommonPermissionsTest : public KioskIwaPermissionsBaseTest {

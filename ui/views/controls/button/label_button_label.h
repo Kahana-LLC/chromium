@@ -14,6 +14,7 @@
 #include "ui/color/color_id.h"
 #include "ui/color/color_variant.h"
 #include "ui/views/controls/label.h"
+#include "ui/views/metadata/view_factory.h"
 #include "ui/views/views_export.h"
 
 namespace views::internal {
@@ -58,8 +59,8 @@ class VIEWS_EXPORT LabelButtonLabel : public Label {
 };
 
 BEGIN_VIEW_BUILDER(VIEWS_EXPORT, LabelButtonLabel, Label)
-VIEW_BUILDER_PROPERTY(std::optional<ui::ColorVariant>, EnabledColor)
-VIEW_BUILDER_PROPERTY(std::optional<ui::ColorVariant>, DisabledColor)
+VIEW_BUILDER_PROPERTY(ui::ColorVariant, EnabledColor)
+VIEW_BUILDER_PROPERTY(ui::ColorVariant, DisabledColor)
 END_VIEW_BUILDER
 
 }  // namespace views::internal

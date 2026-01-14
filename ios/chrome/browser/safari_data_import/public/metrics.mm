@@ -34,6 +34,11 @@ void RecordActionOnSafariExportEducationScreen(
                                 action);
 }
 
+void RecordSafariDataImportTapsBackAtImportStage(SafariDataImportStage stage) {
+  base::UmaHistogramEnumeration("IOS.SafariImport.Import.TapBackOnStage",
+                                stage);
+}
+
 void RecordSafariDataImportEndsAtImportStage(SafariDataImportStage stage) {
   base::UmaHistogramEnumeration("IOS.SafariImport.Import.ExitOnStage", stage);
 }
@@ -41,12 +46,6 @@ void RecordSafariDataImportEndsAtImportStage(SafariDataImportStage stage) {
 void RecordSafariDataImportFailure(bool alert_displayed) {
   base::UmaHistogramBoolean("IOS.SafariImport.Import.FailureAlert",
                             alert_displayed);
-}
-
-void RecordSafariDataImportDismissPasswordConflictScreen(
-    SafariDataImportPasswordConflictScreenAction action) {
-  base::UmaHistogramEnumeration(
-      "IOS.SafariImport.Import.PasswordConflictsScreenAction", action);
 }
 
 void RecordSafariDataImportInvalidPasswordDisplay() {

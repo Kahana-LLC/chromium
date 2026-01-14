@@ -17,6 +17,7 @@ from gpu_tests import color_profile_manager
 from gpu_tests import common_browser_args as cba
 from gpu_tests import common_typing as ct
 from gpu_tests import gpu_integration_test
+from gpu_tests.util import screenshot_utils
 
 class ScreenshotSyncIntegrationTest(gpu_integration_test.GpuIntegrationTest):
   """Tests that screenshots are properly synchronized with the frame on
@@ -119,12 +120,16 @@ class ScreenshotSyncIntegrationTest(gpu_integration_test.GpuIntegrationTest):
                            red=canvasRGB.r,
                            green=canvasRGB.g,
                            blue=canvasRGB.b)
-    screenshot = tab.Screenshot(10)
-    # This takes into account the fact that the page can be automatically scaled
-    # on mobile, causing the effective DPR to be lower than the true DPR
-    # reported by the device.
-    effective_dpr = tab.EvaluateJavaScript(
-        'window.devicePixelRatio * window.visualViewport.scale')
+
+    screenshot_timeout = 10
+    # TODO(crbug.com/458607668): Either remove this workaround or update this
+    # comment once we know whether increasing the timeout works around flaky
+    # failures to capture screenshots that we are seeing on Windows 11.
+    if 'win11' in self.GetPlatformTags(self.browser):
+      screenshot_timeout = 30
+    screenshot = tab.Screenshot(screenshot_timeout)
+
+    effective_dpr = screenshot_utils.GetEffectiveDpr(tab)
     # Avoid checking along antialiased boundary due to limited Adreno 3xx
     # interpolation precision (crbug.com/847984). We inset by one CSS pixel
     # adjusted by the device pixel ratio.

@@ -7,7 +7,13 @@
 
 #include "components/google/core/common/google_util.h"
 #include "components/page_load_metrics/browser/page_load_metrics_observer.h"
+#include "components/page_load_metrics/google/browser/prerender_prewarm_navigation_data.h"
 #include "content/public/browser/navigation_handle_timing.h"
+#include "net/http/http_connection_info.h"
+
+namespace content {
+class BrowserContext;
+}  // namespace content
 
 namespace internal {
 // Exposed for tests.
@@ -48,6 +54,19 @@ extern const char
     kHistogramNoServiceWorkerParseStartToFirstContentfulPaintSearch[];
 extern const char kHistogramNoServiceWorkerDomContentLoadedSearch[];
 extern const char kHistogramNoServiceWorkerLoadSearch[];
+
+extern const char kTraverseNavigation[];
+extern const char kRestoreNavigation[];
+extern const char kNonRestoreNavigation[];
+
+extern const char kHistogramPrerenderHostReused[];
+extern const char kHistogramPrerenderPrewarmNavigationStatus[];
+extern const char kHistogramGWSPrerenderNavigationToActivation[];
+extern const char kHistogramGWSActivationToFirstContentfulPaint[];
+extern const char kHistogramGWSActivationToLargestContentfulPaint[];
+
+extern const char kHistogramPrerenderSuffix[];
+extern const char kHistogramNonPrerenderSuffix[];
 
 }  // namespace internal
 
@@ -93,11 +112,14 @@ class GWSPageLoadMetricsObserver
   GWSPageLoadMetricsObserver(const GWSPageLoadMetricsObserver&) = delete;
   GWSPageLoadMetricsObserver& operator=(const GWSPageLoadMetricsObserver&) =
       delete;
+  ~GWSPageLoadMetricsObserver() override;
 
   // page_load_metrics::PageLoadMetricsObserver implementation:
   ObservePolicy OnStart(content::NavigationHandle* navigation_handle,
                         const GURL& currently_committed_url,
                         bool started_in_foreground) override;
+  ObservePolicy OnRedirect(
+      content::NavigationHandle* navigation_handle) override;
   ObservePolicy OnCommit(content::NavigationHandle* navigation_handle) override;
 
   ObservePolicy OnPrerenderStart(content::NavigationHandle* navigation_handle,
@@ -144,7 +166,10 @@ class GWSPageLoadMetricsObserver
  private:
   void LogMetricsOnComplete();
   void RecordNavigationTimingHistograms();
-  void RecordLatencyHitograms(base::TimeTicks response_start_time);
+  void RecordLatencyHistograms(base::TimeTicks response_start_time);
+  void RecordSessionDetails(
+      const content::NavigationHandleTiming::SessionDetails& details,
+      std::string_view protocol);
 
   // Records the histograms required before commit. This is to ensure that we
   // are getting the metrics only for GWS navigations.
@@ -153,25 +178,40 @@ class GWSPageLoadMetricsObserver
   // Records the histograms for possible connection reuse.
   void RecordConnectionReuseHistograms();
 
+  void RecordGWSSessionStateHistograms();
+
   virtual bool IsFromNewTabPage(
       content::NavigationHandle* navigation_handle) = 0;
   virtual bool IsBrowserStartupComplete() = 0;
   virtual bool IsIncognitoProfile() const = 0;
+  virtual bool IsSignedIn(content::BrowserContext* browser_context) const = 0;
+  virtual content::BrowserContext* GetOriginalBrowserContext() = 0;
   std::string AddHistogramSuffix(const std::string& histogram_name);
 
   content::NavigationHandleTiming navigation_handle_timing_;
 
   bool is_first_navigation_ = false;
   bool was_cached_ = false;
+  bool network_accessed_ = false;
   bool is_prerendered_ = false;
+  bool is_header_from_synthetic_response_ = false;
+
+  // NavigationActivation.navigationType is traverse.
+  bool is_traverse_navigation_ = false;
+  // Indicates if it is session restore navigation, a subset of traverse
+  // navigation. Restore navigation might be slower than a regular navigation.
+  bool is_restore_navigation_ = false;
 
   NavigationSourceType source_type_ = kUnknown;
+  net::HttpConnectionInfoCoarse http_connection_info_ =
+      net::HttpConnectionInfoCoarse::kOTHER;
 
   std::optional<base::TimeDelta> aft_start_time_;
   std::optional<base::TimeDelta> aft_end_time_;
   std::optional<base::TimeDelta> body_chunk_start_time_;
-  std::optional<base::TimeDelta> header_chunk_start_time_;
-  std::optional<base::TimeDelta> header_chunk_end_time_;
+  std::optional<base::TimeDelta> head_chunk_start_time_;
+  std::optional<base::TimeDelta> head_chunk_end_time_;
+  std::optional<base::TimeDelta> sgl_time_;
 
   int64_t navigation_id_;
 };

@@ -37,7 +37,6 @@
 #include "services/screen_ai/public/mojom/screen_ai_service.mojom.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/accessibility/ax_action_data.h"
-#include "ui/accessibility/ax_enums.mojom-shared.h"
 #include "ui/accessibility/ax_enums.mojom.h"
 #include "ui/accessibility/ax_event_generator.h"
 #include "ui/accessibility/ax_node.h"
@@ -1204,7 +1203,8 @@ IN_PROC_BROWSER_TEST_F(AXMediaAppUntrustedServiceTest, StitchDocumentTree) {
       "++++genericContainer\n"
       "++++++canvas htmlTag='canvas'\n"
       "++++++++staticText name='<newline>          '\n"
-      "++++++++staticText name='Text that is not replaced by child tree.'\n"
+      "++++++++paragraph htmlTag='p'\n"
+      "++++++++++staticText name='Text that is not replaced by child tree.'\n"
       "++++++++staticText name='<newline>        '\n"
       "++++++graphicsDocument htmlTag='div' name='graphics-document'\n"
       "++++++++paragraph htmlTag='p'\n"
@@ -1234,7 +1234,8 @@ IN_PROC_BROWSER_TEST_F(AXMediaAppUntrustedServiceTest, StitchDocumentTree) {
       "++++genericContainer\n"
       "++++++canvas htmlTag='canvas'\n"
       "++++++++staticText name='<newline>          '\n"
-      "++++++++staticText name='Text that is not replaced by child tree.'\n"
+      "++++++++paragraph htmlTag='p'\n"
+      "++++++++++staticText name='Text that is not replaced by child tree.'\n"
       "++++++++staticText name='<newline>        '\n"
       "++++++graphicsDocument htmlTag='div' name='graphics-document'\n",
       browser()

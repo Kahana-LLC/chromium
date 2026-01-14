@@ -24,6 +24,7 @@
 #include "components/autofill/core/browser/data_manager/personal_data_manager_observer.h"
 #include "components/autofill/core/browser/data_model/addresses/autofill_profile.h"
 #include "components/autofill/core/browser/test_utils/autofill_test_utils.h"
+#include "components/autofill/core/common/autofill_debug_features.h"
 #include "components/autofill/core/common/autofill_features.h"
 #include "components/version_info/version_info.h"
 #include "content/public/browser/web_contents.h"
@@ -98,7 +99,7 @@ class WindowedNetworkObserver {
 
     const std::string& data =
         (resource_request.method == "GET")
-            ? GetLookupContent(resource_request.url.path())
+            ? GetLookupContent(resource_request.url.GetPath())
             : network::GetUploadData(resource_request);
 
     if (expected_upload_data_.Matches(data))
@@ -132,7 +133,7 @@ class AutofillServerTest : public InProcessBrowserTest {
         [](const std::map<std::string, std::string>* pages,
            const net::test_server::HttpRequest& request)
             -> std::unique_ptr<net::test_server::HttpResponse> {
-          auto it = pages->find(request.GetURL().path());
+          auto it = pages->find(request.GetURL().GetPath());
           if (it == pages->end()) {
             return nullptr;
           }
@@ -172,7 +173,7 @@ class AutofillServerTest : public InProcessBrowserTest {
  private:
   test::AutofillBrowserTestEnvironment autofill_test_environment_;
   base::test::ScopedFeatureList scoped_feature_list_{
-      features::test::kAutofillServerCommunication};
+      features::debug::kAutofillServerCommunication};
   content::ContentMockCertVerifier cert_verifier_;
   std::map<std::string, std::string> pages_;
 };
@@ -224,6 +225,7 @@ MATCHER_P(EqualsQueryProto, expected_const, "") {
   // used for fetching PWM predictions. When alternative signature is deprecated
   // in favor of structural signature and three-bit hashes, we should update the
   // test to check that these fields are set correctly.
+  request.mutable_experiments()->Clear();
   for (int i = 0; i < request.forms_size(); ++i) {
     request.mutable_forms(i)->clear_structural_signature();
     request.mutable_forms(i)->clear_three_bit_hashed_form_metadata();

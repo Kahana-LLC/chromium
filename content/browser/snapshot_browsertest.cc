@@ -9,7 +9,6 @@
 #include <vector>
 
 #include "base/command_line.h"
-#include "base/containers/contains.h"
 #include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
 #include "base/rand_util.h"
@@ -98,8 +97,9 @@ class SnapshotBrowserTest : public ContentBrowserTest {
   std::unique_ptr<net::test_server::HttpResponse> HandleRequest(
       const net::test_server::HttpRequest& request) {
     GURL absolute_url = embedded_test_server()->GetURL(request.relative_url);
-    if (absolute_url.path() != "/test")
+    if (absolute_url.GetPath() != "/test") {
       return nullptr;
+    }
 
     std::unique_ptr<net::test_server::BasicHttpResponse> http_response(
         new net::test_server::BasicHttpResponse());
@@ -364,7 +364,7 @@ IN_PROC_BROWSER_TEST_F(SnapshotBrowserTest, MAYBE_AsyncMultiWindowTest) {
       ExpectedColor expected;
       do {
         PickRandomColor(&expected);
-      } while (base::Contains(expected_snapshots, expected));
+      } while (std::ranges::contains(expected_snapshots, expected));
       expected_snapshots.push_back(expected);
 
       std::string colorString = base::StringPrintf("#%02x%02x%02x", expected.r,

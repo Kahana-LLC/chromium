@@ -41,7 +41,7 @@ void XRPlaneManager::ProcessPlaneInformation(
            << ", all planes size="
            << detected_planes_data->all_planes_ids.size();
 
-  HeapHashMap<uint64_t, Member<XRPlane>> updated_planes;
+  HeapHashMap<device::PlaneId, Member<XRPlane>> updated_planes;
 
   // First, process all planes that had their information updated (new planes
   // are also processed here).
@@ -64,7 +64,7 @@ void XRPlaneManager::ProcessPlaneInformation(
     // If the plane was already updated, there is nothing to do as it was
     // already moved to |updated_planes|. If it's not updated, just copy it over
     // as-is.
-    if (!base::Contains(updated_planes, plane_id)) {
+    if (!updated_planes.Contains(plane_id)) {
       auto it = plane_ids_to_planes_.find(plane_id);
       CHECK(it != plane_ids_to_planes_.end());
       updated_planes.insert(plane_id, it->value);

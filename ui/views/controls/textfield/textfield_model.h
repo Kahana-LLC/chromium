@@ -16,6 +16,7 @@
 
 #include "base/gtest_prod_util.h"
 #include "base/memory/raw_ptr.h"
+#include "ui/base/clipboard/clipboard_buffer.h"
 #include "ui/base/ime/composition_text.h"
 #include "ui/gfx/render_text.h"
 #include "ui/gfx/text_constants.h"
@@ -203,6 +204,10 @@ class VIEWS_EXPORT TextfieldModel {
   // Pastes text from the clipboard at current cursor position. Returns true
   // if any text is pasted.
   bool Paste();
+
+  // Pastes the given text at the current cursor position. Returns true if any
+  // text is pasted.
+  bool Paste(std::u16string text);
 
   // Transposes the characters to either side of the insertion point and
   // advances the insertion point past both of them. Returns true if text is

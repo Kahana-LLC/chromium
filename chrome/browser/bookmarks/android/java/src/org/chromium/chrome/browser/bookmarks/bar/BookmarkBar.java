@@ -8,7 +8,7 @@ import android.annotation.SuppressLint;
 import android.content.Context;
 import android.util.AttributeSet;
 import android.view.MotionEvent;
-import android.widget.ImageButton;
+import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 
 import org.chromium.build.annotations.NullMarked;
@@ -20,7 +20,7 @@ import org.chromium.ui.util.MotionEventUtils;
 @NullMarked
 class BookmarkBar extends LinearLayout {
 
-    private ImageButton mOverflowButton;
+    private FrameLayout mOverflowButton;
 
     /**
      * Constructor that is called when inflating a bookmark bar from XML.
@@ -48,7 +48,7 @@ class BookmarkBar extends LinearLayout {
 
     @Override
     public boolean onGenericMotionEvent(MotionEvent event) {
-        if (MotionEventUtils.isMouseEvent(event) || MotionEventUtils.isTrackpadEvent(event)) {
+        if (MotionEventUtils.isPointerEvent(event)) {
             int action = event.getActionMasked();
             if (action == MotionEvent.ACTION_BUTTON_PRESS
                     || action == MotionEvent.ACTION_BUTTON_RELEASE
@@ -75,5 +75,12 @@ class BookmarkBar extends LinearLayout {
      */
     public void setOverflowButtonVisibility(int visibility) {
         mOverflowButton.setVisibility(visibility);
+    }
+
+    /**
+     * @return The overflow button view.
+     */
+    public FrameLayout getOverflowButton() {
+        return mOverflowButton;
     }
 }

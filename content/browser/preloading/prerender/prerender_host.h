@@ -10,15 +10,18 @@
 #include <string>
 
 #include "base/memory/raw_ref.h"
+#include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
 #include "base/observer_list_types.h"
 #include "base/types/pass_key.h"
+#include "content/browser/preloading/preload_serving_metrics_holder.h"
 #include "content/browser/preloading/prerender/prerender_attributes.h"
 #include "content/browser/preloading/prerender/prerender_final_status.h"
 #include "content/browser/preloading/speculation_rules/speculation_rules_tags.h"
 #include "content/browser/renderer_host/frame_tree.h"
 #include "content/browser/renderer_host/navigation_controller_delegate.h"
 #include "content/common/content_export.h"
+#include "content/public/browser/prerender_host_id.h"
 #include "content/public/browser/render_frame_host.h"
 #include "net/http/http_no_vary_search_data.h"
 #include "third_party/blink/public/mojom/navigation/navigation_params.mojom-forward.h"
@@ -156,10 +159,6 @@ class CONTENT_EXPORT PrerenderHost {
     // Called from the PrerenderHost's destructor. The observer should drop any
     // reference to the host.
     virtual void OnHostDestroyed(PrerenderFinalStatus status) {}
-
-    // Called when the PrerenderHost is reused for another prerender. The
-    // observer shall not cancel the host if OnHostReused is called.
-    virtual void OnHostReused() {}
   };
 
   // Returns the PrerenderHost that the given `frame_tree_node` is in, if it is
@@ -170,6 +169,10 @@ class CONTENT_EXPORT PrerenderHost {
   // be in prerendering.
   static PrerenderHost& GetFromFrameTreeNode(FrameTreeNode& frame_tree_node);
   static PrerenderHost& GetFromFrameTree(FrameTree* frame_tree);
+
+  // Returns the root FrameTreeNodeId of the prerendered page corresponding to
+  // `id`. Returns an invalid FrameTreeNodeId if it is not found.
+  static FrameTreeNodeId GetFrameTreeNodeIdForId(PrerenderHostId id);
 
   // Checks whether two headers are the same in a case-insensitive and
   // order-insensitive way.
@@ -183,7 +186,7 @@ class CONTENT_EXPORT PrerenderHost {
   static bool AreHttpRequestHeadersCompatible(
       const std::string& potential_activation_headers_str,
 #if BUILDFLAG(IS_ANDROID)
-      const net::HttpRequestHeaders& potential_activation_additional_headers,
+      const std::string& potential_activation_additional_headers_str,
 #endif  // BUILDFLAG(IS_ANDROID)
       const std::string& prerender_headers_str,
       PreloadingTriggerType trigger_type,
@@ -193,7 +196,7 @@ class CONTENT_EXPORT PrerenderHost {
 
   // Sets a callback to be called on PrerenderHost creation.
   static void SetHostCreationCallbackForTesting(
-      base::OnceCallback<void(FrameTreeNodeId host_id)> callback);
+      base::OnceCallback<void(PrerenderHostId host_id)> callback);
 
   PrerenderHost(std::unique_ptr<PrerenderHost> reuse_host,
                 const PrerenderAttributes& attributes,
@@ -346,6 +349,7 @@ class CONTENT_EXPORT PrerenderHost {
 
   bool IsBrowserInitiated() { return attributes_.IsBrowserInitiated(); }
 
+  PrerenderHostId prerender_host_id() const { return prerender_host_id_; }
   FrameTreeNodeId frame_tree_node_id() const { return frame_tree_node_id_; }
 
   base::WeakPtr<WebContents> initiator_web_contents() {
@@ -393,7 +397,11 @@ class CONTENT_EXPORT PrerenderHost {
   }
 
   bool should_pause_javascript_execution() const {
-    return attributes_.should_pause_javascript_execution;
+    return attributes_.prerender_action_type ==
+           blink::mojom::SpeculationAction::kPrerenderUntilScript;
+  }
+  blink::mojom::SpeculationAction speculation_action() const {
+    return attributes_.prerender_action_type;
   }
 
   bool IsInitialNavigation(const NavigationRequest& navigation_request) const;
@@ -411,6 +419,11 @@ class CONTENT_EXPORT PrerenderHost {
   // Called when we stop blocking navigation while waiting for headers.
   void OnWaitingForHeadersFinished(WaitingForHeadersFinishedReason reason);
 
+  // Whether to allow cross-origin subframes to be prerendered.
+  bool AllowCrossOriginSubframeNavigation() const {
+    return allow_cross_origin_subframe_navigation_;
+  }
+
   // Returns true iff prefetch ahead of prerender is not available for this
   // prerender and this prerender should be aborted.
   //
@@ -425,7 +438,19 @@ class CONTENT_EXPORT PrerenderHost {
   void AddAdditionalRequestHeaders(net::HttpRequestHeaders& headers,
                                    FrameTreeNode& navigating_frame_tree_node);
 
-  void NotifyReused();
+  // Called just before cancellation
+  void OnWillBeCancelled(const PrerenderCancellationReason& reason);
+
+  const PreloadPipelineInfo& preload_pipeline_info() const {
+    return *attributes_.preload_pipeline_info.get();
+  }
+
+  // Returns whether the initiator page is overriding user agents. The initiator
+  // page may be retrieved differently between renderer-initiated and
+  // browser-initiated prerender.
+  bool IsInitiatorOverridingUserAgent();
+
+  base::WeakPtr<PrerenderHost> GetWeakPtr();
 
  private:
   // The helper class to make the frame tree movable among different
@@ -451,11 +476,12 @@ class CONTENT_EXPORT PrerenderHost {
     RenderFrameHostImpl* GetProspectiveOuterDocument() override;
     void SetFocusedFrame(FrameTreeNode* node,
                          SiteInstanceGroup* source) override;
-    FrameTree* GetOwnedPictureInPictureFrameTree() override;
-    FrameTree* GetPictureInPictureOpenerFrameTree() override;
+    FrameTree* GetOwnedDocumentPictureInPictureFrameTree() override;
+    FrameTree* GetDocumentPictureInPictureOpenerFrameTree() override;
     bool OnRenderFrameProxyVisibilityChanged(
         RenderFrameProxyHost* render_frame_proxy_host,
         blink::mojom::FrameVisibility visibility) override;
+    PrerenderHostId GetPrerenderHostId() override;
 
     // NavigationControllerDelegate
     void NotifyNavigationStateChangedFromController(
@@ -471,6 +497,12 @@ class CONTENT_EXPORT PrerenderHost {
     void ActivateAndShowRepostFormWarningDialog() override;
     bool ShouldPreserveAbortedURLs() override;
     void UpdateOverridingUserAgent() override {}
+#if BUILDFLAG(IS_ANDROID)
+    scoped_refptr<viz::RasterContextProvider> GetRasterContextProvider()
+        override;
+    gfx::ColorSpace GetOutputColorSpace(gfx::ContentColorUsage color_usage,
+                                        bool needs_alpha) override;
+#endif  // BUILDFLAG(IS_ANDROID)
 
     LoadingOutcome WaitForLoadStopForTesting();
 
@@ -519,6 +551,9 @@ class CONTENT_EXPORT PrerenderHost {
                                 no_vary_search_with_parse_error);
 
   const PrerenderAttributes attributes_;
+
+  // The unique id of this PrerenderHost.
+  const PrerenderHostId prerender_host_id_;
 
   // Indicates if this PrerenderHost is ready for activation.
   bool is_ready_for_activation_ = false;
@@ -579,6 +614,13 @@ class CONTENT_EXPORT PrerenderHost {
   bool were_headers_received_ = false;
 
   const bool host_reused_ = false;
+
+  std::unique_ptr<PreloadServingMetrics>
+      prerender_initial_preload_serving_metrics_;
+  // True if cross-origin subframe navigations are allowed.
+  bool allow_cross_origin_subframe_navigation_ = false;
+
+  base::WeakPtrFactory<PrerenderHost> weak_factory_{this};
 };
 
 }  // namespace content

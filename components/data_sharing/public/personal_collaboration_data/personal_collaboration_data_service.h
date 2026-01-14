@@ -5,6 +5,8 @@
 #ifndef COMPONENTS_DATA_SHARING_PUBLIC_PERSONAL_COLLABORATION_DATA_PERSONAL_COLLABORATION_DATA_SERVICE_H_
 #define COMPONENTS_DATA_SHARING_PUBLIC_PERSONAL_COLLABORATION_DATA_PERSONAL_COLLABORATION_DATA_SERVICE_H_
 
+#include <vector>
+
 #include "base/functional/callback.h"
 #include "base/observer_list_types.h"
 #include "base/scoped_observation_traits.h"
@@ -12,6 +14,7 @@
 #include "base/uuid.h"
 #include "components/keyed_service/core/keyed_service.h"
 #include "components/sync/base/collaboration_id.h"
+#include "components/sync/model/data_type_controller_delegate.h"
 #include "components/sync/protocol/shared_tab_group_account_data_specifics.pb.h"
 
 namespace data_sharing::personal_collaboration_data {
@@ -67,12 +70,33 @@ class PersonalCollaborationDataService : public KeyedService,
   GetSpecifics(SpecificsType specifics_type,
                const std::string& storage_key) = 0;
 
+  // Retrieves all local specifics. The returned pointers are owned by the
+  // service and should not be stored. They are valid until the next
+  // modification of the data.
+  virtual std::vector<const sync_pb::SharedTabGroupAccountDataSpecifics*>
+  GetAllSpecifics() const = 0;
+
   // Called to create or update the specifics associated with the given storage
-  // key.
+  // key. This function is intentionally re-entrant. Callers are expected to
+  // pass in a lambda that handles updating the specifics.
+  //
+  // This is necessary because the service need to provide a trimmed specifics
+  // object (with unknown fields kept) for the caller to populate.
+  //
+  // Example:
+  // service->CreateOrUpdateSpecifics(
+  //     SpecificsType::kSharedTabGroupSpecifics,
+  //     "my_storage_key",
+  //     base::BindOnce(
+  //         [&](sync_pb::SharedTabGroupAccountDataSpecifics* specifics) {
+  //           specifics->mutable_shared_tab_group_details()->set_title("New
+  //           Title");
+  //         }));
   virtual void CreateOrUpdateSpecifics(
       SpecificsType specifics_type,
       const std::string& storage_key,
-      const sync_pb::SharedTabGroupAccountDataSpecifics& specifics) = 0;
+      base::OnceCallback<void(
+          sync_pb::SharedTabGroupAccountDataSpecifics* specifics)> mutator) = 0;
 
   // Deletes a specifics associated with the given storage key.
   virtual void DeleteSpecifics(SpecificsType specifics_type,
@@ -80,6 +104,11 @@ class PersonalCollaborationDataService : public KeyedService,
 
   // Returns whether the service has fully initialized.
   virtual bool IsInitialized() const = 0;
+
+  // Returns the controller delegate for the SHARED_TAB_GROUP_ACCOUNT_DATA data
+  // type.
+  virtual base::WeakPtr<syncer::DataTypeControllerDelegate>
+  GetControllerDelegate() = 0;
 };
 
 }  // namespace data_sharing::personal_collaboration_data

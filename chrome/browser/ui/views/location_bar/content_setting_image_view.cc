@@ -48,6 +48,7 @@
 #include "ui/views/controls/image_view.h"
 #include "ui/views/controls/label.h"
 #include "ui/views/interaction/element_tracker_views.h"
+#include "ui/views/property_effects.h"
 #include "ui/views/view_class_properties.h"
 #include "ui/views/widget/widget.h"
 
@@ -238,7 +239,7 @@ void ContentSettingImageView::SetIconColor(std::optional<SkColor> color) {
   if (content_setting_image_model_->is_visible()) {
     UpdateImage();
   }
-  OnPropertyChanged(&icon_color_, views::kPropertyEffectsNone);
+  OnPropertyChanged(&icon_color_, views::PropertyEffects::kNone);
 }
 
 std::optional<SkColor> ContentSettingImageView::GetIconColor() const {

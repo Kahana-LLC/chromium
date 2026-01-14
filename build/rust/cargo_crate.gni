@@ -149,6 +149,16 @@ template("cargo_crate") {
   }
   if (defined(invoker.cargo_pkg_version)) {
     _rustenv += [ "CARGO_PKG_VERSION=${invoker.cargo_pkg_version}" ]
+
+    # Parse `<major>.<minor>.<patch>-<pre>` (the `-<pre>` part of optional,
+    # other parts are mandatory).
+    _cargo_pkg_version_parts = string_split(invoker.cargo_pkg_version, ".")
+    _rustenv += [ "CARGO_PKG_VERSION_MAJOR=${_cargo_pkg_version_parts[0]}" ]
+    _rustenv += [ "CARGO_PKG_VERSION_MINOR=${_cargo_pkg_version_parts[1]}" ]
+    _cargo_pkg_version_subparts = string_split(_cargo_pkg_version_parts[2], "-")
+    _cargo_pkg_version_subparts += [ "" ]  # In case there is no prerelease.
+    _rustenv += [ "CARGO_PKG_VERSION_PATCH=${_cargo_pkg_version_subparts[0]}" ]
+    _rustenv += [ "CARGO_PKG_VERSION_PRE=${_cargo_pkg_version_subparts[1]}" ]
   }
   if (defined(invoker.cargo_pkg_name)) {
     _rustenv += [ "CARGO_PKG_NAME=${invoker.cargo_pkg_name}" ]
@@ -271,6 +281,9 @@ template("cargo_crate") {
 
       # Don't import the `chromium` crate into third-party code.
       no_chromium_prelude = true
+
+      # Disable generating `..._clippy` targets for third-party code.
+      no_clippy = true
 
       # Depend by default on the `//build/rust/allocator` library, but avoid this
       # dependency in `no_std` mode.  This is desirable for two reasons:
@@ -529,6 +542,9 @@ template("cargo_crate") {
 
         # Don't import the `chromium` crate into third-party code.
         no_chromium_prelude = true
+
+        # Disable generating `..._clippy` targets for third-party code.
+        no_clippy = true
 
         # Build scripts do not need to link to chrome's allocator.
         no_allocator_crate = true

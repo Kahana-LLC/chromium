@@ -5,7 +5,6 @@
 #include "chrome/browser/ui/views/tab_sharing/tab_capture_contents_border_helper.h"
 
 #include "base/callback_list.h"
-#include "base/containers/contains.h"
 #include "base/feature_list.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_features.h"
@@ -29,7 +28,7 @@ TabCaptureContentsBorderHelper::~TabCaptureContentsBorderHelper() = default;
 void TabCaptureContentsBorderHelper::OnCapturerAdded(
     CaptureSessionId capture_session_id) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-  DCHECK(!base::Contains(session_to_bounds_, capture_session_id));
+  DCHECK(!session_to_bounds_.contains(capture_session_id));
 
   session_to_bounds_[capture_session_id] = std::nullopt;
 
@@ -57,7 +56,7 @@ void TabCaptureContentsBorderHelper::OnRegionCaptureRectChanged(
     CaptureSessionId capture_session_id,
     const std::optional<gfx::Rect>& region_capture_rect) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-  DCHECK(base::Contains(session_to_bounds_, capture_session_id));
+  DCHECK(session_to_bounds_.contains(capture_session_id));
 
   if (region_capture_rect &&
       region_capture_rect->width() >= kMinContentsBorderWidth &&
@@ -67,12 +66,24 @@ void TabCaptureContentsBorderHelper::OnRegionCaptureRectChanged(
     session_to_bounds_[capture_session_id] = std::nullopt;
   }
 
-  capture_change_callbacks_.Notify(true,
-                                   session_to_bounds_[capture_session_id]);
+  capture_location_change_callbacks_.Notify(
+      session_to_bounds_[capture_session_id]);
 }
 
 bool TabCaptureContentsBorderHelper::IsTabCapturing() const {
   return !session_to_bounds_.empty();
+}
+
+bool TabCaptureContentsBorderHelper::ShouldShowBlueBorder() const {
+#if !BUILDFLAG(IS_CHROMEOS)
+  return IsTabCapturing();
+#else
+  // The blue border was known to cause various issues on ChromeOS: misaligned
+  // borders & covering the clickable area; for this reason it's not supported.
+  // For more context, please refer to crbug.com/40198577, crbug.com/279051234,
+  // crbug.com/356235514.
+  return false;
+#endif
 }
 
 base::CallbackListSubscription
@@ -81,17 +92,15 @@ TabCaptureContentsBorderHelper::AddOnTabCaptureChangeCallback(
   return capture_change_callbacks_.Add(std::move(callback));
 }
 
-void TabCaptureContentsBorderHelper::Update() {
-  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+base::CallbackListSubscription
+TabCaptureContentsBorderHelper::AddOnTabCaptureLocationChangeCallback(
+    CaptureChangeLocationCallbackList::CallbackType callback) {
+  return capture_location_change_callbacks_.Add(std::move(callback));
+}
 
-#if BUILDFLAG(IS_CHROMEOS)
-  // The blue border behavior used to be problematic on ChromeOS - see
-  // crbug.com/1320262 and crbug.com/1030925. This check serves as a means of
-  // flag-disabling this feature in case of possible future regressions.
-  if (!base::FeatureList::IsEnabled(features::kTabCaptureBlueBorderCrOS)) {
-    return;
-  }
-#endif  // BUILDFLAG(IS_CHROMEOS)
+void TabCaptureContentsBorderHelper::Update() {
+#if !BUILDFLAG(IS_CHROMEOS)
+  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
   content::WebContents* const web_contents = &GetWebContents();
 
@@ -104,9 +113,12 @@ void TabCaptureContentsBorderHelper::Update() {
       (web_contents == browser->tab_strip_model()->GetActiveWebContents());
   const bool contents_border_needed = tab_visible && IsTabCapturing();
 
-  capture_change_callbacks_.Notify(
-      contents_border_needed,
-      contents_border_needed ? GetBlueBorderLocation() : std::nullopt);
+  if (contents_border_needed) {
+    capture_location_change_callbacks_.Notify(GetBlueBorderLocation());
+  }
+
+  capture_change_callbacks_.Notify(contents_border_needed);
+#endif
 }
 
 std::optional<gfx::Rect> TabCaptureContentsBorderHelper::GetBlueBorderLocation()

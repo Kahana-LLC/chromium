@@ -8,11 +8,14 @@
 #include <vector>
 
 #include "base/barrier_callback.h"
+#include "base/feature_list.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/strings/stringprintf.h"
 #include "base/task/single_thread_task_runner.h"
+#include "chrome/browser/contextual_cueing/contextual_cueing_features.h"
 #include "chrome/browser/contextual_cueing/zero_state_suggestions_page_data.h"
 #include "chrome/browser/optimization_guide/optimization_guide_keyed_service.h"
+#include "components/optimization_guide/core/model_execution/remote_model_executor.h"
 #include "components/optimization_guide/core/optimization_guide_logger.h"
 #include "content/public/browser/web_contents.h"
 
@@ -33,7 +36,8 @@ ZeroStateSuggestionsRequest::ZeroStateSuggestionsRequest(
       "request for %llu tabs",
       requested_tabs.size()));
   auto barrier_callback = base::BarrierCallback<
-      std::optional<optimization_guide::proto::ZeroStatePageContext>>(
+      base::expected<optimization_guide::proto::ZeroStatePageContext,
+                     PageContextIneligibilityType>>(
       requested_tabs.size(),
       base::BindOnce(&ZeroStateSuggestionsRequest::OnAllPageContextExtracted,
                      weak_ptr_factory_.GetWeakPtr()));
@@ -58,7 +62,9 @@ ZeroStateSuggestionsRequest::ZeroStateSuggestionsRequest(
 
     // If we're in multitab mode, store the information about focused tab.
     if (focused_tab && tab == focused_tab) {
-      zss_data->set_is_focused_tab();
+      zss_data->set_is_focused_tab(true);
+    } else {
+      zss_data->set_is_focused_tab(false);
     }
     // Otherwise, start grabbing the page context.
     zss_data->GetPageContext(barrier_callback);
@@ -100,16 +106,31 @@ ZeroStateSuggestionsRequest::GetRequestedTabs() const {
 
 void ZeroStateSuggestionsRequest::OnAllPageContextExtracted(
     const std::vector<
-        std::optional<optimization_guide::proto::ZeroStatePageContext>>&
+        base::expected<optimization_guide::proto::ZeroStatePageContext,
+                       PageContextIneligibilityType>>&
         zero_state_page_contexts) {
   // Filter for page contexts that are available.
   std::vector<optimization_guide::proto::ZeroStatePageContext>
       filtered_page_contexts;
+  PageContextIneligibilityType latest_ineligibility_type =
+      PageContextIneligibilityType::kNone;
   for (const auto& zero_state_page_context : zero_state_page_contexts) {
-    if (zero_state_page_context) {
+    if (zero_state_page_context.has_value()) {
       filtered_page_contexts.push_back(*zero_state_page_context);
+    } else {
+      latest_ineligibility_type = zero_state_page_context.error();
     }
   }
+
+  std::string engagement_type =
+      pending_base_request_.is_fre() ? "FRE" : "Reengagement";
+  base::UmaHistogramEnumeration(
+      "ContextualCueing.GlicSuggestions.PageContextIneligibilityReason",
+      latest_ineligibility_type);
+  base::UmaHistogramEnumeration(
+      "ContextualCueing.GlicSuggestions.PageContextIneligibilityReason." +
+          engagement_type,
+      latest_ineligibility_type);
 
   // No content to generate suggestions. Return empty.
   if (filtered_page_contexts.empty()) {
@@ -138,10 +159,14 @@ void ZeroStateSuggestionsRequest::OnAllPageContextExtracted(
       "ZeroStateSuggestionsRequest: Starting fetch for "
       "suggestions. Is-mulitab request: %s",
       pending_base_request_.has_page_context_list() ? "true" : "false"));
+  optimization_guide::ModelExecutionServiceType service_type =
+      base::FeatureList::IsEnabled(kZeroStateSuggestionsUseLegion)
+          ? optimization_guide::ModelExecutionServiceType::kLegion
+          : optimization_guide::ModelExecutionServiceType::kDefault;
+
   optimization_guide_keyed_service_->ExecuteModel(
       optimization_guide::ModelBasedCapabilityKey::kZeroStateSuggestions,
-      pending_base_request_,
-      /*execution_timeout=*/std::nullopt,
+      pending_base_request_, {.service_type = service_type},
       base::BindOnce(&ZeroStateSuggestionsRequest::OnModelExecutionResponse,
                      weak_ptr_factory_.GetWeakPtr(), base::TimeTicks::Now()));
 }
@@ -202,6 +227,11 @@ void ZeroStateSuggestionsRequest::CacheFocusedTabSuggestions(
 
   focused_tab_page_data_->set_cached_suggestions_for_focused_tab(
       suggestions_to_cache);
+}
+
+base::WeakPtr<ZeroStateSuggestionsRequest>
+ZeroStateSuggestionsRequest::AsWeakPtr() {
+  return weak_ptr_factory_.GetWeakPtr();
 }
 
 }  // namespace contextual_cueing

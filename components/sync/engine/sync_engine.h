@@ -24,6 +24,10 @@
 #include "components/sync/engine/sync_manager_factory.h"
 #include "url/gurl.h"
 
+namespace os_crypt_async {
+class Encryptor;
+}  // namespace os_crypt_async
+
 namespace syncer {
 
 class EngineComponentsFactory;
@@ -62,6 +66,7 @@ class SyncEngine : public DataTypeConfigurer {
     bool enable_local_sync_backend = false;
     base::FilePath local_sync_backend_folder;
     std::unique_ptr<EngineComponentsFactory> engine_components_factory;
+    std::unique_ptr<os_crypt_async::Encryptor> encryptor;
   };
 
   SyncEngine();
@@ -177,6 +182,12 @@ class SyncEngine : public DataTypeConfigurer {
   // diverge from a real scheduled poll time because this method uses base::Time
   // while scheduler uses base::TimeTicks (which may be paused in sleep mode).
   virtual bool IsNextPollTimeInThePast() const = 0;
+
+  // Returns the cache GUIDs for the current device for all Gaia IDs. This
+  // includes the current cache GUID (per GetCacheGuid()), but also the cache
+  // GUIDs for any other accounts that were the primary account in this profile
+  // before (and haven't been cleared).
+  virtual std::vector<std::string> GetCacheGuidsForAllGaiaIds() const = 0;
 };
 
 }  // namespace syncer

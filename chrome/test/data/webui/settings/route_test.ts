@@ -336,6 +336,7 @@ suite('Basic', function() {
       autofill: true,
     });
     loadTimeData.overrideValues({
+      enableYourSavedInfoSettingsPage: false,
       showAutofillAiControl: true,
     });
     resetRouterForTesting();
@@ -395,6 +396,18 @@ suite('Basic', function() {
     assertFalse(!!routes.PRIVACY_SANDBOX_MANAGE_TOPICS);
     assertFalse(!!routes.PRIVACY_SANDBOX_FLEDGE);
     assertTrue(!!routes.PRIVACY_SANDBOX_AD_MEASUREMENT);
+  });
+
+  test('Your saved info route existence', function() {
+    loadTimeData.overrideValues({enableYourSavedInfoSettingsPage: false});
+    resetPageVisibilityForTesting();
+    resetRouterForTesting();
+    assertFalse(!!routes.YOUR_SAVED_INFO);
+
+    loadTimeData.overrideValues({enableYourSavedInfoSettingsPage: true});
+    resetPageVisibilityForTesting();
+    resetRouterForTesting();
+    assertTrue(!!routes.YOUR_SAVED_INFO);
   });
 
   // <if expr="not is_chromeos">

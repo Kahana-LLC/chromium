@@ -14,7 +14,6 @@
 
 #include "base/auto_reset.h"
 #include "base/containers/adapters.h"
-#include "base/containers/contains.h"
 #include "base/i18n/case_conversion.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
@@ -57,6 +56,7 @@
 #include "ui/views/controls/menu/menu_separator.h"
 #include "ui/views/controls/menu/submenu_view.h"
 #include "ui/views/controls/separator.h"
+#include "ui/views/property_effects.h"
 #include "ui/views/style/typography.h"
 #include "ui/views/style/typography_provider.h"
 #include "ui/views/vector_icons.h"
@@ -540,7 +540,7 @@ void MenuItemView::SetSelected(bool selected) {
   selected_ = selected;
   UpdateAccessibleSelection();
   UpdateSelectionBasedStateIfChanged(PaintMode::kNormal);
-  OnPropertyChanged(&selected_, kPropertyEffectsPaint);
+  OnPropertyChanged(&selected_, PropertyEffects::kPaint);
 }
 
 base::CallbackListSubscription MenuItemView::AddSelectedChangedCallback(
@@ -571,6 +571,10 @@ void MenuItemView::SetIcon(const ui::ImageModel& icon) {
   if (icon.IsEmpty()) {
     SetIconView(nullptr);
     return;
+  }
+
+  if (icon.IsVectorIcon()) {
+    icon_color_ = icon.GetVectorIcon().color();
   }
 
   auto icon_view = std::make_unique<ImageView>();
@@ -1578,20 +1582,26 @@ void MenuItemView::UpdateSelectionBasedState(bool paint_as_selected) {
         radio_icon, radio_icon_color, kMenuCheckSize));
   }
 
-  // Update any vector icons if a custom color is used or if the icon is
-  // disabled.
-  if ((!GetEnabledInViewsSubtree() || foreground_color_id_.has_value()) &&
-      icon_view_) {
+  // Update the main icon view color.
+  if (icon_view_) {
     ui::ImageModel icon_model = icon_view_->GetImageModel();
     if (!icon_model.IsEmpty() && icon_model.IsVectorIcon()) {
       ui::VectorIconModel model = icon_model.GetVectorIcon();
       const gfx::VectorIcon* icon = model.vector_icon();
-      const ui::ImageModel& image_model = ui::ImageModel::FromVectorIcon(
-          *icon,
-          GetEnabledInViewsSubtree()
-              ? GetColorProvider()->GetColor(foreground_color_id_.value())
-              : GetColorProvider()->GetColor(ui::kColorMenuIconDisabled),
-          model.icon_size());
+
+      ui::ColorVariant icon_color =
+          icon_color_.has_value() ? icon_color_.value() : colors.icon_color;
+
+      if (!GetEnabledInViewsSubtree()) {
+        icon_color = GetColorProvider()->GetColor(ui::kColorMenuIconDisabled);
+      } else if (foreground_color_id_.has_value() && paint_as_selected &&
+                 !selected_color_id_.has_value()) {
+        icon_color = GetColorProvider()->GetColor(foreground_color_id_.value());
+      } else if (paint_as_selected) {
+        icon_color = colors.icon_color;
+      }
+      const ui::ImageModel& image_model =
+          ui::ImageModel::FromVectorIcon(*icon, icon_color, model.icon_size());
       icon_view_->SetImage(image_model);
     }
   }
@@ -1607,7 +1617,7 @@ bool MenuItemView::ShouldPaintAsSelected(PaintMode mode) const {
 
 bool MenuItemView::IsScheduledForDeletion() const {
   return parent_menu_item_ &&
-         (base::Contains(parent_menu_item_->removed_items_, this) ||
+         (std::ranges::contains(parent_menu_item_->removed_items_, this) ||
           parent_menu_item_->IsScheduledForDeletion());
 }
 

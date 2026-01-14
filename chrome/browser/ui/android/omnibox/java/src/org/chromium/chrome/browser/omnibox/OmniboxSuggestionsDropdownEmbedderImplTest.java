@@ -69,6 +69,7 @@ public class OmniboxSuggestionsDropdownEmbedderImplTest {
     private @Mock View mHorizontalAlignmentView;
     private @Mock DisplayAndroid mDisplay;
     private @Mock InsetObserver mInsetObserver;
+    private @Mock LocationBarDataProvider mLocationBarDataProvider;
 
     private OmniboxSuggestionsDropdownEmbedderImpl mImpl;
     private WeakReference<Context> mContextWeakRef;
@@ -94,6 +95,9 @@ public class OmniboxSuggestionsDropdownEmbedderImplTest {
         doReturn(ALIGNMENT_LEFT).when(mHorizontalAlignmentView).getLeft();
         doReturn(mDisplay).when(mWindowAndroid).getDisplay();
         doReturn(DIP_SCALE).when(mDisplay).getDipScale();
+        doReturn((int) (getConfiguration().screenHeightDp * DIP_SCALE))
+                .when(mDisplay)
+                .getDisplayHeight();
         mImpl =
                 new OmniboxSuggestionsDropdownEmbedderImpl(
                         mWindowAndroid,
@@ -103,7 +107,8 @@ public class OmniboxSuggestionsDropdownEmbedderImplTest {
                         mContentView,
                         () -> mControlsPosition,
                         () -> 0,
-                        () -> mBottomWindowPadding);
+                        () -> mBottomWindowPadding,
+                        mLocationBarDataProvider);
     }
 
     @Test
@@ -195,7 +200,8 @@ public class OmniboxSuggestionsDropdownEmbedderImplTest {
                         mIntermediateView,
                         () -> mControlsPosition,
                         () -> 0,
-                        () -> 0);
+                        () -> 0,
+                        mLocationBarDataProvider);
         impl.recalculateOmniboxAlignment();
         OmniboxAlignment alignment = impl.getCurrentAlignment();
         assertEquals(
@@ -397,6 +403,9 @@ public class OmniboxSuggestionsDropdownEmbedderImplTest {
     public void testRecalculateOmniboxAlignment_tabletRevampEnabled_mainSpaceAboveWindowBottom() {
         doReturn(mAnchorView).when(mHorizontalAlignmentView).getParent();
         doReturn(60).when(mHorizontalAlignmentView).getTop();
+        doReturn((int) (DeviceFormFactor.MINIMUM_TABLET_WIDTH_DP * DIP_SCALE))
+                .when(mDisplay)
+                .getDisplayHeight();
 
         Configuration newConfig = getConfiguration();
         newConfig.screenWidthDp = DeviceFormFactor.MINIMUM_TABLET_WIDTH_DP + 1;

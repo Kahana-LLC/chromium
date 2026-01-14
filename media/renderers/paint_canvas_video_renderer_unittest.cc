@@ -13,6 +13,7 @@
 #include <stdint.h>
 
 #include <array>
+#include <bit>
 
 #include "base/containers/heap_array.h"
 #include "base/containers/span.h"
@@ -39,16 +40,17 @@
 #include "media/base/video_util.h"
 #include "media/renderers/shared_image_video_frame_test_utils.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/fp16/src/include/fp16.h"
 #include "third_party/libyuv/include/libyuv/convert.h"
 #include "third_party/libyuv/include/libyuv/scale.h"
 #include "third_party/skia/include/core/SkImage.h"
 #include "third_party/skia/include/core/SkRefCnt.h"
 #include "third_party/skia/include/core/SkSurface.h"
-#include "third_party/skia/include/gpu/ganesh/GrDirectContext.h"
 #include "third_party/skia/include/private/chromium/SkPMColor.h"
 #include "ui/gfx/color_space.h"
 #include "ui/gfx/geometry/rect_f.h"
 #include "ui/gl/gl_implementation.h"
+#include "ui/gl/gl_switches.h"
 #include "ui/gl/test/gl_surface_test_support.h"
 
 using media::VideoFrame;
@@ -171,9 +173,12 @@ class PaintCanvasVideoRendererTest : public testing::Test {
   base::test::TaskEnvironment task_environment_;
 };
 
-static SkBitmap AllocBitmap(int width, int height) {
+static SkBitmap AllocBitmap(int width,
+                            int height,
+                            SkColorType color_type = kN32_SkColorType) {
   SkBitmap bitmap;
-  bitmap.allocPixels(SkImageInfo::MakeN32(width, height, kPremul_SkAlphaType));
+  bitmap.allocPixels(
+      SkImageInfo::Make(width, height, color_type, kPremul_SkAlphaType));
   bitmap.eraseColor(0);
   return bitmap;
 }
@@ -261,6 +266,30 @@ static scoped_refptr<VideoFrame> CreateCroppedFrame() {
                    cropped_frame->stride(VideoFrame::Plane::kV), 16, 16);
 
   return cropped_frame;
+}
+
+static scoped_refptr<VideoFrame> CreateRGBA16TestFrame(
+    const gfx::Size& coded_size) {
+  auto frame = VideoFrame::CreateFrame(PIXEL_FORMAT_RGBAF16, coded_size,
+                                       gfx::Rect(coded_size), coded_size,
+                                       base::TimeDelta());
+  CHECK(frame);
+  frame->set_color_space(gfx::ColorSpace::CreateSRGBLinear());
+
+  // Draw full red in RGBA F16 frame.
+  for (int y = 0; y < kHeight; ++y) {
+    for (int x = 0; x < kWidth; ++x) {
+      // Fill the frame with red color.
+      uint16_t* pixel_data = reinterpret_cast<uint16_t*>(
+          frame->writable_data(0) + y * frame->stride(0) + x * 8);
+
+      pixel_data[0] = fp16_ieee_from_fp32_value(1);
+      pixel_data[1] = fp16_ieee_from_fp32_value(0);
+      pixel_data[2] = fp16_ieee_from_fp32_value(0);
+      pixel_data[3] = fp16_ieee_from_fp32_value(1);
+    }
+  }
+  return frame;
 }
 
 PaintCanvasVideoRendererTest::PaintCanvasVideoRendererTest()
@@ -403,6 +432,38 @@ TEST_F(PaintCanvasVideoRendererTest, ReinterpretAsSRGB) {
   EXPECT_EQ(SK_ColorRED, bitmap()->getColor(0, 0));
 }
 
+TEST_F(PaintCanvasVideoRendererTest, RGBAF16) {
+  SkBitmap bitmap = AllocBitmap(kWidth, kHeight, kRGBA_F16_SkColorType);
+  cc::SkiaPaintCanvas canvas(bitmap);
+
+  auto frame = CreateRGBA16TestFrame(gfx::Size(kWidth, kHeight));
+
+  cc::PaintFlags flags;
+  flags.setBlendMode(SkBlendMode::kSrcOver);
+  flags.setFilterQuality(cc::PaintFlags::FilterQuality::kLow);
+
+  PaintCanvasVideoRenderer::PaintParams params;
+  params.dest_rect = kNaturalRect;
+  renderer_.Paint(frame, &canvas, flags, params, nullptr);
+  EXPECT_EQ(SK_ColorRED, bitmap.getColor(0, 0));
+}
+
+TEST_F(PaintCanvasVideoRendererTest, RGBAF16_N32_Output) {
+  SkBitmap bitmap = AllocBitmap(kWidth, kHeight, kN32_SkColorType);
+  cc::SkiaPaintCanvas canvas(bitmap);
+
+  auto frame = CreateRGBA16TestFrame(gfx::Size(kWidth, kHeight));
+
+  cc::PaintFlags flags;
+  flags.setBlendMode(SkBlendMode::kSrcOver);
+  flags.setFilterQuality(cc::PaintFlags::FilterQuality::kLow);
+
+  PaintCanvasVideoRenderer::PaintParams params;
+  params.dest_rect = kNaturalRect;
+  renderer_.Paint(frame, &canvas, flags, params, nullptr);
+  EXPECT_EQ(SK_ColorRED, bitmap.getColor(0, 0));
+}
+
 TEST_F(PaintCanvasVideoRendererTest, Natural) {
   Paint(natural_frame(), target_canvas(), kRed);
   EXPECT_EQ(SK_ColorRED, bitmap()->getColor(0, 0));
@@ -455,7 +516,7 @@ uint32_t MaybeConvertABGRToARGB(uint32_t abgr) {
     SK_A32_SHIFT == 24
   return abgr;
 #else
-  return (base::ByteSwap(abgr & 0x00FFFFFF) >> 8) | (abgr & 0xFF000000);
+  return (std::byteswap(abgr & 0x00FFFFFF) >> 8) | (abgr & 0xFF000000);
 #endif
 }
 
@@ -771,7 +832,7 @@ TEST_F(PaintCanvasVideoRendererTest, Yuv420P12OddWidth) {
   auto rgba = base::HeapArray<uint32_t>::Uninit(kImgWidth * kImgHeight);
   PaintCanvasVideoRenderer::ConvertVideoFrameToRGBPixels(
       frame.get(), rgba.data(), frame->visible_rect().width() * 4,
-      /*premultiply_alpha=*/true);
+      kN32_SkColorType, /*premultiply_alpha=*/true);
   for (int i = 0; i < kImgHeight; ++i) {
     for (int j = 0; j < kImgWidth; ++j) {
       EXPECT_EQ(rgba[i * kImgWidth + j], 0xffffffff);
@@ -833,7 +894,7 @@ TEST_F(PaintCanvasVideoRendererTest, I420WithFilters) {
   // First convert with kFilterNone (nearest neighbor).
   PaintCanvasVideoRenderer::ConvertVideoFrameToRGBPixels(
       frame.get(), rgba.data(), frame->visible_rect().width() * 4,
-      /*premultiply_alpha=*/true);
+      kN32_SkColorType, /*premultiply_alpha=*/true);
 
   // The pixel at coordinates (1, 1) will have U = 89 and V = 251 if nearest
   // neighbor is used. (The correct values are U = 93 and V = 247.)
@@ -857,7 +918,8 @@ TEST_F(PaintCanvasVideoRendererTest, I420WithFilters) {
   // Then convert with kFilterBilinear (bilinear interpolation).
   PaintCanvasVideoRenderer::ConvertVideoFrameToRGBPixels(
       frame.get(), rgba.data(), frame->visible_rect().width() * 4,
-      /*premultiply_alpha=*/true, PaintCanvasVideoRenderer::kFilterBilinear);
+      kN32_SkColorType, /*premultiply_alpha=*/true,
+      PaintCanvasVideoRenderer::kFilterBilinear);
 
   // The pixel at coordinates (1, 1) will have the correct values U = 93 and
   // V = 247 if bilinear interpolation is used.
@@ -940,53 +1002,7 @@ class TestGLES2Interface : public gpu::gles2::GLES2InterfaceStub {
       texsubimage2d_callback_;
 };
 
-#if !BUILDFLAG(IS_ANDROID)
-void MailboxHoldersReleased(const gpu::SyncToken& sync_token) {}
-#endif
 }  // namespace
-
-// NOTE: The below test tests behavior when PaintCanvasVideoRenderer is used
-// without GPU raster. It is not relevant on Android, where GPU raster is
-// always used.
-#if !BUILDFLAG(IS_ANDROID)
-// Test that PaintCanvasVideoRenderer::Paint doesn't crash when GrContext is
-// unable to wrap a video frame texture (eg due to being abandoned).
-TEST_F(PaintCanvasVideoRendererTest, ContextLost) {
-  auto context_provider = viz::TestContextProvider::Create();
-  CHECK(context_provider);
-  context_provider->BindToCurrentSequence();
-  CHECK(context_provider->GrContext());
-  context_provider->GrContext()->abandonContext();
-
-  cc::SkiaPaintCanvas canvas(AllocBitmap(kWidth, kHeight));
-
-  gfx::Size size(kWidth, kHeight);
-  // We try copying the contents of the source VideoFrame *into* the
-  // cached SI over the raster interface.
-  gpu::SharedImageMetadata metadata;
-  metadata.format = viz::SinglePlaneFormat::kRGBA_8888;
-  metadata.size = size;
-  metadata.color_space = gfx::ColorSpace::CreateSRGB();
-  metadata.surface_origin = kTopLeft_GrSurfaceOrigin;
-  metadata.alpha_type = kOpaque_SkAlphaType;
-  metadata.usage = gpu::SHARED_IMAGE_USAGE_RASTER_READ;
-  scoped_refptr<gpu::ClientSharedImage> shared_image =
-      gpu::ClientSharedImage::CreateForTesting(metadata);
-  auto video_frame = VideoFrame::WrapSharedImage(
-      PIXEL_FORMAT_NV12, shared_image, gpu::SyncToken(),
-      base::BindOnce(MailboxHoldersReleased), size, gfx::Rect(size), size,
-      kNoTimestamp);
-
-  cc::PaintFlags flags;
-  flags.setFilterQuality(cc::PaintFlags::FilterQuality::kLow);
-  PaintCanvasVideoRenderer::PaintParams params;
-  params.dest_rect = kNaturalRect;
-  renderer_.Paint(std::move(video_frame), &canvas, flags, params,
-                  context_provider.get());
-}
-#endif
-
-void EmptyCallback(const gpu::SyncToken& sync_token) {}
 
 TEST_F(PaintCanvasVideoRendererTest, CorrectFrameSizeToVisibleRect) {
   constexpr int fWidth{16}, fHeight{16};
@@ -1119,15 +1135,24 @@ class PaintCanvasVideoRendererWithGLTest : public testing::Test {
   using GetColorCallback = base::RepeatingCallback<SkColor(int, int)>;
 
   void SetUp() override {
+    if (base::FeatureList::IsEnabled(features::kVulkanFromANGLE)) {
+      // TODO (crbug.com/440128352):
+      // If kVulkanFromANGLE = true (e.g. Desktop Android)
+      // this test fails like this
+      // "Failed to create and initialize Vulkan implementation."
+      GTEST_SKIP() << "Temporarily skipped for Android Desktop devices. See: "
+                      "crbug.com/440128352";
+    }
+
     display_ = gl::GLSurfaceTestSupport::InitializeOneOff();
     enable_pixels_.emplace();
     media_context_ = base::MakeRefCounted<viz::TestInProcessContextProvider>(
-        viz::TestContextType::kGpuRaster, /*support_locking=*/false);
+        viz::TestContextType::kRaster, /*support_locking=*/false);
     gpu::ContextResult result = media_context_->BindToCurrentSequence();
     ASSERT_EQ(result, gpu::ContextResult::kSuccess);
 
     raster_context_ = base::MakeRefCounted<viz::TestInProcessContextProvider>(
-        viz::TestContextType::kGpuRaster, /*support_locking=*/false);
+        viz::TestContextType::kRaster, /*support_locking=*/false);
     result = raster_context_->BindToCurrentSequence();
     ASSERT_EQ(result, gpu::ContextResult::kSuccess);
 

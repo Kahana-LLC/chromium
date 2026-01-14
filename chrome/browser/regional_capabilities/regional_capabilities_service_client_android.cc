@@ -43,10 +43,11 @@ void RegionalCapabilitiesServiceClientAndroid::FetchCountryId(
       reinterpret_cast<intptr_t>(heap_callback.release()));
 }
 
-void JNI_RegionalCapabilitiesServiceClientAndroid_ProcessDeviceCountryResponse(
+static void
+JNI_RegionalCapabilitiesServiceClientAndroid_ProcessDeviceCountryResponse(
     JNIEnv* env,
     jlong ptr_to_native_callback,
-    const base::android::JavaParamRef<jstring>& j_device_country) {
+    const base::android::JavaRef<jstring>& j_device_country) {
   // Using base::WrapUnique ensures that the callback is deleted when this goes
   // out of scope.
   using CountryIdCallback =
@@ -64,8 +65,10 @@ void JNI_RegionalCapabilitiesServiceClientAndroid_ProcessDeviceCountryResponse(
 
 Program RegionalCapabilitiesServiceClientAndroid::GetDeviceProgram() {
   return static_cast<Program>(
-      Java_RegionalCapabilitiesServiceClientAndroid_getDeviceProgram(
+      Java_RegionalCapabilitiesServiceClientAndroid_getDeviceProgramForNative(
           jni_zero::AttachCurrentThread()));
 }
 
 }  // namespace regional_capabilities
+
+DEFINE_JNI(RegionalCapabilitiesServiceClientAndroid)

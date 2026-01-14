@@ -8,6 +8,8 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
+import static org.chromium.chrome.browser.url_constants.UrlConstantResolver.getOriginalNativeNtpUrl;
+
 import android.app.Activity;
 import android.app.ActivityOptions;
 import android.app.KeyguardManager;
@@ -15,6 +17,7 @@ import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
+import android.os.Bundle;
 import android.os.PowerManager;
 import android.provider.Browser;
 import android.view.Display;
@@ -58,7 +61,6 @@ import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tabmodel.AsyncTabCreationParams;
 import org.chromium.chrome.browser.webapps.WebappLauncherActivity;
 import org.chromium.chrome.test.util.browser.webapps.WebappTestHelper;
-import org.chromium.components.embedder_support.util.UrlConstants;
 import org.chromium.components.external_intents.ExternalNavigationHandler;
 import org.chromium.content_public.browser.LoadUrlParams;
 import org.chromium.content_public.common.Referrer;
@@ -429,7 +431,7 @@ public class IntentHandlerRobolectricTest {
         Intent intent = IntentHandler.createTrustedOpenNewTabIntent(context, true);
 
         assertEquals(Intent.ACTION_VIEW, intent.getAction());
-        assertEquals(intent.getData(), Uri.parse(UrlConstants.NTP_URL));
+        assertEquals(intent.getData(), Uri.parse(getOriginalNativeNtpUrl()));
         assertTrue(intent.getBooleanExtra(Browser.EXTRA_CREATE_NEW_TAB, false));
         assertTrue(IntentHandler.wasIntentSenderChrome(intent));
         assertTrue(intent.getBooleanExtra(IntentHandler.EXTRA_OPEN_NEW_INCOGNITO_TAB, false));
@@ -538,16 +540,20 @@ public class IntentHandlerRobolectricTest {
         intent.setPackage(ContextUtils.getApplicationContext().getPackageName());
         intent.putExtra("key", true);
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-        assertEquals(intent, IntentHandler.rewriteFromHistoryIntent(intent));
-
-        intent.addFlags(Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY);
-        Intent newIntent = IntentHandler.rewriteFromHistoryIntent(intent);
+        assertEquals(intent, IntentHandler.rewriteFromHistoryIntent(intent, null));
 
         Intent expected = new Intent(intent);
         expected.setAction(Intent.ACTION_MAIN);
         expected.removeExtra("key");
         expected.addCategory(Intent.CATEGORY_LAUNCHER);
         expected.setData(null);
+
+        Intent newIntent = IntentHandler.rewriteFromHistoryIntent(intent, new Bundle());
+        assertEquals(expected.toUri(0), newIntent.toUri(0));
+
+        intent.addFlags(Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY);
+        expected.addFlags(Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY);
+        newIntent = IntentHandler.rewriteFromHistoryIntent(intent, null);
         assertEquals(expected.toUri(0), newIntent.toUri(0));
     }
 
@@ -640,22 +646,22 @@ public class IntentHandlerRobolectricTest {
                         null,
                         ActivityOptions.makeBasic().setLaunchDisplayId(extDisplayId).toBundle());
         Activity activity = controller.setup().get();
-        ShadowPowerManager mShadowPowerManagerAct =
+        ShadowPowerManager shadowPowerManagerAct =
                 Shadows.shadowOf((PowerManager) activity.getSystemService(Context.POWER_SERVICE));
 
         Intent intent = new Intent(Intent.ACTION_VIEW);
         intent.setData(Uri.parse(GOOGLE_URL));
         // Test with main screen on
         mShadowPowerManager.setIsInteractive(true);
-        mShadowPowerManagerAct.setIsInteractive(false);
+        shadowPowerManagerAct.setIsInteractive(false);
         Assert.assertTrue(IntentHandler.shouldIgnoreIntent(intent, activity));
-        mShadowPowerManagerAct.setIsInteractive(true);
+        shadowPowerManagerAct.setIsInteractive(true);
         Assert.assertFalse(IntentHandler.shouldIgnoreIntent(intent, activity));
         // Test with main screen off
         mShadowPowerManager.setIsInteractive(false);
-        mShadowPowerManagerAct.setIsInteractive(false);
+        shadowPowerManagerAct.setIsInteractive(false);
         Assert.assertTrue(IntentHandler.shouldIgnoreIntent(intent, activity));
-        mShadowPowerManagerAct.setIsInteractive(true);
+        shadowPowerManagerAct.setIsInteractive(true);
         Assert.assertFalse(IntentHandler.shouldIgnoreIntent(intent, activity));
     }
 

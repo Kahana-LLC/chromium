@@ -4,10 +4,12 @@
 
 package org.chromium.chrome.browser.dragdrop;
 
+import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
+import static org.mockito.Mockito.when;
 
 import android.content.Context;
 import android.content.Intent;
@@ -26,12 +28,18 @@ import org.robolectric.annotation.Config;
 import org.chromium.base.ContextUtils;
 import org.chromium.base.Token;
 import org.chromium.base.test.BaseRobolectricTestRunner;
+import org.chromium.base.test.util.Features;
+import org.chromium.chrome.browser.ChromeTabbedActivity;
 import org.chromium.chrome.browser.IntentHandler;
+import org.chromium.chrome.browser.flags.ChromeFeatureList;
+import org.chromium.chrome.browser.incognito.IncognitoUtils;
 import org.chromium.chrome.browser.multiwindow.MultiWindowTestUtils;
 import org.chromium.chrome.browser.price_tracking.PriceTrackingFeatures;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.tab.MockTab;
 import org.chromium.chrome.browser.tab.Tab;
+import org.chromium.chrome.browser.tabmodel.MultiTabMetadata;
+import org.chromium.chrome.browser.tabmodel.SupportedProfileType;
 import org.chromium.chrome.browser.tabmodel.TabGroupMetadata;
 import org.chromium.chrome.browser.tabwindow.TabWindowManager;
 import org.chromium.ui.dragdrop.DragDropMetricUtils.UrlIntentSource;
@@ -50,7 +58,7 @@ public class DragAndDropLauncherActivityUnitTest {
     @Rule public MockitoRule mMockitoRule = MockitoJUnit.rule();
     @Rule public ExpectedException exception = ExpectedException.none();
     @Mock private Profile mProfile;
-
+    @Mock private ChromeTabbedActivity mActivity;
     private Context mContext;
     private String mLinkUrl;
 
@@ -60,6 +68,9 @@ public class DragAndDropLauncherActivityUnitTest {
         mContext = ContextUtils.getApplicationContext();
         mLinkUrl = JUnitTestGURLs.HTTP_URL.getSpec();
         PriceTrackingFeatures.setPriceAnnotationsEnabledForTesting(false);
+
+        when(mActivity.getApplicationContext()).thenReturn(mContext);
+        when(mActivity.getSupportedProfileType()).thenReturn(SupportedProfileType.UNSET);
     }
 
     @Test
@@ -172,6 +183,47 @@ public class DragAndDropLauncherActivityUnitTest {
                 DragAndDropLauncherActivity.isIntentValid(intent));
     }
 
+    @Test
+    @Config(qualifiers = "sw600dp")
+    @Features.EnableFeatures({ChromeFeatureList.ANDROID_OPEN_INCOGNITO_AS_WINDOW})
+    public void testGetTabOrGroupIntent_sourceActivityHasIncognitoProfileType() {
+        IncognitoUtils.setShouldOpenIncognitoAsWindowForTesting(true);
+        Tab tab = MockTab.createAndInitialize(1, mProfile);
+        tab.setIsPinned(true);
+        ChromeDropDataAndroid dropData =
+                createTabDropData(tab, /* allowDragToCreateNewInstance= */ true);
+
+        int sourceWindowId = 1;
+
+        when(mActivity.getSupportedProfileType()).thenReturn(SupportedProfileType.OFF_THE_RECORD);
+        Intent intent =
+                DragAndDropLauncherActivity.buildTabOrGroupIntent(
+                        dropData, mActivity, sourceWindowId, /* destWindowId= */ 2);
+        assertTrue(
+                "Incognito extra should be true",
+                intent.getBooleanExtra(IntentHandler.EXTRA_OPEN_NEW_INCOGNITO_TAB, false));
+    }
+
+    @Test
+    @Features.EnableFeatures({ChromeFeatureList.ANDROID_OPEN_INCOGNITO_AS_WINDOW})
+    public void testGetTabOrGroupIntent_sourceActivityRegularProfileType() {
+        IncognitoUtils.setShouldOpenIncognitoAsWindowForTesting(true);
+        Tab tab = MockTab.createAndInitialize(1, mProfile);
+        tab.setIsPinned(true);
+        ChromeDropDataAndroid dropData =
+                createTabDropData(tab, /* allowDragToCreateNewInstance= */ true);
+
+        int sourceWindowId = 1;
+
+        when(mActivity.getSupportedProfileType()).thenReturn(SupportedProfileType.REGULAR);
+        Intent intent =
+                DragAndDropLauncherActivity.buildTabOrGroupIntent(
+                        dropData, mActivity, sourceWindowId, /* destWindowId= */ 2);
+        assertFalse(
+                "Incognito extra should be false",
+                intent.getBooleanExtra(IntentHandler.EXTRA_OPEN_NEW_INCOGNITO_WINDOW, false));
+    }
+
     private void testGetTabOrGroupIntent(boolean isGroupDrag, int destWindowId) {
         testGetTabOrGroupIntent(isGroupDrag, /* isMultiTabDrag= */ false, destWindowId);
     }
@@ -179,6 +231,7 @@ public class DragAndDropLauncherActivityUnitTest {
     private void testGetTabOrGroupIntent(
             boolean isGroupDrag, boolean isMultiTabDrag, int destWindowId) {
         Tab tab = MockTab.createAndInitialize(1, mProfile);
+        tab.setIsPinned(true);
         ChromeDropDataAndroid dropData;
         if (isGroupDrag) {
             dropData = createTabGroupDropData(/* allowDragToCreateNewInstance= */ true);
@@ -190,7 +243,7 @@ public class DragAndDropLauncherActivityUnitTest {
         int sourceWindowId = 1;
         Intent intent =
                 DragAndDropLauncherActivity.buildTabOrGroupIntent(
-                        dropData, mContext, sourceWindowId, destWindowId);
+                        dropData, mActivity, sourceWindowId, destWindowId);
         assertEquals(
                 "The intent action should be DragAndDropLauncherActivity.ACTION_DRAG_DROP_VIEW.",
                 DragAndDropLauncherActivity.ACTION_DRAG_DROP_VIEW,
@@ -230,19 +283,24 @@ public class DragAndDropLauncherActivityUnitTest {
                     buildTabGroupMetadata(),
                     IntentHandler.getTabGroupMetadata(intent));
         } else if (isMultiTabDrag) {
+            MultiTabMetadata multiTabMetadata = IntentHandler.getMultiTabMetadata(intent);
             assertEquals(
                     "The EXTRA_URL_SOURCE intent extra value should match.",
-                    UrlIntentSource.TAB_IN_STRIP,
+                    UrlIntentSource.MULTI_TAB_IN_STRIP,
                     intent.getIntExtra(
                             IntentHandler.EXTRA_URL_DRAG_SOURCE, UrlIntentSource.UNKNOWN));
             assertEquals(
-                    "The intent data value should match.",
+                    "The intent data value should match - Urls.",
                     Collections.singletonList(tab.getUrl().getSpec()),
-                    intent.getStringArrayListExtra(IntentHandler.MULTI_TAB_KEY_TAB_URLS));
+                    multiTabMetadata.urls);
             assertEquals(
-                    "The intent data value should match.",
+                    "The intent data value should match - Tab Ids.",
                     Collections.singletonList(tab.getId()),
-                    intent.getIntegerArrayListExtra(IntentHandler.MULTI_TAB_KEY_TAB_IDS));
+                    multiTabMetadata.tabIds);
+            assertArrayEquals(
+                    "The intent data value should match - Is Pinned.",
+                    new boolean[] {tab.getIsPinned()},
+                    multiTabMetadata.isPinned);
         } else {
             assertEquals(
                     "The EXTRA_URL_SOURCE intent extra value should match.",
@@ -257,6 +315,10 @@ public class DragAndDropLauncherActivityUnitTest {
                     "The intent data value should match.",
                     Uri.parse(tab.getUrl().getSpec()),
                     intent.getData());
+            assertEquals(
+                    "The intent data value should match - Is Pinned.",
+                    tab.getIsPinned(),
+                    IntentHandler.getPinnedState(intent));
         }
     }
 
@@ -278,6 +340,7 @@ public class DragAndDropLauncherActivityUnitTest {
     private ChromeDropDataAndroid createTabGroupDropData(boolean allowDragToCreateNewInstance) {
         return new ChromeTabGroupDropDataAndroid.Builder()
                 .withTabGroupMetadata(buildTabGroupMetadata())
+                .withTabs(new ArrayList<Tab>()) // Unimportant for this test; must be non-null.
                 .withAllowDragToCreateInstance(allowDragToCreateNewInstance)
                 .build();
     }

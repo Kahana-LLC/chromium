@@ -2,6 +2,7 @@ from enum import Enum
 from typing import Any, Dict, List, Mapping, MutableMapping, Optional, Union
 
 from ._module import BidiModule, command
+from ..undefined import UNDEFINED, Maybe
 
 
 class AuthCredentials(Dict[str, Any]):
@@ -283,6 +284,19 @@ class Network(BidiModule):
         return params
 
     @command
+    def disown_data(
+            self,
+            request: str,
+            data_type: str,
+            collector: str) -> Mapping[str, Any]:
+        params: MutableMapping[str, Any] = {
+            "request": request,
+            "dataType": data_type,
+            "collector": collector,
+        }
+        return params
+
+    @command
     def set_cache_behavior(
             self,
             cache_behavior: CacheBehavior,
@@ -318,3 +332,16 @@ class Network(BidiModule):
     def _get_data(self, result: Mapping[str, Any]) -> Any:
         assert result["bytes"] is not None
         return result["bytes"]
+
+    @command
+    def set_extra_headers(
+            self,
+            headers: List[Dict[str, Any]],
+            contexts: Maybe[List[str]] = UNDEFINED,
+            user_contexts: Maybe[List[str]] = UNDEFINED,
+    ) -> Mapping[str, Any]:
+        return {
+            "headers": headers,
+            "contexts": contexts,
+            "userContexts": user_contexts,
+        }

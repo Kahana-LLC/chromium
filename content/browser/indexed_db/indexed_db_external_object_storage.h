@@ -5,45 +5,15 @@
 #ifndef CONTENT_BROWSER_INDEXED_DB_INDEXED_DB_EXTERNAL_OBJECT_STORAGE_H_
 #define CONTENT_BROWSER_INDEXED_DB_INDEXED_DB_EXTERNAL_OBJECT_STORAGE_H_
 
-#include <stdint.h>
-
-#include <map>
+#include <cstdint>
 #include <string>
 #include <vector>
 
 #include "base/functional/callback_forward.h"
-#include "components/services/storage/public/mojom/blob_storage_context.mojom.h"
 #include "content/browser/indexed_db/indexed_db_external_object.h"
-#include "content/browser/indexed_db/indexed_db_leveldb_coding.h"
 #include "content/browser/indexed_db/status.h"
-#include "storage/common/file_system/file_system_mount_option.h"
 
 namespace content::indexed_db {
-
-// This file contains all of the classes & types used to store external objects
-// (such as blobs) in IndexedDB. Currently it is messy because this is
-// mid-refactor, but it will be cleaned up over time.
-
-enum class BlobWriteResult {
-  // There was an error writing the blobs.
-  kFailure,
-  // The blobs were written, and phase two should be scheduled asynchronously.
-  // The returned status will be ignored.
-  kRunPhaseTwoAsync,
-  // The blobs were written, and phase two should be run now. The returned
-  // status will be correctly propagated.
-  kRunPhaseTwoAndReturnResult,
-};
-
-// This callback is used to signify that writing blobs is complete. The
-// BlobWriteResult signifies if the operation succeeded or not, and the returned
-// status is used to handle errors in the next part of the transcation commit
-// lifecycle. Note: The returned status can only be used when the result is
-// |kRunPhaseTwoAndReturnResult|.  The WriteBlobToFileResult is a more granular
-// error in the case something goes wrong.
-using BlobWriteCallback =
-    base::OnceCallback<Status(BlobWriteResult,
-                              storage::mojom::WriteBlobToFileResult)>;
 
 // This callback will serialize a single object that represents an FSA handle
 // and return the serialized token asynchronously via the inner callback.

@@ -150,6 +150,13 @@ declare global {
         KNOWN_TRAVELER_NUMBER_EXPIRATION_DATE,
         ADDRESS_HOME_ZIP_PREFIX,
         ADDRESS_HOME_ZIP_SUFFIX,
+        FLIGHT_RESERVATION_FLIGHT_NUMBER,
+        FLIGHT_RESERVATION_TICKET_NUMBER,
+        FLIGHT_RESERVATION_CONFIRMATION_CODE,
+        FLIGHT_RESERVATION_PASSENGER_NAME,
+        FLIGHT_RESERVATION_DEPARTURE_AIRPORT,
+        FLIGHT_RESERVATION_ARRIVAL_AIRPORT,
+        FLIGHT_RESERVATION_DEPARTURE_DATE,
       }
 
       export enum AddressRecordType {
@@ -247,6 +254,7 @@ declare global {
         addEntityTypeString: string;
         editEntityTypeString: string;
         deleteEntityTypeString: string;
+        supportsWalletStorage: boolean;
       }
 
       export interface DateValue {
@@ -265,12 +273,15 @@ declare global {
         attributeInstances: AttributeInstance[];
         guid: string;
         nickname: string;
+        shouldAuthenticateToView?: boolean;
       }
 
       export interface EntityInstanceWithLabels {
         guid: string;
+        type: EntityType;
         entityInstanceLabel: string;
         entityInstanceSubLabel: string;
+        storedInWallet: boolean;
       }
 
       export interface PayOverTimeIssuerEntry {
@@ -302,6 +313,8 @@ declare global {
       export function getPayOverTimeIssuerList():
           Promise<PayOverTimeIssuerEntry[]>;
       export function authenticateUserAndFlipMandatoryAuthToggle(): void;
+      export function authenticateUserBeforeViewingEntityData():
+          Promise<boolean>;
       export function getLocalCard(guid: string): Promise<CreditCardEntry|null>;
       export function checkIfDeviceAuthAvailable(): Promise<boolean>;
       export function bulkDeleteAllCvcs(): void;
@@ -313,11 +326,14 @@ declare global {
           Promise<EntityInstanceWithLabels[]>;
       export function getEntityInstanceByGuid(guid: string):
           Promise<EntityInstance>;
-      export function getAllEntityTypes(): Promise<EntityType[]>;
+      export function getWritableEntityTypes(): Promise<EntityType[]>;
       export function getAllAttributeTypesForEntityTypeName(
           entityTypeName: number): Promise<AttributeType[]>;
       export function getAutofillAiOptInStatus(): Promise<boolean>;
       export function setAutofillAiOptInStatus(optedIn: boolean):
+          Promise<boolean>;
+      export function getWalletablePassDetectionOptInStatus(): Promise<boolean>;
+      export function setWalletablePassDetectionOptInStatus(optedIn: boolean):
           Promise<boolean>;
       export const onPersonalDataChanged: ChromeEvent<
           (addresses: AddressEntry[], creditCards: CreditCardEntry[],

@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "services/audio/input_controller.h"
 
 #include <inttypes.h>
@@ -15,8 +10,10 @@
 #include <cstdarg>
 #include <limits>
 #include <memory>
+#include <numeric>
 #include <utility>
 
+#include "base/compiler_specific.h"
 #include "base/functional/bind.h"
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
@@ -124,12 +121,9 @@ float AveragePower(const media::AudioBus& buffer) {
 
   // Scan all channels and accumulate the sum of squares for all samples.
   float sum_power = 0.0f;
-  for (int ch = 0; ch < channels; ++ch) {
-    const float* channel_data = buffer.channel(ch);
-    for (int i = 0; i < frames; i++) {
-      const float sample = channel_data[i];
-      sum_power += sample * sample;
-    }
+  for (auto channel : buffer.AllChannels()) {
+    sum_power += std::inner_product(channel.begin(), channel.end(),
+                                    channel.begin(), 0.0f);
   }
 
   // Update accumulated average results, with clamping for sanity.
@@ -304,6 +298,7 @@ InputController::InputController(
     SyncWriter* sync_writer,
     std::unique_ptr<ReferenceSignalProvider> reference_signal_provider,
     media::AecdumpRecordingManager* aecdump_recording_manager,
+    raw_ptr<MlModelManager> ml_model_manager,
     media::mojom::AudioProcessingConfigPtr processing_config,
     const media::AudioParameters& output_params,
     const media::AudioParameters& device_params,
@@ -319,13 +314,13 @@ InputController::InputController(
   DCHECK(event_handler_);
   DCHECK(sync_writer_);
   weak_this_ = weak_ptr_factory_.GetWeakPtr();
-  SendLogMessage("%s => (delay reporter uses %s as AEC type)", __func__,
-                 delay_reporter_->GetAECTypeAsString());
+  UNSAFE_TODO(SendLogMessage("%s => (delay reporter uses %s as AEC type)",
+                             __func__, delay_reporter_->GetAECTypeAsString()));
 
 #if BUILDFLAG(CHROME_WIDE_ECHO_CANCELLATION)
   MaybeSetUpAudioProcessing(std::move(processing_config), output_params,
                             device_params, std::move(reference_signal_provider),
-                            aecdump_recording_manager);
+                            aecdump_recording_manager, ml_model_manager);
 #endif
 }
 
@@ -335,15 +330,16 @@ void InputController::MaybeSetUpAudioProcessing(
     const media::AudioParameters& processing_output_params,
     const media::AudioParameters& device_params,
     std::unique_ptr<ReferenceSignalProvider> reference_signal_provider,
-    media::AecdumpRecordingManager* aecdump_recording_manager) {
-  SendLogMessage(
+    media::AecdumpRecordingManager* aecdump_recording_manager,
+    raw_ptr<MlModelManager> ml_model_manager) {
+  UNSAFE_TODO(SendLogMessage(
       "%s({processing_config=[%s]}, {processing_output_params=[%s]}, "
       "{device_params=[%s]})",
       __func__,
       processing_config ? processing_config->settings.ToString().c_str()
                         : "nullptr",
       processing_output_params.AsHumanReadableString().c_str(),
-      device_params.AsHumanReadableString().c_str());
+      device_params.AsHumanReadableString().c_str()));
   if (!processing_config) {
     SendLogMessage("%s => (WARNING: undefined audio processing config)",
                    __func__);
@@ -354,8 +350,9 @@ void InputController::MaybeSetUpAudioProcessing(
   CHECK(reference_signal_provider);
   const bool needs_webrtc_audio_processing =
       processing_config->settings.NeedWebrtcAudioProcessing();
-  SendLogMessage("%s => (needs WebRTC audio processing: %s)", __func__,
-                 needs_webrtc_audio_processing ? "true" : "false");
+  UNSAFE_TODO(SendLogMessage("%s => (needs WebRTC audio processing: %s)",
+                             __func__,
+                             needs_webrtc_audio_processing ? "true" : "false"));
   if (!needs_webrtc_audio_processing) {
     return;
   }
@@ -387,14 +384,15 @@ void InputController::MaybeSetUpAudioProcessing(
       base::BindRepeating(&InputController::DoReportError, weak_this_,
                           REFERENCE_STREAM_ERROR),
       std::move(processing_config->controls_receiver),
-      aecdump_recording_manager);
+      aecdump_recording_manager, ml_model_manager);
 
   // If we are not running echo cancellation the processing is lightweight, so
   // there is no need to offload work to a new thread.
   const bool echo_cancellation_is_enabled =
       audio_processor_handler_->needs_playout_reference();
-  SendLogMessage("%s => (echo cancellation is: %s)", __func__,
-                 (echo_cancellation_is_enabled ? "enabled" : "disabled"));
+  UNSAFE_TODO(
+      SendLogMessage("%s => (echo cancellation is: %s)", __func__,
+                     (echo_cancellation_is_enabled ? "enabled" : "disabled")));
   if (!echo_cancellation_is_enabled) {
     return;
   }
@@ -430,7 +428,9 @@ std::unique_ptr<InputController> InputController::Create(
     SyncWriter* sync_writer,
     std::unique_ptr<ReferenceSignalProvider> reference_signal_provider,
     media::AecdumpRecordingManager* aecdump_recording_manager,
+    raw_ptr<MlModelManager> ml_model_manager,
     media::mojom::AudioProcessingConfigPtr processing_config,
+    LoopbackMixin::MaybeCreateCallback maybe_create_loopback_mixin_cb,
     const media::AudioParameters& params,
     const std::string& device_id,
     bool enable_agc) {
@@ -452,10 +452,12 @@ std::unique_ptr<InputController> InputController::Create(
   std::unique_ptr<InputController> controller =
       base::WrapUnique(new InputController(
           event_handler, sync_writer, std::move(reference_signal_provider),
-          aecdump_recording_manager, std::move(processing_config), params,
-          device_params, ParamsToStreamType(params)));
+          aecdump_recording_manager, ml_model_manager,
+          std::move(processing_config), params, device_params,
+          ParamsToStreamType(params)));
 
-  controller->DoCreate(audio_manager, params, device_id, enable_agc);
+  controller->DoCreate(audio_manager, params, device_id, enable_agc,
+                       std::move(maybe_create_loopback_mixin_cb));
   return controller;
 }
 
@@ -486,13 +488,20 @@ void InputController::Record() {
 
   stream_create_time_ = base::TimeTicks::Now();
 
-  // Unretained() is safe, since |this| outlives |audio_callback_|.
+  // Unretained() is safe, since |this| and |loopback_mixin_| outlive
+  // |audio_callback_|.
+  AudioCallback::OnDataCallback on_data_callback =
+      loopback_mixin_
+          ? base::BindRepeating(&LoopbackMixin::OnData,
+                                base::Unretained(loopback_mixin_.get()))
+          : base::BindRepeating(&InputController::OnData,
+                                base::Unretained(this));
+
   // |on_first_data_callback| and |on_error_callback| calls are posted on the
   // audio thread, since all AudioCallback callbacks run on the hw callback
   // thread.
   audio_callback_ = std::make_unique<AudioCallback>(
-      /*on_data_callback=*/base::BindRepeating(&InputController::OnData,
-                                               base::Unretained(this)),
+      std::move(on_data_callback),
       /*on_first_data_callback=*/
       base::BindPostTask(
           task_runner_,
@@ -502,6 +511,10 @@ void InputController::Record() {
                          base::BindRepeating(&InputController::DoReportError,
                                              weak_this_, STREAM_ERROR)));
 
+  if (loopback_mixin_) {
+    // Start receiving chromium playout loopback.
+    loopback_mixin_->Start();
+  }
   stream_->Start(audio_callback_.get());
 }
 
@@ -520,8 +533,9 @@ void InputController::Close() {
     stream_->Stop();
 
 #if BUILDFLAG(CHROME_WIDE_ECHO_CANCELLATION)
-    if (output_tapper_)
+    if (output_tapper_) {
       output_tapper_->Stop();
+    }
 
     if (processing_fifo_) {
       // Stop the FIFO after |stream_| is stopped, to guarantee there are no
@@ -545,11 +559,11 @@ void InputController::Close() {
                    : CAPTURE_STARTUP_NEVER_GOT_DATA);
     LogCaptureStartupResult(capture_startup_result);
     LogCallbackError();
-    SendLogMessage("%s => (stream duration=%" PRId64 " seconds%s", __func__,
-                   duration.InSeconds(),
-                   audio_callback_->received_callback()
-                       ? ")"
-                       : " - no callbacks received)");
+    UNSAFE_TODO(SendLogMessage("%s => (stream duration=%" PRId64 " seconds%s",
+                               __func__, duration.InSeconds(),
+                               audio_callback_->received_callback()
+                                   ? ")"
+                                   : " - no callbacks received)"));
     if (type_ == LOW_LATENCY) {
       if (audio_callback_->received_callback()) {
         UMA_HISTOGRAM_LONG_TIMES("Media.InputStreamDuration", duration);
@@ -560,6 +574,7 @@ void InputController::Close() {
     }
 
     audio_callback_.reset();
+    loopback_mixin_.reset();
   } else {
     SendLogMessage("%s => (WARNING: recording never started)", __func__);
   }
@@ -572,8 +587,8 @@ void InputController::Close() {
 #if defined(AUDIO_POWER_MONITORING)
   // Send stats if enabled.
   if (power_measurement_is_enabled_) {
-    SendLogMessage("%s => (silence_state=%s)", __func__,
-                   SilenceStateToString(silence_state_));
+    UNSAFE_TODO(SendLogMessage("%s => (silence_state=%s)", __func__,
+                               SilenceStateToString(silence_state_)));
   }
 #endif
 
@@ -629,10 +644,12 @@ InputController::ErrorCode MapOpenOutcomeToErrorCode(OpenOutcome outcome) {
   }
 }
 
-void InputController::DoCreate(media::AudioManager* audio_manager,
-                               const media::AudioParameters& params,
-                               const std::string& device_id,
-                               bool enable_agc) {
+void InputController::DoCreate(
+    media::AudioManager* audio_manager,
+    const media::AudioParameters& params,
+    const std::string& device_id,
+    bool enable_agc,
+    LoopbackMixin::MaybeCreateCallback maybe_create_loopback_mixin_cb) {
   DCHECK(task_runner_->BelongsToCurrentThread());
   DCHECK(!stream_);
   SCOPED_UMA_HISTOGRAM_TIMER("Media.AudioInputController.CreateTime");
@@ -688,6 +705,11 @@ void InputController::DoCreate(media::AudioManager* audio_manager,
   // Finally, keep the stream pointer around, update the state and notify.
   stream_ = stream;
 
+  loopback_mixin_ = std::move(maybe_create_loopback_mixin_cb)
+                        .Run(device_id, audio_input_stream_params,
+                             base::BindRepeating(&InputController::OnData,
+                                                 base::Unretained(this)));
+
   // Send initial muted state along with OnCreated, to avoid races.
   is_muted_ = stream_->IsMuted();
   event_handler_->OnCreated(is_muted_);
@@ -719,18 +741,18 @@ void InputController::DoLogAudioLevels(float level_dbfs,
   }
 
   static const float kSilenceThresholdDBFS = -72.24719896f;
-  SendLogMessage(
+  UNSAFE_TODO(SendLogMessage(
       "%s => (average audio level=%.2f dBFS%s)", __func__, level_dbfs,
-      level_dbfs < kSilenceThresholdDBFS ? " <=> low audio input level" : "");
+      level_dbfs < kSilenceThresholdDBFS ? " <=> low audio input level" : ""));
 
   if (!microphone_is_muted) {
     UpdateSilenceState(level_dbfs < kSilenceThresholdDBFS);
   }
-  SendLogMessage("%s => (microphone volume=%d%%%s)", __func__,
-                 microphone_volume_percent,
-                 microphone_volume_percent < kLowLevelMicrophoneLevelPercent
-                     ? " <=> low microphone level"
-                     : "");
+  UNSAFE_TODO(SendLogMessage(
+      "%s => (microphone volume=%d%%%s)", __func__, microphone_volume_percent,
+      microphone_volume_percent < kLowLevelMicrophoneLevelPercent
+          ? " <=> low microphone level"
+          : ""));
 #endif
 }
 
@@ -783,7 +805,7 @@ void InputController::SendLogMessage(const char* format, ...) {
   va_list args;
   va_start(args, format);
   event_handler_->OnLog(
-      base::StrCat({"AIC::", base::StringPrintV(format, args)}));
+      base::StrCat({"AIC::", UNSAFE_TODO(base::StringPrintV(format, args))}));
   va_end(args);
 }
 
@@ -822,8 +844,8 @@ void InputController::CheckMutedState() {
   if (new_state != is_muted_) {
     is_muted_ = new_state;
     event_handler_->OnMuted(is_muted_);
-    SendLogMessage("%s => (is_muted=%s)", __func__,
-                   is_muted_ ? "true" : "false");
+    UNSAFE_TODO(SendLogMessage("%s => (is_muted=%s)", __func__,
+                               is_muted_ ? "true" : "false"));
   }
 }
 

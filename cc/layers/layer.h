@@ -8,9 +8,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <array>
 #include <memory>
-#include <set>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -19,7 +18,6 @@
 #include "base/memory/ref_counted.h"
 #include "cc/base/protected_sequence_synchronizer.h"
 #include "cc/base/region.h"
-#include "cc/benchmarks/micro_benchmark.h"
 #include "cc/cc_export.h"
 #include "cc/input/hit_test_opaqueness.h"
 #include "cc/input/scroll_snap_data.h"
@@ -29,11 +27,7 @@
 #include "cc/paint/element_id.h"
 #include "cc/paint/filter_operations.h"
 #include "cc/paint/node_id.h"
-#include "cc/paint/paint_record.h"
-#include "cc/trees/effect_node.h"
-#include "cc/trees/property_tree.h"
-#include "cc/trees/property_tree_layer_tree_delegate.h"
-#include "cc/trees/target_property.h"
+#include "cc/trees/tracked_element_bounds.h"
 #include "components/viz/common/surfaces/region_capture_bounds.h"
 #include "components/viz/common/surfaces/subtree_capture_id.h"
 #include "components/viz/common/view_transition_element_resource_id.h"
@@ -44,6 +38,7 @@
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/rounded_corners_f.h"
 #include "ui/gfx/geometry/rrect_f.h"
+#include "ui/gfx/geometry/transform.h"
 
 namespace viz {
 class CopyOutputRequest;
@@ -55,10 +50,15 @@ class LayerImpl;
 class LayerTreeHost;
 class LayerTreeHostCommon;
 class LayerTreeImpl;
+class MicroBenchmark;
 class PictureLayer;
+class PropertyTrees;
 
 struct CommitState;
 struct ThreadUnsafeCommitState;
+
+enum class ElementListType;
+enum class RenderSurfaceReason : uint8_t;
 
 // For tracing and debugging. The info will be attached to this layer's tracing
 // output.
@@ -524,6 +524,16 @@ class CC_EXPORT Layer : public base::RefCounted<Layer>,
     if (const auto& rare_inputs = inputs_.Read(*this).rare_inputs)
       return rare_inputs->capture_bounds;
     return viz::RegionCaptureBounds::Empty();
+  }
+
+  // Set or get data for tracked elements on this layer. The geometry provided
+  // is in layer space.
+  void SetTrackedElementBounds(TrackedElementBounds bounds);
+  const TrackedElementBounds& tracked_element_bounds() const {
+    if (const auto& rare_inputs = inputs_.Read(*this).rare_inputs) {
+      return rare_inputs->tracked_element_bounds;
+    }
+    return TrackedElementBoundsEmpty();
   }
 
   // Set or get the set of blocking wheel rects of this layer. The
@@ -1020,6 +1030,7 @@ class CC_EXPORT Layer : public base::RefCounted<Layer>,
     ~RareInputs();
 
     viz::RegionCaptureBounds capture_bounds;
+    TrackedElementBounds tracked_element_bounds;
     Region main_thread_scroll_hit_test_region;
     std::vector<ScrollHitTestRect> non_composited_scroll_hit_test_rects;
     Region wheel_event_region;

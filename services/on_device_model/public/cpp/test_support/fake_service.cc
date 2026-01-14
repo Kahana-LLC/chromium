@@ -46,6 +46,10 @@ std::string Placeholder(ml::Token token) {
       return "S";
     case ml::Token::kUser:
       return "U";
+    case ml::Token::kToolCall:
+      return "TC";
+    case ml::Token::kToolResponse:
+      return "TR";
   }
 }
 
@@ -151,6 +155,11 @@ void FakeOnDeviceSession::Generate(
 
 void FakeOnDeviceSession::GetSizeInTokens(mojom::InputPtr input,
                                           GetSizeInTokensCallback callback) {
+  if (settings_->size_in_tokens != 0) {
+    std::move(callback).Run(settings_->size_in_tokens);
+    return;
+  }
+
   std::move(callback).Run(
       OnDeviceInputToString(*input, params_->capabilities).size());
 }
@@ -381,9 +390,11 @@ void FakeOnDeviceModel::LoadAdaptation(
 
 FakeTsModel::FakeTsModel(
     on_device_model::mojom::TextSafetyModelParamsPtr params) {
-  if (params->ts_assets) {
-    CHECK_EQ(ReadFile(params->ts_assets->data), FakeTsData());
-    CHECK_EQ(ReadFile(params->ts_assets->sp_model), FakeTsSpModel());
+  if (params->safety_assets) {
+    CHECK_EQ(ReadFile(params->safety_assets->get_ts_assets()->data),
+             FakeTsData());
+    CHECK_EQ(ReadFile(params->safety_assets->get_ts_assets()->sp_model),
+             FakeTsSpModel());
     has_safety_model_ = true;
   }
   if (params->language_assets) {
@@ -495,12 +506,15 @@ void FakeOnDeviceModelService::LoadTextSafetyModel(
   ts_holder_.Reset(std::move(params), std::move(model));
 }
 
-void FakeOnDeviceModelService::GetDevicePerformanceInfo(
-    GetDevicePerformanceInfoCallback callback) {
-  auto result = mojom::DevicePerformanceInfo::New();
-  result->performance_class = settings_->performance_class;
+void FakeOnDeviceModelService::GetDeviceAndPerformanceInfo(
+    GetDeviceAndPerformanceInfoCallback callback) {
+  auto performance_info = mojom::DevicePerformanceInfo::New();
+  performance_info->performance_class = settings_->performance_class;
+  auto device_info = mojom::DeviceInfo::New();
   base::SequencedTaskRunner::GetCurrentDefault()->PostDelayedTask(
-      FROM_HERE, base::BindOnce(std::move(callback), std::move(result)),
+      FROM_HERE,
+      base::BindOnce(std::move(callback), std::move(performance_info),
+                     std::move(device_info)),
       settings_->estimated_performance_delay);
 }
 

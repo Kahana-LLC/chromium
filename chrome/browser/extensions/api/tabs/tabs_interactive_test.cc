@@ -20,7 +20,8 @@
 #include "chrome/browser/extensions/extension_tab_util.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
-#include "chrome/browser/ui/browser_list.h"
+#include "chrome/browser/ui/browser_finder.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
 #include "chrome/browser/ui/extensions/extension_action_test_helper.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/test/base/in_process_browser_test.h"
@@ -196,7 +197,7 @@ class ExtensionWindowLastFocusedTest : public PlatformAppBrowserTest {
  public:
   void SetUpOnMainThread() override;
 
-  void ActivateBrowserWindow(Browser* browser);
+  void ActivateBrowserWindow(BrowserWindowInterface* browser);
 
   Browser* CreateBrowserWithEmptyTab(bool as_popup);
 
@@ -251,10 +252,11 @@ void ExtensionWindowLastFocusedTest::SetUpOnMainThread() {
   extension_ = ExtensionBuilder("Test").Build();
 }
 
-void ExtensionWindowLastFocusedTest::ActivateBrowserWindow(Browser* browser) {
+void ExtensionWindowLastFocusedTest::ActivateBrowserWindow(
+    BrowserWindowInterface* browser) {
   BrowserView* view = BrowserView::GetBrowserViewForBrowser(browser);
   EXPECT_NE(nullptr, view);
-  views::Widget* widget = view->frame();
+  views::Widget* widget = view->GetWidget();
   EXPECT_NE(nullptr, widget);
   WidgetActivatedWaiter waiter(widget);
   waiter.ActivateAndWait();
@@ -422,7 +424,7 @@ IN_PROC_BROWSER_TEST_F(TabsApiInteractiveTest,
 
   // Navigate to `url1` and ensure the browser is active.
   {
-    ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), url1));
+    ASSERT_TRUE(NavigateToURL(GetActiveWebContents(), url1));
     ui_test_utils::BrowserActivationWaiter activation_waiter(browser());
     browser()->window()->Activate();
     activation_waiter.WaitForActivation();
@@ -467,26 +469,21 @@ IN_PROC_BROWSER_TEST_F(TabsApiInteractiveTest,
                      base::StringPrintf(kBackgroundJs, url2.spec().c_str()));
 
   ResultCatcher result_catcher;
+  ui_test_utils::BrowserCreatedObserver browser_created_observer;
   const Extension* extension = LoadExtension(test_dir.UnpackedPath());
+  BrowserWindowInterface* const new_browser = browser_created_observer.Wait();
   ASSERT_TRUE(extension);
   ASSERT_TRUE(result_catcher.GetNextResult()) << result_catcher.message();
 
   // Now, verify the browsers. There should be exactly two browser windows (the
   // original and the one created by the extension).
-  BrowserList* browser_list = BrowserList::GetInstance();
-  ASSERT_EQ(2u, browser_list->size());
-  ASSERT_TRUE(base::Contains(*browser_list, browser()));
-  // Find the new browser. Be flexible in case BrowserList's internal sort
-  // changes.
-  Browser* new_browser = browser_list->get(0) == browser()
-                             ? browser_list->get(1)
-                             : browser_list->get(0);
+  ASSERT_EQ(2u, chrome::GetTotalBrowserCount());
   EXPECT_NE(new_browser, browser());
 
   // The new browser should have a tab pointed to `url2`; we use this mostly as
   // validation that setup went according to plan.
-  EXPECT_EQ(1, new_browser->tab_strip_model()->count());
-  EXPECT_EQ(url2, new_browser->tab_strip_model()
+  EXPECT_EQ(1, new_browser->GetTabStripModel()->count());
+  EXPECT_EQ(url2, new_browser->GetTabStripModel()
                       ->GetActiveWebContents()
                       ->GetLastCommittedURL());
 
@@ -502,8 +499,8 @@ IN_PROC_BROWSER_TEST_F(TabsApiInteractiveTest,
   // https://crbug.com/1280332, where bubbles are drawn on the same window,
   // but that is yet to be confirmed.
   if (check_window_active_state) {
-    EXPECT_FALSE(new_browser->window()->IsActive());
-    EXPECT_TRUE(browser()->window()->IsActive());
+    EXPECT_FALSE(new_browser->GetWindow()->IsActive());
+    EXPECT_TRUE(browser()->GetWindow()->IsActive());
   }
 
   // The old browser (which retains focus) should be on top of the new browser.
@@ -512,8 +509,8 @@ IN_PROC_BROWSER_TEST_F(TabsApiInteractiveTest,
   // correct, this means we don't have a good regression test for it.
   // TODO(crbug.com/40058935): Fix this.
   // EXPECT_TRUE(views::test::WidgetTest::IsWindowStackedAbove(
-  //     BrowserView::GetBrowserViewForBrowser(browser())->frame(),
-  //     BrowserView::GetBrowserViewForBrowser(new_browser)->frame()));
+  //     BrowserView::GetBrowserViewForBrowser(browser())->browser_widget(),
+  //     BrowserView::GetBrowserViewForBrowser(new_browser)->browser_widget()));
 }
 
 // Test for crbug.com/405283740
@@ -585,9 +582,8 @@ IN_PROC_BROWSER_TEST_F(TabsApiInteractiveTest,
       << "Listener failed to hear from popup.";
 
   // Additional Verification.
-  BrowserList* browser_list = BrowserList::GetInstance();
   // We should have the original browser and the new one
-  ASSERT_EQ(2u, browser_list->size());
+  ASSERT_EQ(2u, chrome::GetTotalBrowserCount());
 
   // Check Z-Order.
   // Under the hood, the original browser was temporarily pinned to the front by

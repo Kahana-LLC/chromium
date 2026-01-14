@@ -6,6 +6,7 @@
 #define DEVICE_VR_ANDROID_CARDBOARD_CARDBOARD_RENDER_LOOP_H_
 
 #include <memory>
+
 #include "base/android/java_handler_thread.h"
 #include "base/memory/scoped_refptr.h"
 #include "device/vr/android/cardboard/scoped_cardboard_objects.h"
@@ -17,7 +18,7 @@
 #include "mojo/public/cpp/bindings/receiver.h"
 #include "mojo/public/cpp/bindings/remote.h"
 #include "ui/display/display.h"
-#include "ui/gfx/native_widget_types.h"
+#include "ui/gfx/native_ui_types.h"
 
 namespace gl {
 class GLSurface;
@@ -70,9 +71,9 @@ class CardboardRenderLoop : public base::android::JavaHandlerThread,
                          const gfx::Size& source_size) override;
   void SubmitFrameMissing(int16_t frame_index, const gpu::SyncToken&) override;
   void SubmitFrame(int16_t frame_index,
-                   const gpu::MailboxHolder& mailbox,
                    base::TimeDelta time_waited) override;
   void SubmitFrameDrawnIntoTexture(int16_t frame_index,
+                                   const std::vector<LayerId>& layer_ids,
                                    const gpu::SyncToken&,
                                    base::TimeDelta time_waited) override;
 
@@ -100,8 +101,6 @@ class CardboardRenderLoop : public base::android::JavaHandlerThread,
 
   bool IsSubmitFrameExpected(int16_t frame_index);
 
-  void ProcessFrameFromMailbox(int16_t frame_index,
-                               const gpu::MailboxHolder& mailbox);
   void ProcessFrameDrawnIntoTexture(const gpu::SyncToken& sync_token);
   void OnWebXrTokenSignaled(std::unique_ptr<gfx::GpuFence> gpu_fence);
 

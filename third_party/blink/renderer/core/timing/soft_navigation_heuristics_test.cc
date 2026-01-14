@@ -7,30 +7,27 @@
 #include <memory>
 
 #include "base/notreached.h"
+#include "base/test/metrics/histogram_tester.h"
 #include "base/time/time.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/common/scheduler/task_attribution_id.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_core.h"
-#include "third_party/blink/renderer/bindings/core/v8/v8_keyboard_event_init.h"
-#include "third_party/blink/renderer/bindings/core/v8/v8_mouse_event_init.h"
 #include "third_party/blink/renderer/core/dom/events/event.h"
 #include "third_party/blink/renderer/core/event_type_names.h"
-#include "third_party/blink/renderer/core/events/keyboard_event.h"
-#include "third_party/blink/renderer/core/events/mouse_event.h"
-#include "third_party/blink/renderer/core/html/html_body_element.h"
 #include "third_party/blink/renderer/core/html/html_div_element.h"
 #include "third_party/blink/renderer/core/paint/timing/paint_timing_record.h"
 #include "third_party/blink/renderer/core/testing/dummy_page_holder.h"
 #include "third_party/blink/renderer/core/timing/soft_navigation_context.h"
+#include "third_party/blink/renderer/core/timing/soft_navigation_heuristics_test_util.h"
 #include "third_party/blink/renderer/platform/bindings/script_state.h"
 #include "third_party/blink/renderer/platform/heap/thread_state.h"
 #include "third_party/blink/renderer/platform/scheduler/public/task_attribution_info.h"
 #include "third_party/blink/renderer/platform/scheduler/public/task_attribution_tracker.h"
 #include "third_party/blink/renderer/platform/testing/task_environment.h"
+
 namespace blink {
 
 using TaskScope = scheduler::TaskAttributionTracker::TaskScope;
-using TaskScopeType = scheduler::TaskAttributionTracker::TaskScopeType;
 
 class SoftNavigationHeuristicsTest : public testing::Test {
  protected:
@@ -58,42 +55,11 @@ class SoftNavigationHeuristicsTest : public testing::Test {
     return ToScriptStateForMainWorld(GetDocument().GetFrame());
   }
 
-  static AtomicString KeyboardEventScopeTypeToEventName(
-      SoftNavigationHeuristics::EventScope::Type type) {
-    switch (type) {
-      case SoftNavigationHeuristics::EventScope::Type::kKeydown:
-        return event_type_names::kKeydown;
-      case SoftNavigationHeuristics::EventScope::Type::kKeypress:
-        return event_type_names::kKeypress;
-      case SoftNavigationHeuristics::EventScope::Type::kKeyup:
-        return event_type_names::kKeyup;
-      default:
-        NOTREACHED();
-    }
-  }
-
   Event* CreateEvent(SoftNavigationHeuristics::EventScope::Type type) {
-    Event* event = nullptr;
-    switch (type) {
-      case SoftNavigationHeuristics::EventScope::Type::kKeydown:
-      case SoftNavigationHeuristics::EventScope::Type::kKeypress:
-      case SoftNavigationHeuristics::EventScope::Type::kKeyup:
-        event = KeyboardEvent::Create(GetScriptStateForTest(),
-                                      KeyboardEventScopeTypeToEventName(type),
-                                      KeyboardEventInit::Create());
-        event->SetTarget(MakeGarbageCollected<HTMLBodyElement>(GetDocument()));
-        break;
-      case SoftNavigationHeuristics::EventScope::Type::kClick:
-        event = MouseEvent::Create(GetScriptStateForTest(),
-                                   event_type_names::kClick,
-                                   MouseEventInit::Create());
-        break;
-      case SoftNavigationHeuristics::EventScope::Type::kNavigate:
-        event = Event::Create(event_type_names::kNavigate);
-        break;
-    }
-    event->SetTrusted(true);
-    return event;
+    // Event scopes are only created for keyboard events that target <body>. Use
+    // this for all types since this has no effect for other types.
+    return CreateEventForEventScopeType(type, GetScriptStateForTest(),
+                                        GetDocument().body());
   }
 
  private:
@@ -112,10 +78,12 @@ TEST_F(SoftNavigationHeuristicsTest,
   auto* event =
       CreateEvent(SoftNavigationHeuristics::EventScope::Type::kKeypress);
   std::optional<SoftNavigationHeuristics::EventScope> event_scope(
-      test_heuristics->MaybeCreateEventScopeForEvent(*event));
+      test_heuristics->MaybeCreateEventScopeForInputEvent(*event));
 }
 
 TEST_F(SoftNavigationHeuristicsTest, ResetHeuristicOnSetBecameEmpty) {
+  base::HistogramTester histogram_tester;
+
   auto* heuristics = CreateSoftNavigationHeuristicsForTest();
   ASSERT_TRUE(heuristics);
 
@@ -129,8 +97,14 @@ TEST_F(SoftNavigationHeuristicsTest, ResetHeuristicOnSetBecameEmpty) {
     auto* event =
         CreateEvent(SoftNavigationHeuristics::EventScope::Type::kClick);
     std::optional<SoftNavigationHeuristics::EventScope> event_scope(
-        heuristics->MaybeCreateEventScopeForEvent(*event));
+        heuristics->MaybeCreateEventScopeForInputEvent(*event));
     root_task_state = tracker->CurrentTaskState();
+
+    // Set the URL so a histogram entry gets logged. Do this directly through
+    // the context to avoid other objects holding a reference to it, which would
+    // prevent garbage collection.
+    root_task_state->GetSoftNavigationContext()->AddUrl(
+        "foo", base::UnguessableToken::Create());
   }
   EXPECT_TRUE(root_task_state);
   EXPECT_TRUE(heuristics->IsTrackingSoftNavigationsForTest());
@@ -138,8 +112,9 @@ TEST_F(SoftNavigationHeuristicsTest, ResetHeuristicOnSetBecameEmpty) {
   // Simulate a descendant task.
   Persistent<scheduler::TaskAttributionInfo> descendant_task_state = nullptr;
   {
-    TaskScope task_scope =
-        tracker->CreateTaskScope(root_task_state, TaskScopeType::kCallback);
+    std::optional<TaskScope> task_scope =
+        tracker->SetCurrentTaskStateIfTopLevel(root_task_state,
+                                               TaskScopeType::kCallback);
     descendant_task_state = tracker->CurrentTaskState();
   }
   EXPECT_TRUE(descendant_task_state);
@@ -152,19 +127,23 @@ TEST_F(SoftNavigationHeuristicsTest, ResetHeuristicOnSetBecameEmpty) {
   // The heuristics still should not have been reset since there is a live
   // root task, which is being held onto by its descendant task.
   EXPECT_TRUE(heuristics->IsTrackingSoftNavigationsForTest());
+  histogram_tester.ExpectTotalCount("PageLoad.Internal.SoftNavigationOutcome",
+                                    0);
 
   // Finally, this should allow the click task to be GCed, which should cause
   // the heuristics to be reset.
   descendant_task_state = nullptr;
   ThreadState::Current()->CollectAllGarbageForTesting();
   EXPECT_FALSE(heuristics->IsTrackingSoftNavigationsForTest());
+  histogram_tester.ExpectTotalCount("PageLoad.Internal.SoftNavigationOutcome",
+                                    1);
 }
 
 TEST_F(SoftNavigationHeuristicsTest, NestedEventScopesAreMerged) {
   auto* heuristics = CreateSoftNavigationHeuristicsForTest();
   auto* event = CreateEvent(SoftNavigationHeuristics::EventScope::Type::kClick);
   std::optional<SoftNavigationHeuristics::EventScope> outer_event_scope(
-      heuristics->MaybeCreateEventScopeForEvent(*event));
+      heuristics->MaybeCreateEventScopeForInputEvent(*event));
   auto* tracker = scheduler::TaskAttributionTracker::From(GetIsolate());
   ASSERT_TRUE(tracker);
 
@@ -175,7 +154,7 @@ TEST_F(SoftNavigationHeuristicsTest, NestedEventScopesAreMerged) {
   auto* inner_event =
       CreateEvent(SoftNavigationHeuristics::EventScope::Type::kNavigate);
   std::optional<SoftNavigationHeuristics::EventScope> inner_event_scope(
-      heuristics->MaybeCreateEventScopeForEvent(*inner_event));
+      heuristics->MaybeCreateEventScopeForInputEvent(*inner_event));
 
   SoftNavigationContext* context2 =
       tracker->CurrentTaskState()->GetSoftNavigationContext();
@@ -189,7 +168,7 @@ TEST_F(SoftNavigationHeuristicsTest, EventAfterSoftNavDetection) {
   auto* outer_event =
       CreateEvent(SoftNavigationHeuristics::EventScope::Type::kClick);
   std::optional<SoftNavigationHeuristics::EventScope> outer_event_scope(
-      heuristics->MaybeCreateEventScopeForEvent(*outer_event));
+      heuristics->MaybeCreateEventScopeForInputEvent(*outer_event));
   auto* tracker = scheduler::TaskAttributionTracker::From(GetIsolate());
   ASSERT_TRUE(tracker);
 
@@ -198,12 +177,15 @@ TEST_F(SoftNavigationHeuristicsTest, EventAfterSoftNavDetection) {
   heuristics->ModifiedDOM(CreateNodeForTest());
 
   // Simulate default action link navigation after the click event.
-  heuristics->SameDocumentNavigationCommitted("foo", context);
+  heuristics->SameDocumentNavigationCommitted(
+      "foo",
+      /*same_document_metrics_token=*/base::UnguessableToken::Create(),
+      context);
   {
     auto* inner_event =
         CreateEvent(SoftNavigationHeuristics::EventScope::Type::kNavigate);
     std::optional<SoftNavigationHeuristics::EventScope> inner_event_scope(
-        heuristics->MaybeCreateEventScopeForEvent(*inner_event));
+        heuristics->MaybeCreateEventScopeForInputEvent(*inner_event));
   }
 }
 
@@ -217,7 +199,7 @@ TEST_F(SoftNavigationHeuristicsTest,
     auto* event =
         CreateEvent(SoftNavigationHeuristics::EventScope::Type::kClick);
     std::optional<SoftNavigationHeuristics::EventScope> event_scope(
-        heuristics->MaybeCreateEventScopeForEvent(*event));
+        heuristics->MaybeCreateEventScopeForInputEvent(*event));
   }
   // At this point there is a single `SoftNavigationContext` being tracked, but
   // it wasn't propagated anywhere, so it is eligible for GC.
@@ -225,7 +207,7 @@ TEST_F(SoftNavigationHeuristicsTest,
 
   auto* event = CreateEvent(SoftNavigationHeuristics::EventScope::Type::kClick);
   std::optional<SoftNavigationHeuristics::EventScope> event_scope(
-      heuristics->MaybeCreateEventScopeForEvent(*event));
+      heuristics->MaybeCreateEventScopeForInputEvent(*event));
 
   // If GC occurs here, e.g. during a blink allocation, the heuristic should not
   // be reset, otherwise the `SoftNavigationContext` created above will be
@@ -255,14 +237,17 @@ TEST_F(SoftNavigationHeuristicsTest, SoftNavigationEmittedOnlyOnce) {
     auto* event =
         CreateEvent(SoftNavigationHeuristics::EventScope::Type::kClick);
     std::optional<SoftNavigationHeuristics::EventScope> event_scope(
-        heuristics->MaybeCreateEventScopeForEvent(*event));
+        heuristics->MaybeCreateEventScopeForInputEvent(*event));
     task_state = tracker->CurrentTaskState();
     ASSERT_TRUE(task_state);
     context = task_state->GetSoftNavigationContext();
     ASSERT_TRUE(context);
 
     EXPECT_FALSE(context->SatisfiesSoftNavNonPaintCriteria());
-    heuristics->SameDocumentNavigationCommitted("foo.html", context);
+    heuristics->SameDocumentNavigationCommitted(
+        "foo.html",
+        /*same_document_metrics_token=*/base::UnguessableToken::Create(),
+        context);
     heuristics->ModifiedDOM(node1);
     EXPECT_FALSE(context->SatisfiesSoftNavNonPaintCriteria());
   }
@@ -271,33 +256,34 @@ TEST_F(SoftNavigationHeuristicsTest, SoftNavigationEmittedOnlyOnce) {
 
   // Simulate a paint in a separate task.
   {
-    TextRecord* record = MakeGarbageCollected<TextRecord>(
-        node1, 0, gfx::RectF(1000, 1000), gfx::Rect(1000, 1000),
-        gfx::RectF(1000, 1000),
-        /* frame_index= */ 0,
-        /* is_needed_for_timing= */ false, context);
+    TextRecord* record = CreateTextRecordForTest(node1, 1000, 1000, context);
+    record->SetPaintTime(/*paint_time=*/base::TimeTicks::Now(),
+                         /*info=*/DOMPaintTimingInfo());
     context->AddPaintedArea(record);
     heuristics->OnPaintFinished();
     EXPECT_TRUE(context->SatisfiesSoftNavPaintCriteria(1));
+    EXPECT_TRUE(context->HasFirstContentfulPaint());
     EXPECT_EQ(heuristics->SoftNavigationCount(), 1u);
   }
 
   // Simulate another task for the same context, which does a second soft-nav
   {
     std::optional<TaskScope> task_scope =
-        tracker->MaybeCreateTaskScopeForCallback(task_state);
+        tracker->SetCurrentTaskStateIfTopLevel(task_state,
+                                               TaskScopeType::kCallback);
     EXPECT_EQ(tracker->CurrentTaskState()->GetSoftNavigationContext(), context);
-    heuristics->SameDocumentNavigationCommitted("bar.html", context);
+    heuristics->SameDocumentNavigationCommitted(
+        "bar.html",
+        /*same_document_metrics_token=*/base::UnguessableToken::Create(),
+        context);
     heuristics->ModifiedDOM(node2);
   }
 
   // And another paint
   {
-    TextRecord* record = MakeGarbageCollected<TextRecord>(
-        node2, 0, gfx::RectF(1000, 1000), gfx::Rect(1000, 1000),
-        gfx::RectF(1000, 1000),
-        /* frame_index= */ 0,
-        /* is_needed_for_timing= */ false, context);
+    TextRecord* record = CreateTextRecordForTest(node2, 1000, 1000, context);
+    record->SetPaintTime(/*paint_time=*/base::TimeTicks::Now(),
+                         /*info=*/DOMPaintTimingInfo());
     context->AddPaintedArea(record);
     heuristics->OnPaintFinished();
     EXPECT_TRUE(context->SatisfiesSoftNavPaintCriteria(1));
@@ -323,7 +309,7 @@ TEST_F(SoftNavigationHeuristicsTest, AsyncSameDocumentNavigation) {
     auto* event =
         CreateEvent(SoftNavigationHeuristics::EventScope::Type::kClick);
     std::optional<SoftNavigationHeuristics::EventScope> event_scope(
-        heuristics->MaybeCreateEventScopeForEvent(*event));
+        heuristics->MaybeCreateEventScopeForInputEvent(*event));
     task_state = tracker->CurrentTaskState();
     ASSERT_TRUE(task_state);
     context = task_state->GetSoftNavigationContext();
@@ -335,7 +321,8 @@ TEST_F(SoftNavigationHeuristicsTest, AsyncSameDocumentNavigation) {
   std::optional<scheduler::TaskAttributionId> navigation_task_id;
   {
     std::optional<TaskScope> task_scope =
-        tracker->MaybeCreateTaskScopeForCallback(task_state);
+        tracker->SetCurrentTaskStateIfTopLevel(task_state,
+                                               TaskScopeType::kCallback);
     navigation_task_id = tracker->AsyncSameDocumentNavigationStarted();
   }
   ASSERT_TRUE(navigation_task_id);
@@ -346,7 +333,10 @@ TEST_F(SoftNavigationHeuristicsTest, AsyncSameDocumentNavigation) {
   EXPECT_EQ(task_state->GetSoftNavigationContext(), context);
 
   EXPECT_FALSE(context->HasUrl());
-  heuristics->SameDocumentNavigationCommitted("foo.html", context);
+  heuristics->SameDocumentNavigationCommitted(
+      "foo.html",
+      /*same_document_metrics_token=*/base::UnguessableToken::Create(),
+      context);
   EXPECT_TRUE(context->HasUrl());
 }
 
@@ -366,10 +356,13 @@ TEST_F(SoftNavigationHeuristicsTest, AsyncSameDocumentNavigationNoContext) {
 
   // Simulate committing the same-document navigation asynchronously without a
   // `SoftNavigationContext`. This shouldn't crash.
-  heuristics->SameDocumentNavigationCommitted("foo.html", /*context=*/nullptr);
+  heuristics->SameDocumentNavigationCommitted(
+      "foo.html",
+      /*same_document_metrics_token=*/base::UnguessableToken::Create(),
+      /*context=*/nullptr);
 }
 
-TEST_F(SoftNavigationHeuristicsTest, MaybeCreateEventScopeForEvent) {
+TEST_F(SoftNavigationHeuristicsTest, MaybeCreateEventScopeForInputEvent) {
   auto* heuristics = CreateSoftNavigationHeuristicsForTest();
 
   for (unsigned type = 0;
@@ -378,8 +371,11 @@ TEST_F(SoftNavigationHeuristicsTest, MaybeCreateEventScopeForEvent) {
        type++) {
     auto* event = CreateEvent(
         static_cast<SoftNavigationHeuristics::EventScope::Type>(type));
-    auto event_scope = heuristics->MaybeCreateEventScopeForEvent(*event);
-    EXPECT_TRUE(event_scope);
+    auto event_scope = heuristics->MaybeCreateEventScopeForInputEvent(*event);
+    bool is_navigate =
+        type == static_cast<unsigned>(
+                    SoftNavigationHeuristics::EventScope::Type::kNavigate);
+    EXPECT_EQ(!event_scope, is_navigate);
   }
 
   // Untrusted events should be ignored.
@@ -387,21 +383,21 @@ TEST_F(SoftNavigationHeuristicsTest, MaybeCreateEventScopeForEvent) {
       CreateEvent(SoftNavigationHeuristics::EventScope::Type::kClick);
   event->SetTrusted(false);
   std::optional<SoftNavigationHeuristics::EventScope> event_scope =
-      heuristics->MaybeCreateEventScopeForEvent(*event);
+      heuristics->MaybeCreateEventScopeForInputEvent(*event);
   EXPECT_FALSE(event_scope);
 
   // Unrelated events should be ignored.
   event = Event::Create(event_type_names::kDrag);
-  event_scope = heuristics->MaybeCreateEventScopeForEvent(*event);
+  event_scope = heuristics->MaybeCreateEventScopeForInputEvent(*event);
   EXPECT_FALSE(event_scope);
 
   // Keyboard events without a target or that target a non-body element should
   // be ignored.
   event = Event::Create(event_type_names::kKeydown);
-  event_scope = heuristics->MaybeCreateEventScopeForEvent(*event);
+  event_scope = heuristics->MaybeCreateEventScopeForInputEvent(*event);
   EXPECT_FALSE(event_scope);
   event->SetTarget(MakeGarbageCollected<HTMLDivElement>(GetDocument()));
-  event_scope = heuristics->MaybeCreateEventScopeForEvent(*event);
+  event_scope = heuristics->MaybeCreateEventScopeForInputEvent(*event);
   EXPECT_FALSE(event_scope);
 }
 

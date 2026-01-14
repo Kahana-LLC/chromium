@@ -27,6 +27,7 @@
 #include "third_party/blink/renderer/core/css/css_style_rule.h"
 #include "third_party/blink/renderer/core/css/css_style_sheet.h"
 #include "third_party/blink/renderer/core/css/css_test_helpers.h"
+#include "third_party/blink/renderer/core/css/media_feature_names.h"
 #include "third_party/blink/renderer/core/css/media_query_list.h"
 #include "third_party/blink/renderer/core/css/media_query_list_listener.h"
 #include "third_party/blink/renderer/core/css/media_query_matcher.h"
@@ -4117,13 +4118,13 @@ TEST_F(StyleEngineTest, HasViewportUnitFlags) {
     auto holder = std::make_unique<DummyPageHolder>(gfx::Size(800, 600));
     Document& document = holder->GetDocument();
     document.body()->SetInnerHTMLWithoutTrustedTypes(
-        String::Format(R"HTML(
+        UNSAFE_TODO(String::Format(R"HTML(
       <style>
         div { width: %s; }
       </style>
       <div id=target></div>
     )HTML",
-                       data.value));
+                                   data.value)));
     document.View()->UpdateAllLifecyclePhasesForTest();
 
     Element* target = document.getElementById(AtomicString("target"));
@@ -4288,13 +4289,13 @@ TEST_F(StyleEngineTest, MediaQueriesChangeDisplayState) {
             GetDocument().body()->GetComputedStyle()->VisitedDependentColor(
                 GetCSSPropertyBackgroundColor()));
 
-  WTF::Vector<std::pair<ui::mojom::blink::WindowShowState, Color>> test_cases =
-      {{ui::mojom::blink::WindowShowState::kMinimized,
-        Color::FromRGB(/*cyan*/ 0, 255, 255)},
-       {ui::mojom::blink::WindowShowState::kMaximized,
-        Color::FromRGB(/*red*/ 255, 0, 0)},
-       {ui::mojom::blink::WindowShowState::kFullscreen,
-        Color::FromRGB(/*blue*/ 0, 0, 255)}};
+  Vector<std::pair<ui::mojom::blink::WindowShowState, Color>> test_cases = {
+      {ui::mojom::blink::WindowShowState::kMinimized,
+       Color::FromRGB(/*cyan*/ 0, 255, 255)},
+      {ui::mojom::blink::WindowShowState::kMaximized,
+       Color::FromRGB(/*red*/ 255, 0, 0)},
+      {ui::mojom::blink::WindowShowState::kFullscreen,
+       Color::FromRGB(/*blue*/ 0, 0, 255)}};
 
   for (const auto& [show_state, color] : test_cases) {
     GetFrame().GetSettings()->SetWindowShowState(show_state);
@@ -4503,6 +4504,50 @@ TEST_F(StyleEngineSimTest, ColorSchemeBaseBackgroundWhileRenderBlocking) {
 
   main_resource.Finish();
   css_resource.Finish();
+}
+
+TEST_F(StyleEngineSimTest, AboutBlankPageRespectsDarkModeOnUserActionFeature) {
+  // This test refers to AboutBlankPageRespectsDarkModeOnUserAction feature
+  // flag.
+
+  ScopedAboutBlankPageRespectsDarkModeOnUserActionForTest forced_scoped_feature(
+      false);
+
+  LoadURL("about:blank");
+  ColorSchemeHelper color_scheme_helper(GetDocument());
+  color_scheme_helper.SetPreferredColorScheme(
+      mojom::blink::PreferredColorScheme::kDark);
+
+  test::RunPendingTasks();
+  Compositor().BeginFrame();
+
+  EXPECT_EQ(Color::kWhite, GetDocument().View()->BaseBackgroundColor());
+}
+
+TEST_F(StyleEngineSimTest, AboutBlankPageRespectsUserPreferredColorScheme) {
+  // This refers to opening about:blank likely via non-programmatic means.
+  // We do this to apply DarkMode to newly opened tabs and user initiated
+  // navigations directly to about:blank.
+  // See: https://issues.chromium.org/issues/40190899.
+
+  LoadURL("about:blank");
+  ColorSchemeHelper color_scheme_helper(GetDocument());
+  // Set preferred color scheme to light.
+  color_scheme_helper.SetPreferredColorScheme(
+      mojom::blink::PreferredColorScheme::kLight);
+  test::RunPendingTasks();
+  Compositor().BeginFrame();
+
+  EXPECT_EQ(Color::kWhite, GetDocument().View()->BaseBackgroundColor());
+
+  // Set preferred color scheme to dark.
+  color_scheme_helper.SetPreferredColorScheme(
+      mojom::blink::PreferredColorScheme::kDark);
+  test::RunPendingTasks();
+  Compositor().BeginFrame();
+
+  EXPECT_EQ(Color(0x12, 0x12, 0x12),
+            GetDocument().View()->BaseBackgroundColor());
 }
 
 TEST_F(StyleEngineSimTest, IFramePreferredColorScheme) {
@@ -7407,7 +7452,7 @@ TEST_F(StyleEngineTest, CreateUnconnectedRuleSetMedia) {
       GetStyleEngine().CreateUnconnectedRuleSet(*sheet, /*mixins=*/{}));
 }
 
-TEST_F(StyleEngineTest, HasComplexSafaAreaConstraints) {
+TEST_F(StyleEngineTest, HasComplexSafeAreaConstraints) {
   ScopedUpdateComplexSafaAreaConstraintsForTest
       update_complex_safe_area_constraints(true);
 
@@ -7418,19 +7463,19 @@ TEST_F(StyleEngineTest, HasComplexSafaAreaConstraints) {
     <div style="padding-bottom: 30px" />
   )HTML");
   UpdateAllLifecyclePhases();
-  EXPECT_FALSE(GetStyleEngine().HasComplexSafaAreaConstraints());
+  EXPECT_FALSE(GetStyleEngine().HasComplexSafeAreaConstraints());
 
   GetDocument().body()->SetInnerHTMLWithoutTrustedTypes(R"HTML(
     <div style="padding-bottom: env(safe-area-inset-bottom)" />
   )HTML");
   UpdateAllLifecyclePhases();
-  EXPECT_FALSE(GetStyleEngine().HasComplexSafaAreaConstraints());
+  EXPECT_FALSE(GetStyleEngine().HasComplexSafeAreaConstraints());
 
   GetDocument().body()->SetInnerHTMLWithoutTrustedTypes(R"HTML(
     <div style="height: calc(env(safe-area-inset-bottom) + 30px)" />
   )HTML");
   UpdateAllLifecyclePhases();
-  EXPECT_FALSE(GetStyleEngine().HasComplexSafaAreaConstraints());
+  EXPECT_FALSE(GetStyleEngine().HasComplexSafeAreaConstraints());
 
   // (b) Any styles that are 'bottom' anchored, may have complex safe area
   // constraints depending on the following usages.
@@ -7441,7 +7486,7 @@ TEST_F(StyleEngineTest, HasComplexSafaAreaConstraints) {
     <div style="bottom: 5px; padding-bottom: 30px" />
   )HTML");
   UpdateAllLifecyclePhases();
-  EXPECT_FALSE(GetStyleEngine().HasComplexSafaAreaConstraints());
+  EXPECT_FALSE(GetStyleEngine().HasComplexSafeAreaConstraints());
 
   // When a style property other than 'bottom' uses env(safe-area-inset-bottom),
   // there are complex safe area constraints.
@@ -7449,7 +7494,7 @@ TEST_F(StyleEngineTest, HasComplexSafaAreaConstraints) {
     <div style="bottom: 5px; padding-bottom: env(safe-area-inset-bottom)" />
   )HTML");
   UpdateAllLifecyclePhases();
-  EXPECT_TRUE(GetStyleEngine().HasComplexSafaAreaConstraints());
+  EXPECT_TRUE(GetStyleEngine().HasComplexSafeAreaConstraints());
 
   // When the 'bottom' style property uses env(safe-area-inset-bottom)
   // as defined under 'IsBottomRelativeToSafeAreaInset' in
@@ -7459,7 +7504,7 @@ TEST_F(StyleEngineTest, HasComplexSafaAreaConstraints) {
     <div style="bottom: env(safe-area-inset-bottom)" />
   )HTML");
   UpdateAllLifecyclePhases();
-  EXPECT_FALSE(GetStyleEngine().HasComplexSafaAreaConstraints());
+  EXPECT_FALSE(GetStyleEngine().HasComplexSafeAreaConstraints());
 
   // When a style property other than 'bottom' uses calc() with
   // env(safe-area-inset-bottom), there are complex safe area constraints.
@@ -7467,7 +7512,7 @@ TEST_F(StyleEngineTest, HasComplexSafaAreaConstraints) {
     <div style="bottom: 5px; height: calc(env(safe-area-inset-bottom) + 30px)" />
   )HTML");
   UpdateAllLifecyclePhases();
-  EXPECT_TRUE(GetStyleEngine().HasComplexSafaAreaConstraints());
+  EXPECT_TRUE(GetStyleEngine().HasComplexSafeAreaConstraints());
 }
 
 TEST_F(StyleEngineTest, HasComplexSafaAreaConstraintsNestedBottom) {
@@ -7485,7 +7530,7 @@ TEST_F(StyleEngineTest, HasComplexSafaAreaConstraintsNestedBottom) {
     </div>
   )HTML");
   UpdateAllLifecyclePhases();
-  EXPECT_FALSE(GetStyleEngine().HasComplexSafaAreaConstraints());
+  EXPECT_FALSE(GetStyleEngine().HasComplexSafeAreaConstraints());
 
   // When a style property other than 'bottom' uses env(safe-area-inset-bottom),
   // there are complex safe area constraints.
@@ -7495,7 +7540,7 @@ TEST_F(StyleEngineTest, HasComplexSafaAreaConstraintsNestedBottom) {
     </div>
   )HTML");
   UpdateAllLifecyclePhases();
-  EXPECT_TRUE(GetStyleEngine().HasComplexSafaAreaConstraints());
+  EXPECT_TRUE(GetStyleEngine().HasComplexSafeAreaConstraints());
 
   // When the 'bottom' style property uses env(safe-area-inset-bottom)
   // as defined under 'IsBottomRelativeToSafeAreaInset' in
@@ -7507,7 +7552,7 @@ TEST_F(StyleEngineTest, HasComplexSafaAreaConstraintsNestedBottom) {
     </div>
   )HTML");
   UpdateAllLifecyclePhases();
-  EXPECT_FALSE(GetStyleEngine().HasComplexSafaAreaConstraints());
+  EXPECT_FALSE(GetStyleEngine().HasComplexSafeAreaConstraints());
 
   // When a style property other than 'bottom' uses calc() with
   // env(safe-area-inset-bottom), there are complex safe area constraints.
@@ -7517,7 +7562,7 @@ TEST_F(StyleEngineTest, HasComplexSafaAreaConstraintsNestedBottom) {
     </div>
   )HTML");
   UpdateAllLifecyclePhases();
-  EXPECT_TRUE(GetStyleEngine().HasComplexSafaAreaConstraints());
+  EXPECT_TRUE(GetStyleEngine().HasComplexSafeAreaConstraints());
 }
 
 TEST_F(StyleEngineTest, ScrollStateUseCounter) {
@@ -7556,6 +7601,49 @@ TEST_F(StyleEngineTest, MissingVarArgument_IdentFunctionDisabled) {
     <div></div>
   )HTML");
   UpdateAllLifecyclePhasesForTest();
+}
+
+TEST_F(StyleEngineTest, UpdateRootFontRelativeUnits_NoRecalcForNonInherited) {
+  GetDocument().body()->SetInnerHTMLWithoutTrustedTypes(R"HTML(
+    <style>
+      :root { font-family: sans-serif; font-size: 16px; }
+      div { width: 10rem; height: 100ch; }
+    </style>
+    <div></div>
+    <div></div>
+    <div></div>
+    <div></div>
+    <div></div>
+    <div></div>
+    <div></div>
+    <div></div>
+    <div></div>
+  )HTML");
+
+  UpdateAllLifecyclePhasesForTest();
+
+  // Verify that the document is using root font-relative units (rem).
+  ASSERT_TRUE(GetStyleEngine().UsesRootFontRelativeUnits())
+      << "Document should be using root font-relative units (rem)";
+  // Also verify glyph-relative units (ch) are tracked.
+  ASSERT_TRUE(GetStyleEngine().UsesGlyphRelativeUnits())
+      << "Document should be using glyph-relative units (ch)";
+
+  unsigned before_count = GetStyleEngine().StyleForElementCount();
+
+  Element* root = GetDocument().documentElement();
+  ASSERT_TRUE(root);
+  root->SetInlineStyleProperty(CSSPropertyID::kBackgroundColor, "green");
+
+  UpdateAllLifecyclePhasesForTest();
+
+  unsigned after_count = GetStyleEngine().StyleForElementCount();
+
+  // Only the root element should be restyled since background-color is
+  // non-inherited and doesn't affect font metrics (which would impact rem/ch).
+  EXPECT_EQ(1u, after_count - before_count)
+      << "Changing root background-color should not trigger recalc cascade for "
+         "descendant elements using rem/ch units";
 }
 
 }  // namespace blink

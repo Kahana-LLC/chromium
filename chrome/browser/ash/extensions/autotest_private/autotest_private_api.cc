@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "chrome/browser/ash/extensions/autotest_private/autotest_private_api.h"
 
 #include <algorithm>
@@ -84,7 +79,6 @@
 #include "base/timer/timer.h"
 #include "base/values.h"
 #include "build/build_config.h"
-#include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/apps/app_service/app_service_proxy.h"
 #include "chrome/browser/apps/app_service/app_service_proxy_factory.h"
 #include "chrome/browser/ash/app_list/arc/arc_app_list_prefs.h"
@@ -148,11 +142,6 @@
 #include "chrome/browser/ui/ash/shelf/shelf_spinner_controller.h"
 #include "chrome/browser/ui/ash/system_web_apps/system_web_app_ui_utils.h"
 #include "chrome/browser/ui/aura/accessibility/automation_manager_aura.h"
-#include "chrome/browser/ui/browser.h"
-#include "chrome/browser/ui/browser_commands.h"
-#include "chrome/browser/ui/browser_list.h"
-#include "chrome/browser/ui/browser_tabstrip.h"
-#include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/toolbar/app_menu_model.h"
 #include "chrome/browser/ui/views/bruschetta/bruschetta_installer_view.h"
 #include "chrome/browser/ui/views/crostini/crostini_uninstaller_view.h"
@@ -234,6 +223,7 @@
 #include "ui/aura/env.h"
 #include "ui/aura/window.h"
 #include "ui/aura/window_observer.h"
+#include "ui/aura/window_tracker.h"
 #include "ui/aura/window_tree_host.h"
 #include "ui/base/clipboard/clipboard.h"
 #include "ui/base/clipboard/scoped_clipboard_writer.h"
@@ -286,7 +276,7 @@ constexpr char kCrostiniNotAvailableForCurrentUserError[] =
     "Crostini is not available for the current user";
 
 NOINLINE int AccessArray(const int arr[], const int* index) {
-  return arr[*index];
+  return UNSAFE_TODO(arr[*index]);
 }
 
 base::Value::List GetHostPermissions(const Extension* ext,
@@ -687,7 +677,9 @@ api::autotest_private::WindowStateType ToWindowStateType(
       return api::autotest_private::WindowStateType::kSecondarySnapped;
     case chromeos::WindowStateType::kPinned:
       return api::autotest_private::WindowStateType::kPinned;
-    case chromeos::WindowStateType::kTrustedPinned:
+    case chromeos::WindowStateType::kLockedFullscreen:
+      // TODO(crbug.com/429215055): Rename to 'LockedFullscreen'. Update the IDL
+      // as well.
       return api::autotest_private::WindowStateType::kTrustedPinned;
     case chromeos::WindowStateType::kPip:
       return api::autotest_private::WindowStateType::kPip;
@@ -701,7 +693,7 @@ api::autotest_private::WindowStateType ToWindowStateType(
 std::string GetPngDataAsString(scoped_refptr<base::RefCountedMemory> png_data) {
   // Base64 encode the result so we can return it as a string.
   std::string base64_png(png_data->front(),
-                        png_data->front() + png_data->size());
+                         UNSAFE_TODO(png_data->front() + png_data->size()));
   return base::Base64Encode(base64_png);
 }
 
@@ -782,15 +774,18 @@ aura::Window* FindAppWindowById(const int64_t id) {
 }
 
 // Returns the first available Browser that is not a web app.
-Browser* GetFirstRegularBrowser() {
-  const BrowserList* list = BrowserList::GetInstance();
-  const web_app::AppBrowserController* (Browser::*app_controller)() const =
-      &Browser::app_controller;
-  auto iter = std::ranges::find(*list, nullptr, app_controller);
-  if (iter == list->end()) {
-    return nullptr;
-  }
-  return *iter;
+ash::BrowserDelegate* GetFirstRegularBrowser() {
+  ash::BrowserDelegate* result = nullptr;
+  ash::BrowserController::GetInstance()->ForEachBrowser(
+      ash::BrowserController::BrowserOrder::kAscendingCreationTime,
+      [&](ash::BrowserDelegate& delegate) {
+        if (!delegate.IsWebApp()) {
+          result = &delegate;
+          return ash::BrowserController::kBreakIteration;
+        }
+        return ash::BrowserController::kContinueIteration;
+      });
+  return result;
 }
 
 ash::AppListViewState ToAppListViewState(
@@ -860,9 +855,9 @@ aura::Window* GetActiveWindow() {
 }
 
 bool IsFrameVisible(views::Widget* widget) {
-  views::NonClientFrameView* frame_view =
-      widget->non_client_view() ? widget->non_client_view()->frame_view()
-                                : nullptr;
+  views::FrameView* frame_view = widget->non_client_view()
+                                     ? widget->non_client_view()->frame_view()
+                                     : nullptr;
   return frame_view && frame_view->GetEnabled() && frame_view->GetVisible();
 }
 
@@ -897,7 +892,7 @@ bool GetDisplayIdFromOptionalArg(const std::optional<std::string>& arg,
     return base::StringToInt64(*arg, display_id);
   }
 
-  *display_id = display::Screen::GetScreen()->GetPrimaryDisplay().id();
+  *display_id = display::Screen::Get()->GetPrimaryDisplay().id();
   return true;
 }
 
@@ -1208,7 +1203,7 @@ class EventGenerator {
       }
       case ui::EventType::kMouseMoved: {
         display::Display display =
-            display::Screen::GetScreen()->GetDisplayNearestPoint(
+            display::Screen::Get()->GetDisplayNearestPoint(
                 gfx::ToFlooredPoint((task->location_in_screen)));
         auto* root_window = ash::Shell::GetRootWindowForDisplayId(display.id());
         if (!root_window->GetBoundsInScreen().Contains(
@@ -2180,7 +2175,8 @@ void AutotestPrivateGetRegisteredSystemWebAppsFunction::
     system_web_app.internal_name = delegate->GetInternalName();
     system_web_app.url =
         delegate->GetInstallUrl().DeprecatedGetOriginAsURL().spec();
-    system_web_app.name = base::UTF16ToUTF8(delegate->GetWebAppInfo()->title);
+    system_web_app.name =
+        base::UTF16ToUTF8(delegate->GetWebAppInfo()->title.value());
 
     std::optional<webapps::AppId> app_id =
         swa_manager->GetAppIdForSystemApp(type_and_info.first);
@@ -2267,7 +2263,7 @@ ExtensionFunction::ResponseAction AutotestPrivateLaunchAppFunction::Run() {
   controller->LaunchApp(ash::ShelfID(params->app_id),
                         ash::ShelfLaunchSource::LAUNCH_FROM_INTERNAL,
                         0, /* event_flags */
-                        display::Screen::GetScreen()->GetPrimaryDisplay().id());
+                        display::Screen::Get()->GetPrimaryDisplay().id());
   return RespondNow(NoArguments());
 }
 
@@ -2570,13 +2566,26 @@ ExtensionFunction::ResponseAction AutotestPrivateExportCrostiniFunction::Run() {
     return RespondNow(Error("Invalid export path must not reference parent"));
   }
 
-  crostini::CrostiniExportImportFactory::GetForProfile(profile)
-      ->ExportContainer(
-          crostini::DefaultContainerId(),
-          file_manager::util::GetDownloadsFolderForProfile(profile).Append(
-              path),
-          base::BindOnce(
-              &AutotestPrivateExportCrostiniFunction::CrostiniExported, this));
+  auto termina_flavor = crostini::CrostiniManager::GetTerminaFlavor(profile);
+  if (termina_flavor == crostini::CrostiniManager::TerminaFlavor::BAGUETTE) {
+    crostini::CrostiniExportImportFactory::GetForProfile(profile)
+        ->ExportDiskImageWithCallback(
+            crostini::DefaultBaguetteContainerId(),
+            file_manager::util::GetDownloadsFolderForProfile(profile).Append(
+                path),
+            base::BindOnce(
+                &AutotestPrivateExportCrostiniFunction::CrostiniExported,
+                this));
+  } else {
+    crostini::CrostiniExportImportFactory::GetForProfile(profile)
+        ->ExportContainer(
+            crostini::DefaultContainerId(),
+            file_manager::util::GetDownloadsFolderForProfile(profile).Append(
+                path),
+            base::BindOnce(
+                &AutotestPrivateExportCrostiniFunction::CrostiniExported,
+                this));
+  }
 
   return RespondLater();
 }
@@ -2613,13 +2622,27 @@ ExtensionFunction::ResponseAction AutotestPrivateImportCrostiniFunction::Run() {
   if (path.ReferencesParent()) {
     return RespondNow(Error("Invalid import path must not reference parent"));
   }
-  crostini::CrostiniExportImportFactory::GetForProfile(profile)
-      ->ImportContainer(
-          crostini::DefaultContainerId(),
-          file_manager::util::GetDownloadsFolderForProfile(profile).Append(
-              path),
-          base::BindOnce(
-              &AutotestPrivateImportCrostiniFunction::CrostiniImported, this));
+
+  auto termina_flavor = crostini::CrostiniManager::GetTerminaFlavor(profile);
+  if (termina_flavor == crostini::CrostiniManager::TerminaFlavor::BAGUETTE) {
+    crostini::CrostiniExportImportFactory::GetForProfile(profile)
+        ->ImportDiskImageWithCallback(
+            crostini::DefaultBaguetteContainerId(),
+            file_manager::util::GetDownloadsFolderForProfile(profile).Append(
+                path),
+            base::BindOnce(
+                &AutotestPrivateImportCrostiniFunction::CrostiniImported,
+                this));
+  } else {
+    crostini::CrostiniExportImportFactory::GetForProfile(profile)
+        ->ImportContainer(
+            crostini::DefaultContainerId(),
+            file_manager::util::GetDownloadsFolderForProfile(profile).Append(
+                path),
+            base::BindOnce(
+                &AutotestPrivateImportCrostiniFunction::CrostiniImported,
+                this));
+  }
 
   return RespondLater();
 }
@@ -2838,7 +2861,7 @@ AutotestPrivateTakeScreenshotForDisplayFunction::Run() {
 
   for (aura::Window* const window : ash::Shell::GetAllRootWindows()) {
     const int64_t display_id =
-        display::Screen::GetScreen()->GetDisplayNearestWindow(window).id();
+        display::Screen::Get()->GetDisplayNearestWindow(window).id();
     if (display_id == target_display_id) {
       auto* const grabber_ptr = grabber.get();
       grabber_ptr->TakeScreenshot(
@@ -3226,7 +3249,7 @@ AutotestPrivateGetPrimaryDisplayScaleFactorFunction::Run() {
   DVLOG(1) << "AutotestPrivateGetPrimaryDisplayScaleFactorFunction";
 
   display::Display primary_display =
-      display::Screen::GetScreen()->GetPrimaryDisplay();
+      display::Screen::Get()->GetPrimaryDisplay();
   float scale_factor = primary_display.device_scale_factor();
   return RespondNow(WithArguments(scale_factor));
 }
@@ -3242,8 +3265,7 @@ ExtensionFunction::ResponseAction
 AutotestPrivateIsTabletModeEnabledFunction::Run() {
   DVLOG(1) << "AutotestPrivateIsTabletModeEnabledFunction";
 
-  return RespondNow(
-      WithArguments(display::Screen::GetScreen()->InTabletMode()));
+  return RespondNow(WithArguments(display::Screen::Get()->InTabletMode()));
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -3260,9 +3282,8 @@ AutotestPrivateSetTabletModeEnabledFunction::Run() {
   std::optional<api::autotest_private::SetTabletModeEnabled::Params> params =
       api::autotest_private::SetTabletModeEnabled::Params::Create(args());
   EXTENSION_FUNCTION_VALIDATE(params);
-  if (display::Screen::GetScreen()->InTabletMode() == params->enabled) {
-    return RespondNow(
-        WithArguments(display::Screen::GetScreen()->InTabletMode()));
+  if (display::Screen::Get()->InTabletMode() == params->enabled) {
+    return RespondNow(WithArguments(display::Screen::Get()->InTabletMode()));
   }
 
   ash::TabletMode::Waiter waiter(params->enabled);
@@ -3270,8 +3291,7 @@ AutotestPrivateSetTabletModeEnabledFunction::Run() {
     return RespondNow(Error("failed to switch the tablet mode state"));
   }
   waiter.Wait();
-  return RespondNow(
-      WithArguments(display::Screen::GetScreen()->InTabletMode()));
+  return RespondNow(WithArguments(display::Screen::Get()->InTabletMode()));
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -3828,8 +3848,8 @@ AutotestPrivateWaitForDisplayRotationFunction::Run() {
 
   if (params->rotation == api::autotest_private::RotationType::kRotateAny) {
     display::Display display;
-    if (!display::Screen::GetScreen()->GetDisplayWithDisplayId(display_id_,
-                                                               &display)) {
+    if (!display::Screen::Get()->GetDisplayWithDisplayId(display_id_,
+                                                         &display)) {
       return RespondNow(Error(base::StrCat(
           {"Display is not found for display_id ", params->display_id})));
     }
@@ -3866,7 +3886,7 @@ void AutotestPrivateWaitForDisplayRotationFunction::
   animator->RemoveObserver(this);
 
   display::Display display;
-  display::Screen::GetScreen()->GetDisplayWithDisplayId(display_id_, &display);
+  display::Screen::Get()->GetDisplayWithDisplayId(display_id_, &display);
   Respond(WithArguments(display.is_valid() &&
                         (!target_rotation_.has_value() ||
                          display.rotation() == *target_rotation_)));
@@ -3902,8 +3922,7 @@ AutotestPrivateWaitForDisplayRotationFunction::CheckScreenRotationAnimation() {
   auto* animator = root_controller->GetScreenRotationAnimator();
   if (!animator->IsRotating()) {
     display::Display display;
-    display::Screen::GetScreen()->GetDisplayWithDisplayId(display_id_,
-                                                          &display);
+    display::Screen::Get()->GetDisplayWithDisplayId(display_id_, &display);
     // This should never fail.
     DCHECK(display.is_valid());
     return WithArguments(!target_rotation_.has_value() ||
@@ -3950,7 +3969,7 @@ AutotestPrivateGetAppWindowListFunction::Run() {
         ToBoundsDictionary(window->GetBoundsInRootWindow());
     window_info.target_bounds = ToBoundsDictionary(window->GetTargetBounds());
     window_info.display_id = base::NumberToString(
-        display::Screen::GetScreen()->GetDisplayNearestWindow(window).id());
+        display::Screen::Get()->GetDisplayNearestWindow(window).id());
     window_info.title = base::UTF16ToUTF8(window->GetTitle());
     // Check for window hiding animations separately because they pertain to
     // layers detached from the window.
@@ -3962,7 +3981,7 @@ AutotestPrivateGetAppWindowListFunction::Run() {
     window_info.can_focus = window->CanFocus();
     window_info.has_focus = window->HasFocus();
     window_info.on_active_desk =
-        chromeos::DesksHelper::Get(window)->BelongsToActiveDesk(window);
+        chromeos::DesksHelper::Get()->BelongsToActiveDesk(window);
     window_info.is_active = wm::IsActiveWindow(window);
     window_info.has_capture = window->HasCapture();
     window_info.can_resize =
@@ -4326,12 +4345,11 @@ AutotestPrivateInstallPWAForCurrentURLFunction::Run() {
       api::autotest_private::InstallPWAForCurrentURL::Params::Create(args());
   EXTENSION_FUNCTION_VALIDATE(params);
 
-  Browser* browser = GetFirstRegularBrowser();
+  ash::BrowserDelegate* browser = GetFirstRegularBrowser();
   if (!browser) {
     return RespondNow(Error("Failed to find regular browser"));
   }
-  content::WebContents* web_contents =
-      browser->tab_strip_model()->GetActiveWebContents();
+  content::WebContents* web_contents = browser->GetActiveWebContents();
 
   webapps::AppBannerManager* app_banner_manager =
       webapps::AppBannerManagerDesktop::FromWebContents(web_contents);
@@ -4356,14 +4374,14 @@ AutotestPrivateInstallPWAForCurrentURLFunction::Run() {
 
 void AutotestPrivateInstallPWAForCurrentURLFunction::PWALoaded() {
   Profile* profile = Profile::FromBrowserContext(browser_context());
-  Browser* browser = GetFirstRegularBrowser();
+  ash::BrowserDelegate* browser = GetFirstRegularBrowser();
 
   install_mananger_observer_ = std::make_unique<PWAInstallManagerObserver>(
       profile,
       base::BindOnce(
           &AutotestPrivateInstallPWAForCurrentURLFunction::PWAInstalled, this));
 
-  if (!chrome::ExecuteCommand(browser, IDC_INSTALL_PWA)) {
+  if (!browser->CreateWebAppFromActiveWebContents()) {
     return Respond(Error("Failed to execute INSTALL_PWA command"));
   }
 }
@@ -4446,7 +4464,7 @@ AutotestPrivateWaitForLauncherStateFunction::Run() {
   // Exceptionally, allow waiting for kClosed state in clamshell mode, so tests
   // can wait for fullscreen launcher state change to finish when exiting tablet
   // mode.
-  if (!display::Screen::GetScreen()->InTabletMode() &&
+  if (!display::Screen::Get()->InTabletMode() &&
       target_state != ash::AppListViewState::kClosed) {
     return RespondNow(Error("Not supported for bubble launcher"));
   }
@@ -5127,7 +5145,7 @@ AutotestPrivateSetWindowBoundsFunction::Run() {
   }
 
   display::Display display;
-  display::Screen::GetScreen()->GetDisplayWithDisplayId(display_id, &display);
+  display::Screen::Get()->GetDisplayWithDisplayId(display_id, &display);
   if (!display.is_valid()) {
     return RespondNow(
         Error("Given display ID does not correspond to a valid display"));
@@ -5767,15 +5785,16 @@ ExtensionFunction::ResponseAction AutotestPrivateGetAccessTokenFunction::Run() {
   OAuth2AccessTokenManager::ScopeSet scopes(
       params->access_token_params.scopes.begin(),
       params->access_token_params.scopes.end());
-  access_token_fetcher_ = identity_manager->CreateAccessTokenFetcherForAccount(
-      identity_manager
-          ->FindExtendedAccountInfoByEmailAddress(
-              params->access_token_params.email)
-          .account_id,
-      /*oauth_consumer_name=*/"cros_autotest_private", scopes,
-      base::BindOnce(&AutotestPrivateGetAccessTokenFunction::OnAccessToken,
-                     this),
-      signin::AccessTokenFetcher::Mode::kImmediate);
+  access_token_fetcher_ =
+      identity_manager->CreateAccessTokenFetcherWithDynamicScopesForAccount(
+          identity_manager
+              ->FindExtendedAccountInfoByEmailAddress(
+                  params->access_token_params.email)
+              .account_id,
+          signin::OAuthConsumerId::kAshAutotestPrivateApi, scopes,
+          base::BindOnce(&AutotestPrivateGetAccessTokenFunction::OnAccessToken,
+                         this),
+          signin::AccessTokenFetcher::Mode::kImmediate);
   return RespondLater();
 }
 
@@ -6130,7 +6149,7 @@ AutotestPrivateStartOverdrawTrackingFunction::Run() {
   bool found_display = false;
   for (aura::Window* const window : ash::Shell::GetAllRootWindows()) {
     const int64_t display_id =
-        display::Screen::GetScreen()->GetDisplayNearestWindow(window).id();
+        display::Screen::Get()->GetDisplayNearestWindow(window).id();
     if (display_id == target_display_id) {
       found_display = true;
     }
@@ -6191,7 +6210,7 @@ AutotestPrivateStopOverdrawTrackingFunction::Run() {
   bool found_display = false;
   for (aura::Window* const window : ash::Shell::GetAllRootWindows()) {
     const int64_t display_id =
-        display::Screen::GetScreen()->GetDisplayNearestWindow(window).id();
+        display::Screen::Get()->GetDisplayNearestWindow(window).id();
     if (display_id == target_display_id) {
       found_display = true;
     }

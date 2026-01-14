@@ -13,12 +13,14 @@
 #include "third_party/blink/renderer/core/dom/focusgroup_flags.h"
 #include "third_party/blink/renderer/core/dom/has_invalidation_flags.h"
 #include "third_party/blink/renderer/core/dom/node_rare_data.h"
+#include "third_party/blink/renderer/core/dom/overscroll_pseudo_element_data.h"
 #include "third_party/blink/renderer/core/dom/pseudo_element.h"
 #include "third_party/blink/renderer/core/dom/pseudo_element_data.h"
 #include "third_party/blink/renderer/platform/heap/trace_traits.h"
 #include "third_party/blink/renderer/platform/region_capture_crop_id.h"
 #include "third_party/blink/renderer/platform/restriction_target_id.h"
 #include "third_party/blink/renderer/platform/sparse_vector.h"
+#include "third_party/blink/renderer/platform/tracked_element_id.h"
 #include "third_party/blink/renderer/platform/wtf/text/atomic_string.h"
 #include "third_party/blink/renderer/platform/wtf/type_traits.h"
 
@@ -26,10 +28,12 @@ namespace blink {
 
 class CSSStyleDeclaration;
 class ColumnPseudoElement;
+class ContentData;
 class ShadowRoot;
 class NamedNodeMap;
 class DOMTokenList;
 class DatasetDOMStringMap;
+class DisplayAdElementMonitor;
 class ElementAnimations;
 class Attr;
 typedef HeapVector<Member<Attr>> AttrNodeList;
@@ -50,6 +54,8 @@ class InvokerData;
 class InterestInvokerTargetData;
 class OutOfFlowData;
 class HTMLElement;
+class Element;
+class OverscrollAreaTracker;
 
 enum class ElementFlags;
 
@@ -82,7 +88,7 @@ class CORE_EXPORT ElementRareDataVector final : public NodeRareData {
     kSavedLayerScrollOffset = 22,
     kAnchorPositionScrollData = 23,
     kAnchorElementObserver = 24,
-    kImplicitlyAnchoredElementCount = 25,
+    kMayBeImplicitAnchor = 25,
     kLastRememberedBlockSize = 26,
     kLastRememberedInlineSize = 27,
     kRestrictionTargetId = 28,
@@ -96,8 +102,13 @@ class CORE_EXPORT ElementRareDataVector final : public NodeRareData {
     kCSSPseudoElementData = 36,
     kCustomElementRegistry = 37,
     kAnimationTriggerData = 38,
-
-    kNumFields = 39,
+    kFocusgroupLastFocused = 39,
+    kDisplayAdElementMonitor = 40,
+    kOverscrollAreaTracker = 41,
+    kAltContentData = 42,
+    kOverscrollContainer = 43,
+    kTrackedElementRect = 44,
+    kNumFields = 45,
   };
 
   ElementRareDataField* GetField(FieldId field_id) const;
@@ -173,10 +184,17 @@ class CORE_EXPORT ElementRareDataVector final : public NodeRareData {
       const AtomicString& document_transition_tag = g_null_atom) const;
   bool HasScrollButtonOrMarkerGroupPseudos() const;
   PseudoElementData::PseudoElementVector GetPseudoElements() const;
+
   void AddColumnPseudoElement(ColumnPseudoElement&);
   const ColumnPseudoElementsVector* GetColumnPseudoElements() const;
   ColumnPseudoElement* GetColumnPseudoElement(wtf_size_t idx) const;
   void ClearColumnPseudoElements(wtf_size_t to_keep);
+
+  void AddOverscrollAreaParentPseudoElement(IndexedPseudoElement&);
+  const OverscrollAreaParentPseudoElementsVector*
+  GetOverscrollAreaParentPseudoElements() const;
+  IndexedPseudoElement* GetOverscrollPseudoElement(wtf_size_t idx) const;
+  void ClearOverscrollPseudoElements(wtf_size_t to_keep);
 
   CSSStyleDeclaration& EnsureInlineCSSStyleDeclaration(Element* owner_element);
 
@@ -253,6 +271,10 @@ class CORE_EXPORT ElementRareDataVector final : public NodeRareData {
   // to unset a previously set crop-ID.
   void SetRegionCaptureCropId(std::unique_ptr<RegionCaptureCropId> crop_id);
 
+  const TrackedElementRect* GetTrackedElementRect() const;
+  void SetTrackedElementRect(std::unique_ptr<TrackedElementRect> rect);
+  void ClearTrackedElementRect();
+
   // Returns the ID backing a RestrictionTarget if one was set on the Element,
   // or nullptr otherwise.
   const RestrictionTargetId* GetRestrictionTargetId() const;
@@ -325,15 +347,16 @@ class CORE_EXPORT ElementRareDataVector final : public NodeRareData {
   AnchorElementObserver& EnsureAnchorElementObserver(Element*);
   AnchorElementObserver* GetAnchorElementObserver() const;
 
+  bool HasCustomElementRegistrySet() const;
   CustomElementRegistry* GetCustomElementRegistry() const;
   void SetCustomElementRegistry(CustomElementRegistry* registry);
+  void ClearCustomElementRegistry();
 
   ElementAnimationTriggerData* AnimationTriggerData();
   ElementAnimationTriggerData& EnsureAnimationTriggerData();
 
-  void IncrementImplicitlyAnchoredElementCount();
-  void DecrementImplicitlyAnchoredElementCount();
-  bool HasImplicitlyAnchoredElement() const;
+  DisplayAdElementMonitor* GetDisplayAdElementMonitor() const;
+  DisplayAdElementMonitor& EnsureDisplayAdElementMonitor(Element*);
 
   void SetDidAttachInternals() { fields_.did_attach_internals = true; }
   bool DidAttachInternals() const { return fields_.did_attach_internals; }
@@ -357,17 +380,35 @@ class CORE_EXPORT ElementRareDataVector final : public NodeRareData {
   bool HasBeenExplicitlyScrolled() const {
     return fields_.has_been_explicitly_scrolled;
   }
+  bool MayBeImplicitAnchor() const { return fields_.may_be_implicit_anchor; }
+  void SetMayBeImplicitAnchor() { fields_.may_be_implicit_anchor = true; }
 
-  FocusgroupFlags GetFocusgroupFlags() const {
-    return fields_.focusgroup_flags;
+  FocusgroupData GetFocusgroupData() const {
+    return {fields_.focusgroup_behavior, fields_.focusgroup_flags};
   }
-  void SetFocusgroupFlags(FocusgroupFlags flags) {
-    fields_.focusgroup_flags = flags;
+  void SetFocusgroupData(FocusgroupData data) {
+    fields_.focusgroup_behavior = data.behavior;
+    fields_.focusgroup_flags = data.flags;
   }
-  void ClearFocusgroupFlags() {
+  void ClearFocusgroupData() {
+    fields_.focusgroup_behavior = FocusgroupBehavior::kNoBehavior;
     fields_.focusgroup_flags = FocusgroupFlags::kNone;
+    SetFocusgroupLastFocused(nullptr);
   }
+  void SetFocusgroupLastFocused(Element* element);
+  Element* GetFocusgroupLastFocused() const;
+  void ClearFocusgroupLastFocused() { SetFocusgroupLastFocused(nullptr); }
 
+  void SetOverscrollContainer(Element* element);
+  Element* GetOverscrollContainer() const;
+  void ClearOverscrollContainer() { SetOverscrollContainer(nullptr); }
+
+  void SetAffectedByStartingStyles() {
+    fields_.affected_by_starting_styles = true;
+  }
+  bool AffectedByStartingStyles() const {
+    return fields_.affected_by_starting_styles;
+  }
   bool AffectedBySubjectHas() const {
     return fields_.has_invalidation_flags.affected_by_subject_has;
   }
@@ -450,6 +491,19 @@ class CORE_EXPORT ElementRareDataVector final : public NodeRareData {
     fields_.has_invalidation_flags.affected_by_multiple_has = true;
   }
 
+  ContentData* GetAltContentData() const;
+  void SetAltContentData(ContentData* content_data);
+
+  bool WasLastFocusFromUserGesture() const {
+    return fields_.was_last_focus_from_user_gesture;
+  }
+  void SetWasLastFocusFromUserGesture(bool value) {
+    fields_.was_last_focus_from_user_gesture = value;
+  }
+
+  OverscrollAreaTracker& EnsureOverscrollAreaTracker(Element*);
+  OverscrollAreaTracker* OverscrollAreaTracker() const;
+
   void Trace(blink::Visitor*) const override;
 
  private:
@@ -465,7 +519,15 @@ class CORE_EXPORT ElementRareDataVector final : public NodeRareData {
     // it doesn't hurt performance much.
     unsigned has_counters_styles : 1 = false;
     unsigned has_been_explicitly_scrolled : 1 = false;
+    unsigned may_be_implicit_anchor : 1 = false;
+    unsigned affected_by_starting_styles : 1 = false;
+    // This records the last type of a focus on this element via `SetFocused`
+    // (or more accurately, the only derived value we need from that).
+    // For more see:
+    // https://explainers-by-googlers.github.io/user-dictionary-leaks/
+    unsigned was_last_focus_from_user_gesture : 1 = false;
     HasInvalidationFlags has_invalidation_flags;
+    FocusgroupBehavior focusgroup_behavior = FocusgroupBehavior::kNoBehavior;
     FocusgroupFlags focusgroup_flags = FocusgroupFlags::kNone;
   };
   Fields fields_;

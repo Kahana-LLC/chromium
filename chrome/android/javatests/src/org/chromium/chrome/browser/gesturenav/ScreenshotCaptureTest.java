@@ -8,6 +8,8 @@ import static androidx.test.espresso.Espresso.onView;
 import static androidx.test.espresso.action.ViewActions.click;
 import static androidx.test.espresso.matcher.ViewMatchers.withId;
 
+import static org.chromium.chrome.browser.url_constants.UrlConstantResolver.getOriginalNativeBookmarksUrl;
+
 import android.graphics.Bitmap;
 import android.os.Build.VERSION_CODES;
 
@@ -33,12 +35,10 @@ import org.chromium.base.test.util.DisableIf;
 import org.chromium.base.test.util.DisabledTest;
 import org.chromium.base.test.util.DoNotBatch;
 import org.chromium.base.test.util.Feature;
-import org.chromium.base.test.util.Features.EnableFeatures;
 import org.chromium.base.test.util.TestAnimations;
 import org.chromium.base.test.util.UrlUtils;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.ChromeTabbedActivity;
-import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
 import org.chromium.chrome.browser.fullscreen.BrowserControlsManager;
 import org.chromium.chrome.browser.fullscreen.FullscreenManagerTestUtils;
@@ -65,12 +65,6 @@ import java.util.concurrent.TimeoutException;
 @RunWith(ParameterizedRunner.class)
 @CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE, "hide-scrollbars"})
 @DoNotBatch(reason = "Affect nav settings")
-@EnableFeatures({
-    "BackForwardTransitions"
-            + ":transition_from_native_pages/true"
-            + "/transition_to_native_pages/true"
-            + "/min-required-physical-ram-mb/0"
-})
 @DisableIf.Build(supported_abis_includes = "x86", message = "https://crbug.com/337886037")
 @DisableIf.Build(supported_abis_includes = "x86_64", message = "https://crbug.com/337886037")
 public class ScreenshotCaptureTest {
@@ -130,12 +124,13 @@ public class ScreenshotCaptureTest {
                 EmbeddedTestServer.createAndStartServerWithPort(
                         ApplicationProvider.getApplicationContext(), 46985);
 
-        var mSiteSuggestions = NewTabPageTestUtils.createFakeSiteSuggestions(mTestServer);
-        var mMostVisitedSites = new FakeMostVisitedSites();
-        mMostVisitedSites.setTileSuggestions(mSiteSuggestions);
-        mSuggestionsDeps.getFactory().mostVisitedSites = mMostVisitedSites;
+        var siteSuggestions = NewTabPageTestUtils.createFakeSiteSuggestions(mTestServer);
+        var mostVisitedSites = new FakeMostVisitedSites();
+        mostVisitedSites.setTileSuggestions(siteSuggestions);
+        mSuggestionsDeps.getFactory().mostVisitedSites = mostVisitedSites;
         mScreenshotCaptureTestHelper = new ScreenshotCaptureTestHelper();
         mHomepageTestRule.useChromeNtpForTest();
+        GestureNavigationUtils.setMinRequiredPhysicalRamMbForTesting(0);
     }
 
     @After
@@ -148,35 +143,16 @@ public class ScreenshotCaptureTest {
     @MediumTest
     @Feature({"RenderTest"})
     @ParameterAnnotations.UseMethodParameter(NightModeTestUtils.NightModeParams.class)
-    public void testNavigatingAwayFromNtpToNormalPageSoftware(boolean nightModeEnabled)
-            throws IOException, TimeoutException, InterruptedException {
-        mRenderTestRule.setVariantPrefix("software");
-        navigatingAwayFromNtpToNormalPage();
-    }
-
-    @Test
-    @MediumTest
-    @Feature({"RenderTest"})
-    @EnableFeatures({ChromeFeatureList.NATIVE_PAGE_TRANSITION_HARDWARE_CAPTURE})
-    @ParameterAnnotations.UseMethodParameter(NightModeTestUtils.NightModeParams.class)
-    @DisableIf.Build(sdk_is_less_than = VERSION_CODES.S)
-    public void testNavigatingAwayFromNtpToNormalPageHardware(boolean nightModeEnabled)
-            throws IOException, TimeoutException, InterruptedException {
-        mRenderTestRule.setVariantPrefix("hardware");
-        navigatingAwayFromNtpToNormalPage();
-    }
-
-    private void navigatingAwayFromNtpToNormalPage()
+    public void testNavigatingAwayFromNtpToNormalPage(boolean nightModeEnabled)
             throws IOException, TimeoutException, InterruptedException {
         mActivityTestRule.startOnNtp();
         UiUtils.settleDownUI(InstrumentationRegistry.getInstrumentation());
-        NewTabPageTestUtils.waitForNtpLoaded(mActivityTestRule.getActivity().getActivityTab());
+        NewTabPageTestUtils.waitForNtpLoaded(mActivityTestRule.getActivityTab());
 
         CallbackHelper callbackHelper = new CallbackHelper();
         int currentNavIndex =
                 mActivityTestRule
-                        .getActivity()
-                        .getCurrentWebContents()
+                        .getWebContents()
                         .getNavigationController()
                         .getNavigationHistory()
                         .getCurrentEntryIndex();
@@ -209,15 +185,14 @@ public class ScreenshotCaptureTest {
     public void testNavigatingAwayFromNativeBookmarkToNormalPage(boolean nightModeEnabled)
             throws IOException, TimeoutException, InterruptedException {
         mActivityTestRule
-                .startOnUrlTo(UrlConstants.BOOKMARKS_URL)
+                .startOnUrlTo(getOriginalNativeBookmarksUrl())
                 .executeTriggerWithoutTransition();
         UiUtils.settleDownUI(InstrumentationRegistry.getInstrumentation());
 
         CallbackHelper callbackHelper = new CallbackHelper();
         int currentNavIndex =
                 mActivityTestRule
-                        .getActivity()
-                        .getCurrentWebContents()
+                        .getWebContents()
                         .getNavigationController()
                         .getNavigationHistory()
                         .getCurrentEntryIndex();
@@ -252,13 +227,12 @@ public class ScreenshotCaptureTest {
             throws IOException, TimeoutException, InterruptedException {
         mActivityTestRule.startOnNtp();
         UiUtils.settleDownUI(InstrumentationRegistry.getInstrumentation());
-        NewTabPageTestUtils.waitForNtpLoaded(mActivityTestRule.getActivity().getActivityTab());
+        NewTabPageTestUtils.waitForNtpLoaded(mActivityTestRule.getActivityTab());
 
         CallbackHelper callbackHelper = new CallbackHelper();
         int currentNavIndex =
                 mActivityTestRule
-                        .getActivity()
-                        .getCurrentWebContents()
+                        .getWebContents()
                         .getNavigationController()
                         .getNavigationHistory()
                         .getCurrentEntryIndex();
@@ -295,13 +269,13 @@ public class ScreenshotCaptureTest {
             throws IOException, TimeoutException, InterruptedException {
         mActivityTestRule.startOnNtp();
         UiUtils.settleDownUI(InstrumentationRegistry.getInstrumentation());
-        NewTabPageTestUtils.waitForNtpLoaded(mActivityTestRule.getActivity().getActivityTab());
+        NewTabPageTestUtils.waitForNtpLoaded(mActivityTestRule.getActivityTab());
 
         mActivityTestRule.loadUrl(mTestServer.getURL(TEST_PAGE));
 
-        GestureNavigationTestUtils mNavUtils =
+        GestureNavigationTestUtils navUtils =
                 new GestureNavigationTestUtils(mActivityTestRule::getActivity);
-        mNavUtils.swipeFromEdgeAndHold(/* leftEdge= */ true);
+        navUtils.swipeFromEdgeAndHold(/* leftEdge= */ true);
 
         CallbackHelper callbackHelper = new CallbackHelper();
         mActivityTestRule
@@ -317,7 +291,7 @@ public class ScreenshotCaptureTest {
                             callbackHelper.notifyCalled();
                         });
         callbackHelper.waitForOnly();
-        ThreadUtils.runOnUiThreadBlocking(() -> mNavUtils.getNavigationHandler().release(true));
+        ThreadUtils.runOnUiThreadBlocking(() -> navUtils.getNavigationHandler().release(true));
         // Wait animation to be finished. Reduce flakiness caused by being destroyed during a
         // running animation.
         UiUtils.settleDownUI(InstrumentationRegistry.getInstrumentation());
@@ -379,12 +353,11 @@ public class ScreenshotCaptureTest {
         UiUtils.settleDownUI(InstrumentationRegistry.getInstrumentation());
 
         // Sad tab is not considered as a native page.
-        Assert.assertFalse(mActivityTestRule.getActivity().getActivityTab().isNativePage());
+        Assert.assertFalse(mActivityTestRule.getActivityTab().isNativePage());
         CallbackHelper callbackHelper = new CallbackHelper();
         int currentNavIndex =
                 mActivityTestRule
-                        .getActivity()
-                        .getCurrentWebContents()
+                        .getWebContents()
                         .getNavigationController()
                         .getNavigationHistory()
                         .getCurrentEntryIndex();
@@ -421,8 +394,7 @@ public class ScreenshotCaptureTest {
         CallbackHelper callbackHelper = new CallbackHelper();
         int currentNavIndex =
                 mActivityTestRule
-                        .getActivity()
-                        .getCurrentWebContents()
+                        .getWebContents()
                         .getNavigationController()
                         .getNavigationHistory()
                         .getCurrentEntryIndex();
@@ -443,7 +415,7 @@ public class ScreenshotCaptureTest {
                 });
 
         onView(withId(R.id.home_button)).perform(click());
-        NewTabPageTestUtils.waitForNtpLoaded(mActivityTestRule.getActivity().getActivityTab());
+        NewTabPageTestUtils.waitForNtpLoaded(mActivityTestRule.getActivityTab());
 
         // Expect to capture a screenshot of TEST_PAGE
         callbackHelper.waitForOnly();

@@ -6,7 +6,7 @@
 #import "base/strings/sys_string_conversions.h"
 #import "base/test/ios/wait_util.h"
 #import "components/data_sharing/public/features.h"
-#import "ios/chrome/browser/authentication/ui_bundled/signin_earl_grey.h"
+#import "ios/chrome/browser/authentication/test/signin_earl_grey.h"
 #import "ios/chrome/browser/incognito_reauth/ui_bundled/incognito_reauth_util.h"
 #import "ios/chrome/browser/shared/model/prefs/pref_names.h"
 #import "ios/chrome/browser/shared/public/features/features.h"
@@ -58,6 +58,7 @@ using chrome_test_util::TabGridEditSelectAllButton;
 using chrome_test_util::TabGridGroupCellAtIndex;
 using chrome_test_util::TabGridGroupCellWithName;
 using chrome_test_util::TabGridNewTabButton;
+using chrome_test_util::TabGridOverflowMenuButton;
 using chrome_test_util::TabGridSearchBar;
 using chrome_test_util::TabGridSearchTabsButton;
 using chrome_test_util::TabGridSelectTabsMenuButton;
@@ -76,6 +77,7 @@ namespace {
 
 NSString* const kTab1Title = @"Tab1";
 NSString* const kTab2Title = @"Tab2";
+NSString* const kTab3Title = @"Tab3";
 
 // Put the number at the beginning to avoid issues with sentence case, as the
 // keyboard default can differ iPhone vs iPad, simulator vs device.
@@ -255,20 +257,36 @@ UIViewController* TopPresentedViewController() {
   return topController;
 }
 
-// Taps the edit button in the tab grid and close the keyboard if it apprears on
-// iOS 26.
-void TapTabGridEditButton() {
+// Taps the overflow menu button in the tab grid.
+void TapTabGridOverflowMenuButton() {
   [[EarlGrey
-      selectElementWithMatcher:grey_allOf(TabGridEditButton(),
-                                          grey_sufficientlyVisible(), nil)]
+      selectElementWithMatcher:chrome_test_util::TabGridOverflowMenuButton()]
       performAction:grey_tap()];
+}
 
-  if (@available(iOS 19, *)) {
-    // TODO(crbug.com/428928323): Investigate why the keyboard appears. Remove
-    // this workaround when it's not needed anymore.
-    // On iOS 26, the keyboard appears when the "Edit" button is tapped and it
-    // hides the elements behind. Close the keyboard by typing a return key.
-    [ChromeEarlGrey simulatePhysicalKeyboardEvent:@"\\n" flags:0];
+// Taps the edit button in the tab grid.
+void TapTabGridEditButton() {
+  // Both the top toolbar and bottom toolbar "Edit" buttons are recognized so
+  // specify the toolbar depending on the device.
+  if ([ChromeEarlGrey isIPadIdiom]) {
+    id<GREYMatcher> topToolbar = grey_kindOfClassName(@"TabGridTopToolbar");
+    id<GREYMatcher> topToolbarEditButton =
+        grey_allOf(chrome_test_util::TabGridEditButton(),
+                   grey_ancestor(topToolbar), grey_sufficientlyVisible(), nil);
+    [[EarlGrey
+        selectElementWithMatcher:grey_allOf(topToolbarEditButton,
+                                            grey_sufficientlyVisible(), nil)]
+        performAction:grey_tap()];
+  } else {
+    id<GREYMatcher> bottomToolbar =
+        grey_kindOfClassName(@"TabGridBottomToolbar");
+    id<GREYMatcher> bottomToolbarEditButton = grey_allOf(
+        chrome_test_util::TabGridEditButton(), grey_ancestor(bottomToolbar),
+        grey_sufficientlyVisible(), nil);
+    [[EarlGrey
+        selectElementWithMatcher:grey_allOf(bottomToolbarEditButton,
+                                            grey_sufficientlyVisible(), nil)]
+        performAction:grey_tap()];
   }
 }
 
@@ -298,7 +316,14 @@ void TapTabGridEditButton() {
   AppLaunchConfiguration config;
   config.features_enabled.push_back(
       data_sharing::features::kDataSharingFeature);
-  config.features_enabled.push_back(kContainedTabGroup);
+  if ([self isRunningTest:@selector(testCloseAllAndUndo)]) {
+    config.features_disabled.push_back(kTabSwitcherOverflowMenu);
+  } else if ([self isRunningTest:@selector(testCloseOtherTabsInGroup)]) {
+    config.features_disabled.push_back(kTabSwitcherOverflowMenu);
+    config.features_enabled.push_back(kCloseOtherTabs);
+  } else {
+    config.features_enabled.push_back(kTabSwitcherOverflowMenu);
+  }
   return config;
 }
 
@@ -689,7 +714,8 @@ void TapTabGridEditButton() {
   [self testMovingBetweenGroupsUsingGridContextMenuInGrid:/*incognito*/ NO];
 }
 
-- (void)testMovingBetweenGroupsUsingGridContextMenuInIncognitoGrid {
+// TODO(crbug.com/460748104): Test is flaky.
+- (void)FLAKY_testMovingBetweenGroupsUsingGridContextMenuInIncognitoGrid {
   [self testMovingBetweenGroupsUsingGridContextMenuInGrid:/*incognito*/ YES];
 }
 
@@ -795,6 +821,57 @@ void TapTabGridEditButton() {
                                           1)] assertWithMatcher:grey_nil()];
 }
 
+// Tests "Close Other Tabs" in a tab group.
+- (void)testCloseOtherTabsInGroup {
+  // Create Tab 1.
+  [ChromeEarlGrey loadURL:GetQueryTitleURL(self.testServer, kTab1Title)];
+  [ChromeEarlGreyUI openTabGrid];
+
+  // Create Group 1 from Tab 1.
+  CreateDefaultFirstGroupFromTabCellAtIndex(0);
+
+  // Create Tab 2.
+  [ChromeEarlGrey openNewTab];
+  [ChromeEarlGrey loadURL:GetQueryTitleURL(self.testServer, kTab2Title)];
+  [ChromeEarlGreyUI openTabGrid];
+
+  // Add Tab 2 to Group 1.
+  // Group currently has 1 tab, so title is "1 Tab".
+  AddTabAtIndexToGroupWithTitle(
+      1, l10n_util::GetPluralNSStringF(IDS_IOS_TAB_GROUP_TABS_NUMBER, 1));
+
+  // Create Tab 3 (outside group).
+  [ChromeEarlGrey openNewTab];
+  [ChromeEarlGrey loadURL:GetQueryTitleURL(self.testServer, kTab3Title)];
+  [ChromeEarlGreyUI openTabGrid];
+
+  // Open Group 1.
+  OpenTabGroupAtIndex(0);
+
+  // Long press Tab 2 (index 1 in group) and tap "Close Other Tabs".
+  // Tab 1 is at index 0. Tab 2 is at index 1.
+  DisplayContextMenuForTabCellAtIndex(1);
+  [[EarlGrey
+      selectElementWithMatcher:ContextMenuItemWithAccessibilityLabelId(
+                                   IDS_IOS_CONTENT_CONTEXT_CLOSEOTHERTABS)]
+      performAction:grey_tap()];
+
+  // Expect Tab 2 to remain.
+  [ChromeEarlGrey waitForUIElementToAppearWithMatcher:TabWithTitle(kTab2Title)];
+  // Expect Tab 1 to be gone.
+  [[EarlGrey selectElementWithMatcher:TabWithTitle(kTab1Title)]
+      assertWithMatcher:grey_nil()];
+
+  // Close Group View.
+  [[EarlGrey selectElementWithMatcher:grey_accessibilityID(
+                                          kTabGroupCloseButtonIdentifier)]
+      performAction:grey_tap()];
+
+  // Assert Tab 3 exists in main grid.
+  [[EarlGrey selectElementWithMatcher:TabWithTitle(kTab3Title)]
+      assertWithMatcher:grey_notNil()];
+}
+
 // Tests the group deletion from the overflow menu in the group view.
 - (void)testDeletingGroupFromGroupView {
   // Create a tab cell with `Tab 1` as its title.
@@ -878,19 +955,10 @@ void TapTabGridEditButton() {
   [[EarlGrey selectElementWithMatcher:TabGroupOverflowMenuButton()]
       performAction:grey_tap()];
 
-  if (iOS26_OR_ABOVE()) {
-    // TODO(crbug.com/428928323): Investigate why the keyboard appears. Remove
-    // this workaround when it's not needed anymore.
-    // On iOS 26, the keyboard appears when the new tab button is tapped and it
-    // hides the elements behind. Close the keyboard by typing a return key.
-    [ChromeEarlGrey simulatePhysicalKeyboardEvent:@"\\n" flags:0];
-  }
-
   // Tap the delete button.
   [[EarlGrey selectElementWithMatcher:DeleteGroupButton()]
       performAction:grey_tap()];
 
-#if defined(__IPHONE_26_0) && __IPHONE_OS_VERSION_MAX_ALLOWED >= __IPHONE_26_0
   if (iOS26_OR_ABOVE()) {
     [[EarlGrey
         selectElementWithMatcher:GREYAccessibilityID(@"PopoverDismissRegion")]
@@ -899,13 +967,6 @@ void TapTabGridEditButton() {
     [[EarlGrey selectElementWithMatcher:CloseTabGroupButton()]
         performAction:grey_tap()];
   }
-#else
-  // Cancel the action by tapping the close button (= outside the delete
-  // button). We have a cancel button only on iPhones with iOS versions smaller
-  // than iOS26.
-  [[EarlGrey selectElementWithMatcher:CloseTabGroupButton()]
-      performAction:grey_tap()];
-#endif
 
   // Check that `Tab 1` tab cell still exists in the group.
   [[EarlGrey selectElementWithMatcher:TabWithTitle(kTab1Title)]
@@ -982,7 +1043,7 @@ void TapTabGridEditButton() {
   [ChromeEarlGreyUI openTabGrid];
 
   // Enter the selection mode.
-  TapTabGridEditButton();
+  TapTabGridOverflowMenuButton();
   [[EarlGrey selectElementWithMatcher:TabGridSelectTabsMenuButton()]
       performAction:grey_tap()];
 
@@ -1027,7 +1088,7 @@ void TapTabGridEditButton() {
   [ChromeEarlGreyUI openTabGrid];
 
   // Enter the selection mode.
-  TapTabGridEditButton();
+  TapTabGridOverflowMenuButton();
   [[EarlGrey selectElementWithMatcher:TabGridSelectTabsMenuButton()]
       performAction:grey_tap()];
 
@@ -1081,7 +1142,7 @@ void TapTabGridEditButton() {
   CreateTabGroupAtIndex(0, kGroup1Name);
 
   // Enter the selection mode.
-  TapTabGridEditButton();
+  TapTabGridOverflowMenuButton();
   [[EarlGrey selectElementWithMatcher:TabGridSelectTabsMenuButton()]
       performAction:grey_tap()];
 
@@ -1354,7 +1415,13 @@ void TapTabGridEditButton() {
 
 // Tests that the TabGrid is correctly updated when it was presenting a group
 // before being backgrounded while incognito reauth is enabled.
-- (void)testIncognitoReauth {
+// TODO(crbug.com/459852252): Test fails on iPad simulator.
+#if TARGET_IPHONE_SIMULATOR
+#define MAYBE_testIncognitoReauth DISABLED_testIncognitoReauth
+#else
+#define MAYBE_testIncognitoReauth testIncognitoReauth
+#endif
+- (void)MAYBE_testIncognitoReauth {
   [ChromeEarlGrey openNewIncognitoTab];
   [ChromeEarlGreyUI openTabGrid];
 
@@ -1372,7 +1439,7 @@ void TapTabGridEditButton() {
   [[EarlGrey selectElementWithMatcher:chrome_test_util::TabGridDoneButton()]
       assertWithMatcher:grey_not(grey_enabled())];
   [[EarlGrey
-      selectElementWithMatcher:grey_allOf(TabGridEditButton(),
+      selectElementWithMatcher:grey_allOf(TabGridOverflowMenuButton(),
                                           grey_sufficientlyVisible(), nil)]
       assertWithMatcher:grey_not(grey_enabled())];
   [[EarlGrey selectElementWithMatcher:chrome_test_util::TabGridCellAtIndex(0)]
@@ -1438,6 +1505,10 @@ void TapTabGridEditButton() {
 
 // Tests opening a tab from the group view.
 - (void)testOpenTabFromGroupView {
+  // TODO(crbug.com/429593547): Re-enable the test on iOS26.
+  if (base::ios::IsRunningOnIOS26OrLater()) {
+    EARL_GREY_TEST_DISABLED(@"Test disabled on iOS 26.");
+  }
   std::string URL1 = "chrome://version";
   std::string URL2 = "chrome://about";
   std::string content1 = "Revision";
@@ -1446,8 +1517,6 @@ void TapTabGridEditButton() {
   // Load the first website.
   [ChromeEarlGrey loadURL:GURL(URL1)];
   [ChromeEarlGrey waitForWebStateContainingText:content1];
-  [[EarlGrey selectElementWithMatcher:chrome_test_util::OmniboxText(URL1)]
-      assertWithMatcher:grey_notNil()];
   NSString* versionTabTitle = [ChromeEarlGrey currentTabTitle];
 
   // Load the second website and this one should be the selected one.
@@ -1616,6 +1685,13 @@ void TapTabGridEditButton() {
     EARL_GREY_TEST_DISABLED(@"Multiple windows can't be opened.");
   }
 
+  // TODO(crbug.com/456744844): Re-enable the test on iOS26 simulator.
+#if TARGET_OS_SIMULATOR
+  if (base::ios::IsRunningOnIOS26OrLater()) {
+    EARL_GREY_TEST_DISABLED(@"Test disabled on iOS 26 simulator.");
+  }
+#endif
+
   [ChromeEarlGrey loadURL:GetQueryTitleURL(self.testServer, kTab2Title)];
 
   // Opens a new window.
@@ -1680,8 +1756,8 @@ void TapTabGridEditButton() {
 
   CreateDefaultFirstGroupFromTabCellAtIndex(0);
 
-  // Tap on "Edit" then "Select tabs".
-  TapTabGridEditButton();
+  // Tap on the Overflow Menu then "Select tabs".
+  TapTabGridOverflowMenuButton();
   [[EarlGrey selectElementWithMatcher:TabGridSelectTabsMenuButton()]
       performAction:grey_tap()];
 

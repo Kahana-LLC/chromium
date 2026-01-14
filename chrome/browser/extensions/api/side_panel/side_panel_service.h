@@ -149,6 +149,18 @@ class SidePanelService : public BrowserContextKeyedAPI,
       int window_id,
       bool include_incognito_information);
 
+  // Dispatch the sidePanel.onOpened event to the extension.
+  void DispatchOnOpenedEvent(const ExtensionId& extension_id,
+                             int window_id,
+                             std::optional<int> tab_id,
+                             const std::string& path);
+
+  // Dispatch the sidePanel.onClosed event to the extension.
+  void DispatchOnClosedEvent(const ExtensionId& extension_id,
+                             int window_id,
+                             std::optional<int> tab_id,
+                             const std::string& path);
+
  private:
   friend class BrowserContextKeyedAPIFactory<SidePanelService>;
 
@@ -161,6 +173,12 @@ class SidePanelService : public BrowserContextKeyedAPI,
 
   // Returns if there is an extension side panel for `tab_id`.
   bool HasSidePanelAvailableForTab(const Extension& extension, TabId tab_id);
+
+  // Returns whether there is an extension contextual panel for `tab_id`.
+  // `verify_options`: If true, ensure that .path and .enabled are truthy.
+  bool HasContextualPanelAvailableForTab(const Extension& extension,
+                                         TabId tab_id,
+                                         bool verify_options);
 
   // Remove extension id and associated options from `panels_`.
   void RemoveExtensionOptions(const ExtensionId& id);

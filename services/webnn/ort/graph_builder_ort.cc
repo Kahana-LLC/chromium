@@ -53,8 +53,11 @@ constexpr base::cstring_view kOpTypeCos = "Cos";
 constexpr base::cstring_view kOpTypeExp = "Exp";
 constexpr base::cstring_view kOpTypeFloor = "Floor";
 constexpr base::cstring_view kOpTypeLog = "Log";
+constexpr base::cstring_view kOpTypeIsNaN = "IsNaN";
+constexpr base::cstring_view kOpTypeIsInfinite = "IsInf";
 constexpr base::cstring_view kOpTypeLogicalNot = "Not";
 constexpr base::cstring_view kOpTypeNeg = "Neg";
+constexpr base::cstring_view kOpTypeRoundEven = "Round";
 constexpr base::cstring_view kOpTypeSign = "Sign";
 constexpr base::cstring_view kOpTypeSin = "Sin";
 constexpr base::cstring_view kOpTypeTan = "Tan";
@@ -157,10 +160,20 @@ constexpr base::cstring_view kAttrUpper = "upper";
 constexpr base::cstring_view kInserted = "Inserted";
 constexpr base::cstring_view kToEmulate = "ToEmulate";
 constexpr base::cstring_view kUnderscore = "_";
+constexpr std::string_view kNullCharacter("\0", 1);
+
+std::string SanitizeName(std::string_view name) {
+  std::string sanitized_name(name);
+  base::ReplaceChars(sanitized_name, kNullCharacter, kUnderscore,
+                     &sanitized_name);
+  return sanitized_name;
+}
 
 std::string GetOperandName(std::string_view name, OperandId id) {
-  return base::JoinString({name, base::NumberToString(id.value())},
-                          kUnderscore);
+  // ORT CreateValueInfo API rejects name starting with null character:
+  // https://github.com/microsoft/onnxruntime/blob/7b5a93ef5f71ca58a1b6e4ae81b250e767756c68/onnxruntime/core/session/model_editor_c_api.cc#L29
+  return base::JoinString(
+      {SanitizeName(name), base::NumberToString(id.value())}, kUnderscore);
 }
 
 // Maps a DataType to a `ONNXTensorElementDataType`. Other `TensorTypeMap`
@@ -349,15 +362,16 @@ const base::cstring_view GetRecurrentNetworkDirection(
 }  // namespace
 
 // static
-std::unique_ptr<ModelEditor::ModelInfo> GraphBuilderOrt::CreateAndBuild(
+base::expected<std::unique_ptr<ModelEditor::ModelInfo>, mojom::ErrorPtr>
+GraphBuilderOrt::CreateAndBuild(
     const mojom::GraphInfo& graph_info,
     ContextProperties context_properties,
     base::flat_map<OperandId, std::unique_ptr<WebNNConstantOperand>>
         constant_operands,
-    bool is_external_data_supported) {
+    std::optional<uint32_t> batched_matmul_k_dimension_limit) {
   GraphBuilderOrt graph_builder(graph_info, std::move(context_properties),
                                 std::move(constant_operands),
-                                is_external_data_supported);
+                                std::move(batched_matmul_k_dimension_limit));
   return graph_builder.BuildModel();
 }
 
@@ -366,11 +380,12 @@ GraphBuilderOrt::GraphBuilderOrt(
     ContextProperties context_properties,
     base::flat_map<OperandId, std::unique_ptr<WebNNConstantOperand>>
         constant_operands,
-    bool is_external_data_supported)
+    std::optional<uint32_t> batched_matmul_k_dimension_limit)
     : graph_info_(graph_info),
       constant_operands_(std::move(constant_operands)),
       context_properties_(std::move(context_properties)),
-      model_editor_(ModelEditor(is_external_data_supported)) {}
+      batched_matmul_k_dimension_limit_(
+          std::move(batched_matmul_k_dimension_limit)) {}
 
 GraphBuilderOrt::~GraphBuilderOrt() = default;
 
@@ -385,22 +400,18 @@ std::string GraphBuilderOrt::GetOperandNameById(OperandId operand_id) const {
 }
 
 std::string GraphBuilderOrt::GenerateNodeName(std::string_view label) {
-  return base::JoinString({label, base::NumberToString(next_operation_id_++)},
-                          kUnderscore);
+  return base::JoinString(
+      {SanitizeName(label), base::NumberToString(next_operation_id_++)},
+      kUnderscore);
 }
 
 std::string GraphBuilderOrt::GenerateEmulatedOpLabel(
     base::cstring_view op_type,
     std::string_view original_label,
     std::string_view additional_tag) {
-  if (additional_tag.empty()) {
-    return base::JoinString({kInserted, op_type, kToEmulate, original_label},
-                            kUnderscore);
-  } else {
-    return base::JoinString(
-        {kInserted, op_type, additional_tag, kToEmulate, original_label},
-        kUnderscore);
-  }
+  return base::JoinString({kInserted, op_type, additional_tag, kToEmulate,
+                           SanitizeName(original_label)},
+                          kUnderscore);
 }
 
 std::string GraphBuilderOrt::GenerateOperandName() {
@@ -868,10 +879,8 @@ void GraphBuilderOrt::AddArgMinMaxOperation(
 
   CHECK(context_properties_.data_type_limits.arg_min_max_input.Supports(
       GetOperand(arg_min_max.input_operand_id).descriptor));
-  OperandDataType output_data_type =
-      GetOperand(arg_min_max.output_operand_id).descriptor.data_type();
-  CHECK(context_properties_.data_type_limits.arg_min_max_output.Has(
-      output_data_type));
+  CHECK(context_properties_.data_type_limits.arg_min_max_output.Supports(
+      GetOperand(arg_min_max.output_operand_id).descriptor));
 
   std::array<ScopedOrtOpAttr, 2> attributes = {
       model_editor_.CreateAttribute(kAttrAxis,
@@ -880,6 +889,8 @@ void GraphBuilderOrt::AddArgMinMaxOperation(
           kAttrKeepDims, static_cast<int64_t>(arg_min_max.keep_dimensions))};
 
   // ONNX ArgMin/Max only supports int64 output.
+  OperandDataType output_data_type =
+      GetOperand(arg_min_max.output_operand_id).descriptor.data_type();
   bool need_cast = output_data_type != OperandDataType::kInt64;
   const std::string int64_output = need_cast ? GenerateOperandName() : output;
 
@@ -1266,27 +1277,33 @@ void GraphBuilderOrt::AddLogicalBinaryOperation(
   InsertCastNode(bool_output, output, WebnnToOnnxDataType(output_data_type));
 }
 
-void GraphBuilderOrt::AddLogicalNotOperation(
-    const mojom::ElementWiseUnary& logical_not) {
-  const std::string node_name = GenerateNodeName(logical_not.label);
-  // ONNX logical not operation only supports bool input.
-  CHECK_EQ(GetOperand(logical_not.input_operand_id).descriptor.data_type(),
-           OperandDataType::kUint8);
-  std::string input =
-      CreateCastNode(GetOperandNameById(logical_not.input_operand_id),
-                     ONNX_TENSOR_ELEMENT_DATA_TYPE_BOOL);
-  std::vector<const char*> inputs = {input.c_str()};
+void GraphBuilderOrt::AddLogicalUnaryOperation(
+    const mojom::ElementWiseUnary& logical_unary,
+    base::cstring_view op_type) {
+  const std::string node_name = GenerateNodeName(logical_unary.label);
+
+  std::string input = GetOperandNameById(logical_unary.input_operand_id);
+
+  // LogicalNot operation in ONNX only supports bool input.
+  if (op_type == kOpTypeLogicalNot) {
+    CHECK_EQ(GetOperand(logical_unary.input_operand_id).descriptor.data_type(),
+             OperandDataType::kUint8);
+    input = CreateCastNode(input, ONNX_TENSOR_ELEMENT_DATA_TYPE_BOOL);
+  }
 
   const std::string bool_output = GenerateOperandName();
-  std::array<const char*, 1> outputs = {bool_output.c_str()};
-  model_editor_.AddNode(kOpTypeLogicalNot, node_name, inputs, outputs);
 
-  // ONNX `Not` operator only supports bool output, while WebNN `logicalNot`
-  // operator supports uint8 output. Insert a `Cast` operator for type
+  std::array<const char*, 1> inputs = {input.c_str()};
+  std::array<const char*, 1> outputs = {bool_output.c_str()};
+  model_editor_.AddNode(op_type, node_name, inputs, outputs);
+
+  // ONNX logical operators only support bool output, while WebNN logical
+  // operators support uint8 output. Insert a `Cast` operator for type
   // conversion.
   const OperandDataType output_data_type =
-      GetOperand(logical_not.output_operand_id).descriptor.data_type();
-  const std::string output = GetOperandNameById(logical_not.output_operand_id);
+      GetOperand(logical_unary.output_operand_id).descriptor.data_type();
+  const std::string output =
+      GetOperandNameById(logical_unary.output_operand_id);
   CHECK_EQ(output_data_type, OperandDataType::kUint8);
   InsertCastNode(bool_output, output, WebnnToOnnxDataType(output_data_type));
 }
@@ -1447,13 +1464,25 @@ void GraphBuilderOrt::AddElementWiseUnaryOperation(
       CHECK(data_type_limits.log_input.Supports(input_descriptor));
       return AddUnaryOperation(element_wise_unary, kOpTypeLog);
     }
+    case mojom::ElementWiseUnary::Kind::kIsNaN: {
+      CHECK(data_type_limits.is_nan_input.Supports(input_descriptor));
+      return AddLogicalUnaryOperation(element_wise_unary, kOpTypeIsNaN);
+    }
+    case mojom::ElementWiseUnary::Kind::kIsInfinite: {
+      CHECK(data_type_limits.is_infinite_input.Supports(input_descriptor));
+      return AddLogicalUnaryOperation(element_wise_unary, kOpTypeIsInfinite);
+    }
     case mojom::ElementWiseUnary::Kind::kLogicalNot: {
       CHECK(data_type_limits.logical_not_input.Supports(input_descriptor));
-      return AddLogicalNotOperation(element_wise_unary);
+      return AddLogicalUnaryOperation(element_wise_unary, kOpTypeLogicalNot);
     }
     case mojom::ElementWiseUnary::Kind::kNeg: {
       CHECK(data_type_limits.neg_input.Supports(input_descriptor));
       return AddUnaryOperation(element_wise_unary, kOpTypeNeg);
+    }
+    case mojom::ElementWiseUnary::Kind::kRoundEven: {
+      CHECK(data_type_limits.round_even_input.Supports(input_descriptor));
+      return AddUnaryOperation(element_wise_unary, kOpTypeRoundEven);
     }
     case mojom::ElementWiseUnary::Kind::kSign: {
       CHECK(data_type_limits.sign_input.Supports(input_descriptor));
@@ -2474,7 +2503,8 @@ template void GraphBuilderOrt::AddLstmOperation(const mojom::Lstm& lstm);
 template void GraphBuilderOrt::AddLstmOperation(
     const mojom::LstmCell& lstm_cell);
 
-void GraphBuilderOrt::AddMatMulOperation(const mojom::Matmul& matmul) {
+base::expected<void, mojom::ErrorPtr> GraphBuilderOrt::AddMatMulOperation(
+    const mojom::Matmul& matmul) {
   const std::string node_name = GenerateNodeName(matmul.label);
   const std::string input_a = GetOperandNameById(matmul.a_operand_id);
   const std::string input_b = GetOperandNameById(matmul.b_operand_id);
@@ -2484,10 +2514,38 @@ void GraphBuilderOrt::AddMatMulOperation(const mojom::Matmul& matmul) {
       {GetOperand(matmul.a_operand_id).descriptor,
        GetOperand(matmul.b_operand_id).descriptor}));
 
+  if (batched_matmul_k_dimension_limit_.has_value()) {
+    bool is_batched_matmul =
+        GetOperand(matmul.output_operand_id).descriptor.Rank() > 2;
+    if (is_batched_matmul) {
+      uint32_t batched_matmul_k_dimension_size =
+          GetOperand(matmul.a_operand_id).descriptor.shape().back();
+      // Limitation: Reject batched MatMul operations with excessively large K
+      // dimension size to prevent the EP from becoming unresponsive during
+      // model compilation on some NPU devices.
+      // OpenVINO issue: https://github.com/microsoft/onnxruntime/issues/26643
+      // The fix is expected to be available in NPU driver Feb '26 release.
+      //
+      // TODO(crbug.com/468812994): Check the version of OV EP or NPU driver
+      // before applying the Limitation.
+      // TODO(crbug.com/467468912): When the OpenVINO issue is fixed, remove
+      // the limitation and increase the minimum required EP version.
+      if (batched_matmul_k_dimension_size >
+          batched_matmul_k_dimension_limit_.value()) {
+        return base::unexpected(mojom::Error::New(
+            mojom::Error::Code::kNotSupportedError,
+            "The K dimension size of the batched MatMul operation is too "
+            "large which is not supported on NPU."));
+      }
+    }
+  }
+
   std::array<const char*, 2> inputs = {input_a.c_str(), input_b.c_str()};
   std::array<const char*, 1> outputs = {output.c_str()};
 
   model_editor_.AddNode(kOpTypeMatMul, node_name, inputs, outputs);
+
+  return base::ok();
 }
 
 void GraphBuilderOrt::AddPool2dOperation(const mojom::Pool2d& pool2d) {
@@ -3049,7 +3107,8 @@ void GraphBuilderOrt::AddWhereOperation(const mojom::Where& where) {
   model_editor_.AddNode(kOpTypeWhere, node_name, inputs, outputs);
 }
 
-std::unique_ptr<ModelEditor::ModelInfo> GraphBuilderOrt::BuildModel() {
+base::expected<std::unique_ptr<ModelEditor::ModelInfo>, mojom::ErrorPtr>
+GraphBuilderOrt::BuildModel() {
   for (OperandId input_id : graph_info_->input_operands) {
     model_editor_.AddInput(GetOperandNameById(input_id), GetOperand(input_id));
   }
@@ -3197,7 +3256,10 @@ std::unique_ptr<ModelEditor::ModelInfo> GraphBuilderOrt::BuildModel() {
         break;
       }
       case mojom::Operation::Tag::kMatmul: {
-        AddMatMulOperation(*operation->get_matmul());
+        auto result = AddMatMulOperation(*operation->get_matmul());
+        if (!result.has_value()) {
+          return base::unexpected(std::move(result.error()));
+        }
         break;
       }
       case mojom::Operation::Tag::kPad: {

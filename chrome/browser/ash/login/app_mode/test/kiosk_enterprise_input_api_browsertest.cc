@@ -25,7 +25,6 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
-#include "content/public/test/test_navigation_observer.h"
 #include "extensions/test/extension_test_message_listener.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -152,15 +151,15 @@ class KioskEnterpriseInputApiBrowserTest
     MixinBasedInProcessBrowserTest::SetUpOnMainThread();
     ExtensionTestMessageListener extension_ready("ready");
     extension_ready.set_extension_id(std::string(kExtensionId));
+    ui_test_utils::BrowserCreatedObserver browser_created_observer;
     ASSERT_TRUE(kiosk::test::WaitKioskLaunched());
+    SetBrowser(browser_created_observer.Wait());
     // `chrome.runtime` only gets defined once the page finishes loading.
-    content::TestNavigationObserver(&GetAppWebContents())
-        .WaitForNavigationFinished();
+    ASSERT_TRUE(WaitForLoadStop(&GetAppWebContents()));
     ASSERT_TRUE(extension_ready.WaitUntilSatisfied());
   }
 
   content::WebContents& GetAppWebContents() {
-    SelectFirstBrowser();
     BrowserView* browser_view =
         BrowserView::GetBrowserViewForBrowser(browser());
     return CHECK_DEREF(browser_view->GetActiveWebContents());

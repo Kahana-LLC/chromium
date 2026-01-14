@@ -16,7 +16,8 @@
 #include "chrome/browser/safe_browsing/test_safe_browsing_database_helper.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_finder.h"
-#include "chrome/browser/ui/browser_list.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_interface_iterator.h"
 #include "chrome/browser/ui/tabs/tab_enums.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/common/chrome_paths.h"
@@ -217,7 +218,7 @@ IN_PROC_BROWSER_TEST_F(PopupTrackerBrowserTest,
 
   // Close the popup and check metric.
   content::WebContentsDestroyedWatcher destroyed_watcher(new_contents);
-  BrowserList::CloseAllBrowsersWithProfile(
+  chrome::CloseAllBrowsersWithProfile(
       Profile::FromBrowserContext(new_contents->GetBrowserContext()));
   destroyed_watcher.Wait();
 
@@ -249,15 +250,15 @@ IN_PROC_BROWSER_TEST_F(PopupTrackerBrowserTest,
   navigation_observer.Wait();
 
   EXPECT_EQ(2u, chrome::GetBrowserCount(browser()->profile()));
-  content::WebContents* new_contents = BrowserList::GetInstance()
-                                           ->GetLastActive()
-                                           ->tab_strip_model()
-                                           ->GetActiveWebContents();
+  content::WebContents* new_contents =
+      GetLastActiveBrowserWindowInterfaceWithAnyProfile()
+          ->GetTabStripModel()
+          ->GetActiveWebContents();
   EXPECT_TRUE(blocked_content::PopupTracker::FromWebContents(new_contents));
 
   // Close the popup and check metric.
   content::WebContentsDestroyedWatcher destroyed_watcher(new_contents);
-  BrowserList::CloseAllBrowsersWithProfile(
+  chrome::CloseAllBrowsersWithProfile(
       Profile::FromBrowserContext(new_contents->GetBrowserContext()));
   destroyed_watcher.Wait();
 

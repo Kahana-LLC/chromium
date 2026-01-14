@@ -239,9 +239,7 @@ void VizMainImpl::CreateGpuService(
     base::PlatformThreadId main_thread_id = base::PlatformThread::CurrentId();
     gpu_process_thread_ids.insert(main_thread_id);
 #if BUILDFLAG(IS_ANDROID)
-    if (base::FeatureList::IsEnabled(::features::kWebViewEnableADPFGpuMain)) {
-      viz_compositor_thread_runner_->SetGpuMainThreadId(main_thread_id);
-    }
+    viz_compositor_thread_runner_->SetGpuMainThreadId(main_thread_id);
 #endif
 
     CompositorGpuThread* compositor_gpu_thread =
@@ -310,6 +308,10 @@ void VizMainImpl::CreateInfoCollectionGpuService(
 void VizMainImpl::SetHostProcessId(int32_t pid) {
   if (gpu_service_)
     gpu_service_->SetHostProcessId(pid);
+}
+
+void VizMainImpl::NotifyWorkloadIncrease() {
+  viz_compositor_thread_runner_->NotifyWorkloadIncrease();
 }
 #endif
 

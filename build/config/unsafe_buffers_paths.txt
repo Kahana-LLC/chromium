@@ -4,10 +4,14 @@
 
 # See `docs/unsafe_buffers.md`.
 
-# Checks to enable
-.buffers,libc
+# Checks to enable.
+.buffers,libc,unique_ptr
 
-# Directories to exempt from checks
+# Path to source root from the directory containing this file.
+$../../
+
+# Directories to exempt from checks, relative to source root.
+-base/android/linker/
 -base/third_party/
 -codelabs/  # Examples, keep simple.
 -chrome/browser/platform_experience/win/
@@ -26,6 +30,4 @@
 +third_party/ipcz/
 +third_party/liburlpattern/
 -tools/
--ui/gl/  # Unsafe generated files.
--url/third_party/
 -v8/

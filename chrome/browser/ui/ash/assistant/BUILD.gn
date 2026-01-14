@@ -2,8 +2,6 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-import("//chromeos/ash/components/assistant/assistant.gni")
-
 assert(is_chromeos)
 
 static_library("assistant") {
@@ -19,14 +17,13 @@ static_library("assistant") {
     "//ash/public/cpp",
     "//base",
     "//chrome/browser/apps/app_service",
-    "//chrome/browser/ash/assistant",
+    "//chrome/browser/ash/browser_delegate",
     "//chrome/browser/ash/profiles",
     "//chrome/browser/profiles",
     "//chrome/browser/profiles:profile",
     "//chrome/browser/web_applications",
     "//chrome/common",
     "//chromeos/ash/services/assistant/public/cpp",
-    "//chromeos/ash/services/assistant/public/proto",
     "//components/session_manager/core",
     "//content/public/browser",
     "//content/public/common",
@@ -46,6 +43,7 @@ source_set("unit_tests") {
     "//chrome/browser/ash/app_list/arc",
     "//chrome/browser/ash/arc/session",
     "//chrome/browser/ash/arc/test:arc_test_support",
+    "//chrome/browser/ash/browser_delegate:impl",
     "//chrome/browser/ash/login/users:test_support",
     "//chrome/browser/web_applications:web_applications_test_support",
     "//chrome/test:test_support",

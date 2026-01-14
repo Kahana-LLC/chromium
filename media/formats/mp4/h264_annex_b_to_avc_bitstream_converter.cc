@@ -54,7 +54,7 @@ MP4Status H264AnnexBToAvcBitstreamConverter::ConvertChunk(
   //     `add_parameter_sets_in_bitstream_`.
   //  2. Slices. They'll being copied into the output buffer, but also affect
   //     what configuration (profile and level) is active now.
-  parser_.SetStream(input.data(), input.size());
+  parser_.SetStream(input);
   while ((result = parser_.AdvanceToNextNALU(&nalu)) != H264Parser::kEOStream) {
     if (result == H264Parser::kUnsupportedStream)
       return MP4Status::Codes::kUnsupportedStream;
@@ -72,11 +72,8 @@ MP4Status H264AnnexBToAvcBitstreamConverter::ConvertChunk(
         if (result != H264Parser::kOk)
           return MP4Status::Codes::kInvalidSPS;
 
-        id2sps_.insert_or_assign(
-            sps_id, blob(nalu.data.get(),
-                         (UNSAFE_TODO(nalu.data +
-                                      base::checked_cast<size_t>(nalu.size)))
-                             .get()));
+        id2sps_.insert_or_assign(sps_id,
+                                 blob(nalu.data.begin(), nalu.data.end()));
         id2sps_ext_.erase(sps_id);
         sps_to_include.insert(sps_id);
         config_changed = true;
@@ -90,11 +87,8 @@ MP4Status H264AnnexBToAvcBitstreamConverter::ConvertChunk(
           return MP4Status::Codes::kFailedToParse;
         }
 
-        id2sps_ext_.insert_or_assign(
-            sps_id, blob(nalu.data.get(),
-                         (UNSAFE_TODO(nalu.data +
-                                      base::checked_cast<size_t>(nalu.size)))
-                             .get()));
+        id2sps_ext_.insert_or_assign(sps_id,
+                                     blob(nalu.data.begin(), nalu.data.end()));
         config_changed = true;
         break;
       }
@@ -105,11 +99,8 @@ MP4Status H264AnnexBToAvcBitstreamConverter::ConvertChunk(
         if (result != H264Parser::kOk)
           return MP4Status::Codes::kInvalidPPS;
 
-        id2pps_.insert_or_assign(
-            pps_id, blob(nalu.data.get(),
-                         (UNSAFE_TODO(nalu.data +
-                                      base::checked_cast<size_t>(nalu.size)))
-                             .get()));
+        id2pps_.insert_or_assign(pps_id,
+                                 blob(nalu.data.begin(), nalu.data.end()));
         pps_to_include.insert(pps_id);
         if (auto* pps = parser_.GetPPS(pps_id))
           sps_to_include.insert(pps->seq_parameter_set_id);
@@ -153,11 +144,8 @@ MP4Status H264AnnexBToAvcBitstreamConverter::ConvertChunk(
       }
         [[fallthrough]];
       default:
-        // TODO(crbug.com/40284755): The `nalu.data` should hold a span instead
-        // of a pointer.
-        slice_units.emplace_back(nalu.data.get(),
-                                 base::checked_cast<size_t>(nalu.size));
-        data_size += config_.length_size + nalu.size;
+        slice_units.emplace_back(nalu.data);
+        data_size += config_.length_size + nalu.data.size();
         break;
     }
   }
@@ -177,9 +165,10 @@ MP4Status H264AnnexBToAvcBitstreamConverter::ConvertChunk(
       if (it == id2sps_.end()) {
         return MP4Status::Codes::kFailedToLookupSPS;
       }
-      if (id2sps_ext_.contains(id)) {
-        slice_units.insert(slice_units.begin(), id2sps_ext_[id]);
-        data_size += config_.length_size + id2sps_ext_[id].size();
+      if (auto id2sps_ext_it = id2sps_ext_.find(id);
+          id2sps_ext_it != id2sps_ext_.end()) {
+        slice_units.insert(slice_units.begin(), id2sps_ext_it->second);
+        data_size += config_.length_size + id2sps_ext_it->second.size();
       }
       slice_units.insert(slice_units.begin(), it->second);
       data_size += config_.length_size + it->second.size();
@@ -232,8 +221,9 @@ MP4Status H264AnnexBToAvcBitstreamConverter::ConvertChunk(
         return MP4Status::Codes::kFailedToLookupSPS;
       }
       config_.sps_list.push_back(it->second);
-      if (id2sps_ext_.contains(id)) {
-        config_.sps_ext_list.push_back(id2sps_ext_[id]);
+      if (auto id2sps_ext_it = id2sps_ext_.find(id);
+          id2sps_ext_it != id2sps_ext_.end()) {
+        config_.sps_ext_list.push_back(id2sps_ext_it->second);
       }
     }
 

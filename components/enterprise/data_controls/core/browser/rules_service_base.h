@@ -22,12 +22,37 @@ class RulesServiceBase : public KeyedService {
   explicit RulesServiceBase(PrefService* pref_service);
   ~RulesServiceBase() override;
 
+  // Returns a clipboard verdict only based the source of the copy, without
+  // making any special destination assumptions. This is meant to trigger rules
+  // that only have "sources" conditions, and blocking/warning verdicts returned
+  // by this function should trigger a dialog.
+  virtual Verdict GetCopyRestrictedBySourceVerdict(const GURL& source) const;
+
+  // Returns a clipboard verdict with the provided source attributes, and with
+  // the "os_clipboard" destination. This is meant to trigger rules that make
+  // use of the "os_clipboard" destination attribute. Blocking verdicts returned
+  // by this function should replace the data put in the clipboard, and warning
+  // verdicts should trigger a dialog.
+  virtual Verdict GetCopyToOSClipboardVerdict(const GURL& source) const;
+
+  // Returns a verdict to be applied to a specific file download.
+  virtual Verdict GetDownloadVerdict(const GURL& download_url) const;
+
+ protected:
   // Returns a `Verdict` corresponding to all triggered Data Control rules given
   // the provided context.
   Verdict GetVerdict(Rule::Restriction restriction,
                      const ActionContext& context) const;
 
  private:
+  // Returns whether the profile associated with the service is an incognito one
+  // or not.
+  virtual bool incognito_profile() const = 0;
+
+  // Returns if the "DataControlsRules" policy for the current service is set at
+  // the machine scope or not.
+  bool MachineScopePolicy() const;
+
   // Parse the "DataControlsRules" policy if the corresponding experiment is
   // enabled, and populate `rules_`.
   void OnDataControlsRulesUpdate();

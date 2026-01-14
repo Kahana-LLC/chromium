@@ -8,7 +8,6 @@
 #include <vector>
 
 #include "base/check.h"
-#include "base/containers/contains.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
 #include "base/functional/callback_helpers.h"
@@ -261,9 +260,9 @@ Status DeviceManager::AcquireSpecificDevice(const std::string& device_serial,
   if (status.IsError())
     return status;
 
-  if (!base::Contains(devices, device_serial))
-    return Status(kUnknownError,
-        "Device " + device_serial + " is not online");
+  if (!std::ranges::contains(devices, device_serial)) {
+    return Status(kUnknownError, "Device " + device_serial + " is not online");
+  }
 
   base::AutoLock lock(devices_lock_);
   if (IsDeviceLocked(device_serial)) {
@@ -289,5 +288,5 @@ Device* DeviceManager::LockDevice(const std::string& device_serial) {
 }
 
 bool DeviceManager::IsDeviceLocked(const std::string& device_serial) {
-  return base::Contains(active_devices_, device_serial);
+  return std::ranges::contains(active_devices_, device_serial);
 }

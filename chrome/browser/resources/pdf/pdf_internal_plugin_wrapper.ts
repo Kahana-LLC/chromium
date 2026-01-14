@@ -43,6 +43,8 @@ plugin.addEventListener('message', e => {
           message as unknown as {caretBrowsingEnabled: boolean};
       caretBrowsingEnabled = caretBrowsingEnabledData.caretBrowsingEnabled;
       break;
+    default:
+      break;
   }
 
   channel.port1.postMessage(message);
@@ -54,14 +56,6 @@ plugin.addEventListener('message', e => {
 let isPresentationMode = false;
 channel.port1.onmessage = e => {
   switch (e.data.type) {
-    case 'loadArray':
-      if (plugin.src.startsWith('blob:')) {
-        URL.revokeObjectURL(plugin.src);
-      }
-      plugin.src = URL.createObjectURL(new Blob([e.data.dataToLoad]));
-      plugin.setAttribute('has-edits', '');
-      return;
-
     case 'setPresentationMode':
       isPresentationMode = e.data.enablePresentationMode;
 
@@ -112,6 +106,9 @@ channel.port1.onmessage = e => {
             break;
         }
       }
+      break;
+
+    default:
       break;
   }
 
@@ -272,6 +269,8 @@ document.addEventListener('keypress', e => {
       if (!isFormFieldFocused) {
         e.preventDefault();
       }
+      break;
+    default:
       break;
   }
 });

@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "partition_alloc/shim/allocator_shim_default_dispatch_to_partition_alloc_with_advanced_checks.h"
 
 #include <atomic>
@@ -40,6 +35,14 @@ void* DelegatedAllocZeroInitializedFn(size_t n, size_t size, void* context) {
   const AllocatorDispatch* delegate = GetDelegate();
   PA_MUSTTAIL return delegate->alloc_zero_initialized_function(n, size,
                                                                context);
+}
+
+void* DelegatedAllocZeroInitializedUncheckedFn(size_t n,
+                                               size_t size,
+                                               void* context) {
+  const AllocatorDispatch* delegate = GetDelegate();
+  PA_MUSTTAIL return delegate->alloc_zero_initialized_unchecked_function(
+      n, size, context);
 }
 
 void* DelegatedAllocAlignedFn(size_t alignment, size_t size, void* context) {
@@ -227,6 +230,8 @@ const AllocatorDispatch AllocatorDispatch::default_dispatch = {
     .alloc_function = &DelegatedAllocFn,
     .alloc_unchecked_function = &DelegatedAllocUncheckedFn,
     .alloc_zero_initialized_function = &DelegatedAllocZeroInitializedFn,
+    .alloc_zero_initialized_unchecked_function =
+        &DelegatedAllocZeroInitializedUncheckedFn,
     .alloc_aligned_function = &DelegatedAllocAlignedFn,
     .realloc_function = &DelegatedReallocFn,
     .realloc_unchecked_function = &DelegatedReallocUncheckedFn,

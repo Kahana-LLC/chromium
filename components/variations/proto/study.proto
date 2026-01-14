@@ -17,7 +17,7 @@ option features.utf8_validation = NONE;
 // This defines the Protocol Buffer representation of a Chrome Variations study
 // as sent to clients of the Variations server.
 //
-// Next tag: 13
+// Next tag: 19
 message Study {
   // The name of the study. Should not contain spaces or special characters.
   // Ex: "my_study"
@@ -78,6 +78,20 @@ message Study {
     // IsFirstPartyContext() in variations_http_headers.cc for details.
     FIRST_PARTY = 1;
   }
+
+  // The starting timestamp for Google web visibility, in Unix time format
+  // (seconds since epoch; midnight January 1, 1970 UTC). It specifies the date
+  // and time when Google web visibility should commence once this experiment
+  // is activated. If not set, or 0, the experiment becomes visible immediately
+  // upon activation.
+  int64 google_web_visibility_start_date = 17;
+
+  // The ending timestamp for Google web visibility, in Unix time format
+  // (seconds since epoch; midnight January 1, 1970 UTC). It specifies the date
+  // and time when Google web visibility should cease if this experiment
+  // is active. If not set, or 0, the experiment remains visible once
+  // activated.
+  int64 google_web_visibility_end_date = 18;
 
   // An experiment within the study.
   //
@@ -190,20 +204,6 @@ message Study {
     }
 
     Type type = 7 [default = NORMAL];
-
-    // A UI string to override, and the new value to use.
-    message OverrideUIString {
-      // The first 32 bits of the MD5 hash digest of the resource name to
-      // override.
-      // e.g. Hash("IDS_BOOKMARK_BAR_UNDO")
-      fixed32 name_hash = 1;
-
-      // The new value of the string being overridden.
-      // e.g. "Undo"
-      string value = 2;
-    }
-
-    repeated OverrideUIString override_ui_string = 9;
   }
 
   // List of experiments in this study. This list should include the default /

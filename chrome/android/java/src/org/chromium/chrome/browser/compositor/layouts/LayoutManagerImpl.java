@@ -20,14 +20,16 @@ import androidx.annotation.VisibleForTesting;
 import org.chromium.base.Callback;
 import org.chromium.base.ObserverList;
 import org.chromium.base.TraceEvent;
+import org.chromium.base.supplier.NonNullObservableSupplier;
 import org.chromium.base.supplier.ObservableSupplier;
-import org.chromium.base.supplier.ObservableSupplierImpl;
-import org.chromium.base.supplier.Supplier;
+import org.chromium.base.supplier.ObservableSuppliers;
+import org.chromium.base.supplier.SettableNonNullObservableSupplier;
 import org.chromium.build.annotations.EnsuresNonNullIf;
 import org.chromium.build.annotations.Initializer;
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.back_press.BackPressManager;
+import org.chromium.chrome.browser.bookmarks.bar.BookmarkBarSceneLayer;
 import org.chromium.chrome.browser.browser_controls.BrowserControlsStateProvider;
 import org.chromium.chrome.browser.browser_controls.BrowserControlsUtils;
 import org.chromium.chrome.browser.browser_controls.BrowserControlsVisibilityManager;
@@ -88,6 +90,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Supplier;
 
 /**
  * A class that is responsible for managing an active {@link Layout} to show to the screen. This
@@ -174,10 +177,10 @@ public class LayoutManagerImpl
     /** The animation handler responsible for updating all the browser compositor's animations. */
     private final CompositorAnimationHandler mAnimationHandler;
 
-    private final ObservableSupplierImpl<TabModelSelector> mTabModelSelectorSupplier =
-            new ObservableSupplierImpl<>();
     private final ObservableSupplier<TabContentManager> mTabContentManagerSupplier;
-    private final CompositorModelChangeProcessor.FrameRequestSupplier mFrameRequestSupplier;
+    private final SettableNonNullObservableSupplier<Long> mFrameRequestSupplier =
+            ObservableSuppliers.createNonNull(0L);
+    private final Runnable mRequestFrameRunnable = this::requestUpdate;
 
     private BrowserControlsStateProvider mBrowserControlsStateProvider;
 
@@ -191,8 +194,8 @@ public class LayoutManagerImpl
     private final Supplier<TopUiThemeColorProvider> mTopUiThemeColorProvider;
 
     /** The supplier of whether this is going to intercept back press gesture. */
-    private final ObservableSupplierImpl<Boolean> mHandleBackPressChangedSupplier =
-            new ObservableSupplierImpl<>();
+    private final SettableNonNullObservableSupplier<Boolean> mHandleBackPressChangedSupplier =
+            ObservableSuppliers.createNonNull(false);
 
     /** When non-null, #doneShowing should call into the sequencer instead of doing normal work. */
     private @Nullable ShowingEventSequencer mShowingEventSequencer;
@@ -351,6 +354,8 @@ public class LayoutManagerImpl
                     // Place the tab strip behind the toolbar scene layer as during tab strip
                     // transition, the toolbar will move up and cover the tab strip.
                     StripLayoutHelperManager.class,
+                    // The Bookmark Bar will appear to move behind the toolbar during animation.
+                    BookmarkBarSceneLayer.class,
                     TopToolbarOverlayCoordinator.class,
                     // StripLayoutHelperManager should be updated before
                     // ScrollingBottomViewSceneLayer Since ScrollingBottomViewSceneLayer change
@@ -367,12 +372,9 @@ public class LayoutManagerImpl
         assert contentContainer != null;
         mContentContainer = contentContainer;
 
-        mAnimationHandler = new CompositorAnimationHandler(this::requestUpdate);
+        mAnimationHandler = new CompositorAnimationHandler(mRequestFrameRunnable);
 
         mOverlayPanelManager = new OverlayPanelManager();
-
-        mFrameRequestSupplier =
-                new CompositorModelChangeProcessor.FrameRequestSupplier(this::requestUpdate);
     }
 
     /**
@@ -654,11 +656,12 @@ public class LayoutManagerImpl
                         renderHost,
                         mHost,
                         mFrameRequestSupplier,
+                        mRequestFrameRunnable,
                         selector,
                         mTabContentManagerSupplier.get(),
                         mBrowserControlsStateProvider,
                         mTopUiThemeColorProvider,
-                        !hasTabletUi());
+                        getLayoutNeedOffsetTagSupplier());
 
         setNextLayout(null, true);
 
@@ -678,7 +681,6 @@ public class LayoutManagerImpl
     @Initializer
     public void setTabModelSelector(TabModelSelector selector) {
         mTabModelSelector = selector;
-        mTabModelSelectorSupplier.set(selector);
         mTabModelSelectorTabObserver =
                 new TabModelSelectorTabObserver(mTabModelSelector) {
                     @Override
@@ -712,9 +714,7 @@ public class LayoutManagerImpl
         selector.getCurrentTabModelSupplier().addSyncObserver(mCurrentTabModelObserver);
 
         mTabGroupModelFilterObserver = createTabModelObserver();
-        getTabModelSelector()
-                .getTabGroupModelFilterProvider()
-                .addTabGroupModelFilterObserver(mTabGroupModelFilterObserver);
+        getTabModelSelector().addTabGroupModelFilterObserver(mTabGroupModelFilterObserver);
     }
 
     @Override
@@ -730,9 +730,7 @@ public class LayoutManagerImpl
                     .removeObserver(mCurrentTabModelObserver);
         }
         if (mTabGroupModelFilterObserver != null) {
-            getTabModelSelector()
-                    .getTabGroupModelFilterProvider()
-                    .removeTabGroupModelFilterObserver(mTabGroupModelFilterObserver);
+            getTabModelSelector().removeTabGroupModelFilterObserver(mTabGroupModelFilterObserver);
         }
     }
 
@@ -748,7 +746,7 @@ public class LayoutManagerImpl
             PropertyModelChangeProcessor.ViewBinder<PropertyModel, V, @Nullable PropertyKey>
                     viewBinder) {
         return CompositorModelChangeProcessor.create(
-                model, view, viewBinder, mFrameRequestSupplier, true);
+                model, view, viewBinder, mFrameRequestSupplier, mRequestFrameRunnable, true);
     }
 
     @Override
@@ -760,7 +758,13 @@ public class LayoutManagerImpl
                             viewBinder,
                     Set<PropertyKey> exclusions) {
         return CompositorModelChangeProcessor.create(
-                model, view, viewBinder, mFrameRequestSupplier, true, exclusions);
+                model,
+                view,
+                viewBinder,
+                mFrameRequestSupplier,
+                mRequestFrameRunnable,
+                true,
+                exclusions);
     }
 
     /**
@@ -795,11 +799,6 @@ public class LayoutManagerImpl
                         browserControlsManager);
         assumeNonNull(layer);
 
-        float offsetPx =
-                mBrowserControlsStateProvider == null
-                        ? 0
-                        : mBrowserControlsStateProvider.getTopControlOffset();
-
         for (SceneOverlay overlay : mSceneOverlays) {
             // If the SceneOverlay is not showing, don't bother adding it to the tree.
             if (!overlay.isSceneOverlayTreeShowing()) {
@@ -809,10 +808,7 @@ public class LayoutManagerImpl
 
             SceneOverlayLayer overlayLayer =
                     overlay.getUpdatedSceneOverlayTree(
-                            mCachedWindowViewport,
-                            mCachedVisibleViewport,
-                            resourceManager,
-                            offsetPx * mPxToDp);
+                            mCachedWindowViewport, mCachedVisibleViewport, resourceManager);
             assumeNonNull(overlayLayer);
 
             overlayLayer.setContentTree(layer);
@@ -895,8 +891,8 @@ public class LayoutManagerImpl
     /**
      * @return The {@link TabModelObserver} instance this class should be using.
      */
-    protected LayoutManagerChrome.LayoutManagerTabModelObserver createTabModelObserver() {
-        return new LayoutManagerChrome.LayoutManagerTabModelObserver();
+    protected LayoutManagerTabModelObserver createTabModelObserver() {
+        return new LayoutManagerTabModelObserver();
     }
 
     /**
@@ -1337,7 +1333,7 @@ public class LayoutManagerImpl
     }
 
     @Override
-    public ObservableSupplier<Boolean> getHandleBackPressChangedSupplier() {
+    public NonNullObservableSupplier<Boolean> getHandleBackPressChangedSupplier() {
         return mHandleBackPressChangedSupplier;
     }
 
@@ -1445,7 +1441,7 @@ public class LayoutManagerImpl
         mLayoutObservers.removeObserver(listener);
     }
 
-    public boolean hasTabletUi() {
-        return false;
+    public NonNullObservableSupplier<Boolean> getLayoutNeedOffsetTagSupplier() {
+        return ObservableSuppliers.alwaysTrue();
     }
 }

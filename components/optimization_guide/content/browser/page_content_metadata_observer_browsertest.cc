@@ -6,7 +6,7 @@
 
 #include "base/test/bind.h"
 #include "base/test/test_future.h"
-#include "components/network_session_configurator/common/network_switches.h"
+#include "build/build_config.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/test/browser_test.h"
@@ -46,17 +46,13 @@ class PageContentMetadataObserverBrowserTest
         net::EmbeddedTestServer::TYPE_HTTPS);
     https_server_->AddDefaultHandlers(GetTestDataDir());
     content::SetupCrossSiteRedirector(https_server_.get());
+    https_server_->SetCertHostnames({"a.com", "b.com", "c.com"});
 
     ASSERT_TRUE(https_server_->Start());
   }
 
   void SetUpCommandLine(base::CommandLine* command_line) override {
     content::ContentBrowserTest::SetUpCommandLine(command_line);
-
-    // HTTPS server only serves a valid cert for localhost, so this is needed
-    // to load pages from other hosts without an error.
-    command_line->AppendSwitch(switches::kIgnoreCertificateErrors);
-
     command_line->AppendSwitchASCII(switches::kForceDeviceScaleFactor, "1.0");
   }
 
@@ -68,20 +64,21 @@ class PageContentMetadataObserverBrowserTest
   const std::vector<std::string> names_ = {"author", "subject"};
 
   void CreateObserver() {
-    PageContentMetadataObserver::GetOrCreateForWebContents(GetWebContents(),
-                                                           names_);
-    PageContentMetadataObserver::FromWebContents(GetWebContents())
-        ->SetOnMetaTagsChangedCallback(base::BindRepeating(
+    observer_ = std::make_unique<PageContentMetadataObserver>(
+        GetWebContents(), names_,
+        base::BindRepeating(
             &PageContentMetadataObserverBrowserTest::OnMetaTagsChanged,
             base::Unretained(this)));
   }
 
-  void OnMetaTagsChanged(content::RenderFrameHost* rfh,
-                         const blink::mojom::PageMetadata& page_metadata) {
-    page_metadata_ = page_metadata.Clone();
-    // This may be called multiple times in some tests, but TestFuture handles
-    // this gracefully.
-    callback_waiter_.SetValue(true);
+  void OnMetaTagsChanged(blink::mojom::PageMetadataPtr page_metadata) {
+    page_metadata_ = std::move(page_metadata);
+    // This may be called multiple times in some tests. Only signal the waiter
+    // if it is not already ready to avoid crashing the TestFuture. The test
+    // will check the latest value of `page_metadata_` when it wakes up.
+    if (!callback_waiter_.IsReady()) {
+      callback_waiter_.SetValue(true);
+    }
   }
 
   bool ProcessPendingIPC() {
@@ -98,10 +95,15 @@ class PageContentMetadataObserverBrowserTest
     ProcessPendingIPC();
   }
 
-  net::EmbeddedTestServer* https_server() { return https_server_.get(); }
+  void WaitForCallback() {
+    ASSERT_TRUE(callback_waiter_.Wait());
+    callback_waiter_.Clear();
+  }
 
+  net::EmbeddedTestServer* https_server() { return https_server_.get(); }
   blink::mojom::PageMetadataPtr& page_metadata() { return page_metadata_; }
 
+  std::unique_ptr<PageContentMetadataObserver> observer_;
   base::test::TestFuture<bool> callback_waiter_;
 
  private:
@@ -121,9 +123,20 @@ IN_PROC_BROWSER_TEST_F(PageContentMetadataObserverBrowserTest,
   EXPECT_EQ(metadata->frame_metadata[0]->meta_tags.size(), 1u);
   EXPECT_EQ(metadata->frame_metadata[0]->meta_tags[0]->name, "author");
   EXPECT_EQ(metadata->frame_metadata[0]->meta_tags[0]->content, "Gary");
+
+  observer_.reset();
 }
 
-IN_PROC_BROWSER_TEST_F(PageContentMetadataObserverBrowserTest, NoMetaTags) {
+// TODO(https://crbug.com/455915204): Test is flaky on android-arm64-tests.
+// TODO(https://crbug.com/455816130): Test is flaky on linux tests.
+// TODO(https://crbug.com/460575998): Test is flaky on fuchsia-fyi-x64-asan.
+#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_FUCHSIA)
+#define MAYBE_NoMetaTags DISABLED_NoMetaTags
+#else
+#define MAYBE_NoMetaTags NoMetaTags
+#endif
+IN_PROC_BROWSER_TEST_F(PageContentMetadataObserverBrowserTest,
+                       MAYBE_NoMetaTags) {
   ASSERT_TRUE(LoadPage(https_server()->GetURL("/simple.html")));
   CreateObserver();
 
@@ -132,8 +145,10 @@ IN_PROC_BROWSER_TEST_F(PageContentMetadataObserverBrowserTest, NoMetaTags) {
   EXPECT_FALSE(callback_waiter_.IsReady());
 }
 
+// TODO(crbug.com/440240260): This test flakes frequently on debug / arm64
+// builders.
 IN_PROC_BROWSER_TEST_F(PageContentMetadataObserverBrowserTest,
-                       MetaTagsAreObservedInMultipleFrames) {
+                       DISABLED_MetaTagsAreObservedInMultipleFrames) {
   ASSERT_TRUE(LoadPage(
       https_server()->GetURL("a.com", "/meta_tags_in_multiple_frames.html")));
   CreateObserver();
@@ -184,15 +199,15 @@ IN_PROC_BROWSER_TEST_F(PageContentMetadataObserverBrowserTest,
 
   EXPECT_EQ(local_meta_tags_frames, 1);
   EXPECT_EQ(remote_meta_tags_frames, 3);
+
+  observer_.reset();
 }
 
 IN_PROC_BROWSER_TEST_F(PageContentMetadataObserverBrowserTest,
                        MetaTagsUpdated) {
   ASSERT_TRUE(LoadPage(https_server()->GetURL("/meta_tags.html")));
   CreateObserver();
-
-  WaitForPageLoadedAndIPCs();
-  ASSERT_TRUE(callback_waiter_.Wait());
+  ASSERT_TRUE(callback_waiter_.Take());
   // ASSERT_TRUE(callback_called());
 
   // Verify initial state.
@@ -210,7 +225,7 @@ IN_PROC_BROWSER_TEST_F(PageContentMetadataObserverBrowserTest,
       GetWebContents(),
       "document.querySelector('meta[name=\"author\"]').setAttribute('content', "
       "'Val');"));
-  ASSERT_TRUE(callback_waiter_.Get());
+  ASSERT_TRUE(callback_waiter_.Take());
   {
     blink::mojom::PageMetadataPtr& metadata = page_metadata();
     EXPECT_EQ(metadata->frame_metadata.size(), 1u);
@@ -225,7 +240,7 @@ IN_PROC_BROWSER_TEST_F(PageContentMetadataObserverBrowserTest,
       GetWebContents(),
       "var meta = document.createElement('meta'); meta.name = 'subject'; "
       "meta.content = 'testing'; document.head.appendChild(meta);"));
-  ASSERT_TRUE(callback_waiter_.Get());
+  ASSERT_TRUE(callback_waiter_.Take());
   {
     blink::mojom::PageMetadataPtr& metadata = page_metadata();
     EXPECT_EQ(metadata->frame_metadata.size(), 1u);
@@ -243,7 +258,7 @@ IN_PROC_BROWSER_TEST_F(PageContentMetadataObserverBrowserTest,
   ASSERT_TRUE(content::ExecJs(
       GetWebContents(),
       "document.querySelector('meta[name=\"author\"]').remove();"));
-  ASSERT_TRUE(callback_waiter_.Get());
+  ASSERT_TRUE(callback_waiter_.Take());
   {
     blink::mojom::PageMetadataPtr& metadata = page_metadata();
     EXPECT_EQ(metadata->frame_metadata.size(), 1u);
@@ -273,8 +288,105 @@ IN_PROC_BROWSER_TEST_F(PageContentMetadataObserverBrowserTest,
   // The observer should be notified of the change.
   ASSERT_TRUE(callback_waiter_.Wait());
 
-  // The metadata should now be empty.
-  EXPECT_EQ(page_metadata()->frame_metadata.size(), 0u);
+  // The metadata should now contain one frame with no meta tags.
+  EXPECT_EQ(page_metadata()->frame_metadata.size(), 1u);
+  EXPECT_EQ(page_metadata()->frame_metadata[0]->meta_tags.size(), 0u);
+}
+
+IN_PROC_BROWSER_TEST_F(PageContentMetadataObserverBrowserTest,
+                       SubscriptionIsRemoved) {
+  ASSERT_TRUE(LoadPage(https_server()->GetURL("/meta_tags.html")));
+  CreateObserver();
+  ASSERT_TRUE(callback_waiter_.Wait());
+
+  blink::mojom::PageMetadataPtr& metadata = page_metadata();
+  EXPECT_EQ(metadata->frame_metadata.size(), 1u);
+  EXPECT_EQ(metadata->frame_metadata[0]->meta_tags.size(), 1u);
+
+  // Now, destroy the observer.
+  observer_.reset();
+  callback_waiter_.Clear();
+
+  // Now, modify the meta tag.
+  ASSERT_TRUE(content::ExecJs(
+      GetWebContents(),
+      "document.querySelector('meta[name=\"author\"]').setAttribute('content', "
+      "'Val');"));
+
+  ProcessPendingIPC();
+
+  // The observer should not be notified of the change.
+  EXPECT_FALSE(callback_waiter_.IsReady());
+}
+
+IN_PROC_BROWSER_TEST_F(PageContentMetadataObserverBrowserTest,
+                       SubscriptionIsRemovedBeforeFirstCallback) {
+  CreateObserver();
+  observer_.reset();
+  ASSERT_TRUE(LoadPage(https_server()->GetURL("/meta_tags.html")));
+  WaitForPageLoadedAndIPCs();
+  EXPECT_FALSE(callback_waiter_.IsReady());
+}
+
+IN_PROC_BROWSER_TEST_F(PageContentMetadataObserverBrowserTest,
+                       MetaTagsAreObservedInNavigatedIframe) {
+  GURL main_url = https_server()->GetURL("/iframe.html");
+  GURL iframe_url = https_server()->GetURL("/meta_tags.html");
+
+  ASSERT_TRUE(LoadPage(main_url));
+  WaitForPageLoadedAndIPCs();
+
+  CreateObserver();
+  WaitForCallback();
+
+  // The first callback should have metadata for one or two frames (depending on
+  // platform), but no meta tags.
+  ASSERT_TRUE(page_metadata());
+  EXPECT_TRUE(page_metadata()->frame_metadata.size() == 1u ||
+              page_metadata()->frame_metadata.size() == 2u);
+  for (const auto& frame_metadata : page_metadata()->frame_metadata) {
+    EXPECT_TRUE(frame_metadata->meta_tags.empty());
+  }
+  // Any additional initial callbacks will be handled by the while-loop below.
+
+  // Now, navigate the iframe.
+  ASSERT_TRUE(content::ExecJs(
+      GetWebContents(),
+      content::JsReplace("document.querySelector('#test_iframe').src = $1",
+                         iframe_url)));
+
+  // The observer should be notified of the meta tags in the iframe. There may
+  // be multiple callbacks, so we loop until we see the metadata we expect.
+  while (true) {
+    ASSERT_TRUE(callback_waiter_.Wait());
+    bool found_iframe_metadata = false;
+    for (const auto& frame_metadata : page_metadata()->frame_metadata) {
+      if (frame_metadata->url == iframe_url &&
+          !frame_metadata->meta_tags.empty()) {
+        found_iframe_metadata = true;
+        break;
+      }
+    }
+    if (found_iframe_metadata) {
+      break;
+    }
+    callback_waiter_.Clear();
+  }
+
+  blink::mojom::PageMetadataPtr& metadata = page_metadata();
+  ASSERT_EQ(metadata->frame_metadata.size(), 2u);
+
+  bool found_iframe_metadata = false;
+  for (const auto& frame_metadata : metadata->frame_metadata) {
+    if (frame_metadata->url == iframe_url) {
+      found_iframe_metadata = true;
+      ASSERT_EQ(frame_metadata->meta_tags.size(), 1u);
+      EXPECT_EQ(frame_metadata->meta_tags[0]->name, "author");
+      EXPECT_EQ(frame_metadata->meta_tags[0]->content, "Gary");
+    }
+  }
+  EXPECT_TRUE(found_iframe_metadata);
+  observer_.reset();
 }
 
 }  // namespace

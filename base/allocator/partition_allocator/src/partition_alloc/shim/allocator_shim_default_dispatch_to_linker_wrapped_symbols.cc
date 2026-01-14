@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
-#pragma allow_unsafe_buffers
-#endif
-
 #include <malloc.h>
 
 #include "partition_alloc/build_config.h"
@@ -76,15 +71,16 @@ size_t RealSizeEstimate(void* address, void* context) {
 }  // namespace
 
 const AllocatorDispatch AllocatorDispatch::default_dispatch = {
-    &RealMalloc,                   /* alloc_function */
-    &RealMalloc,                   /* alloc_unchecked_function */
-    &RealCalloc,                   /* alloc_zero_initialized_function */
-    &RealMemalign,                 /* alloc_aligned_function */
-    &RealRealloc,                  /* realloc_function */
-    &RealRealloc,                  /* realloc_unchecked_function */
-    &RealFree,                     /* free_function */
-    &RealFreeWithSize,             /* free_with_size_function */
-    &RealFreeWithAlignment,        /* free_with_alignment_function */
+    &RealMalloc,            /* alloc_function */
+    &RealMalloc,            /* alloc_unchecked_function */
+    &RealCalloc,            /* alloc_zero_initialized_function */
+    &RealCalloc,            /* alloc_zero_initialized_unchecked_function */
+    &RealMemalign,          /* alloc_aligned_function */
+    &RealRealloc,           /* realloc_function */
+    &RealRealloc,           /* realloc_unchecked_function */
+    &RealFree,              /* free_function */
+    &RealFreeWithSize,      /* free_with_size_function */
+    &RealFreeWithAlignment, /* free_with_alignment_function */
     &RealFreeWithSizeAndAlignment, /* free_with_size_and_alignment_function */
     &RealSizeEstimate,             /* get_size_estimate_function */
     nullptr,                       /* good_size_function */

@@ -13,7 +13,6 @@
 #include <set>
 #include <utility>
 
-#include "ash/constants/ash_features.h"
 #include "ash/constants/ash_pref_names.h"
 #include "ash/constants/ash_switches.h"
 #include "ash/constants/web_app_id_constants.h"
@@ -22,7 +21,6 @@
 #include "ash/webui/projector_app/public/cpp/projector_app_constants.h"
 #include "base/check.h"
 #include "base/check_op.h"
-#include "base/containers/contains.h"
 #include "base/containers/extend.h"
 #include "base/containers/span.h"
 #include "base/feature_list.h"
@@ -372,7 +370,7 @@ void PinAfterChromeIfNotPresent(app_list::AppListSyncableService* syncable_servi
     PositionItemId next =
         GetNextPositionItemIdAfter(syncable_service, current_position);
     if (!next.position.IsValid() ||
-        !base::Contains(skip_app_ids, next.item_id)) {
+        !std::ranges::contains(skip_app_ids, next.item_id)) {
       next_position = next.position;
       break;
     }
@@ -427,10 +425,6 @@ void AddNotebookLmAppPinIfNeeded(
 // NotebookLM, when Mall is enabled.
 void AddMallPinIfNeeded(Profile* profile,
                         app_list::AppListSyncableService* syncable_service) {
-  if (!base::FeatureList::IsEnabled(chromeos::features::kCrosMall)) {
-    return;
-  }
-
   // When Mall SWA is enabled, pin the Mall SWA once, and use a synced pref to
   // make sure it doesn't pin a second time. Users have the option to unpin the
   // SWA.
@@ -775,9 +769,9 @@ void ChromeShelfPrefs::EnsureChromePinned() {
 }
 
 bool ChromeShelfPrefs::DidAddDefaultApps() const {
-  return base::Contains(
-      profile_->GetPrefs()->GetList(GetShelfDefaultPinLayoutPref()),
-      kDefaultPinnedAppsKey);
+  return profile_->GetPrefs()
+      ->GetList(GetShelfDefaultPinLayoutPref())
+      .contains(kDefaultPinnedAppsKey);
 }
 
 bool ChromeShelfPrefs::ShouldAddDefaultApps() const {
@@ -811,9 +805,9 @@ void ChromeShelfPrefs::AddDefaultApps() {
 }
 
 bool ChromeShelfPrefs::DidAddPreloadApps() const {
-  return base::Contains(
-      profile_->GetPrefs()->GetList(GetShelfDefaultPinLayoutPref()),
-      kPreloadPinnedAppsKey);
+  return profile_->GetPrefs()
+      ->GetList(GetShelfDefaultPinLayoutPref())
+      .contains(kPreloadPinnedAppsKey);
 }
 
 void ChromeShelfPrefs::PinPreloadApps() {
@@ -915,10 +909,6 @@ void ChromeShelfPrefs::AttachProfile(Profile* profile) {
 
 std::string ChromeShelfPrefs::GetPromisePackageIdForSyncItem(
     const std::string& app_id) {
-  if (!ash::features::ArePromiseIconsEnabled()) {
-    return std::string();
-  }
-
   auto* syncable_service =
       app_list::AppListSyncableServiceFactory::GetForProfile(profile_);
 

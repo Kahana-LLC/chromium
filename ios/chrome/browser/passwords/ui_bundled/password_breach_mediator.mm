@@ -10,8 +10,8 @@
 #import "components/strings/grit/components_strings.h"
 #import "ios/chrome/browser/passwords/ui_bundled/password_breach_consumer.h"
 #import "ios/chrome/browser/passwords/ui_bundled/password_breach_presenter.h"
-#import "ios/chrome/browser/shared/public/commands/application_commands.h"
 #import "ios/chrome/browser/shared/public/commands/open_new_tab_command.h"
+#import "ios/chrome/browser/shared/public/commands/scene_commands.h"
 #import "ios/chrome/browser/signin/model/authentication_service.h"
 #import "ios/chrome/grit/ios_strings.h"
 #import "ui/base/l10n/l10n_util.h"
@@ -86,11 +86,6 @@ using password_manager::metrics_util::LeakDialogType;
 
 #pragma mark - ConfirmationAlertActionHandler
 
-- (void)confirmationAlertDismissAction {
-  self.dismissReason = LeakDialogDismissalReason::kClickedOk;
-  [self.presenter stop];
-}
-
 - (void)confirmationAlertPrimaryAction {
   if (ShouldCheckPasswords(self.credentialLeakType)) {
     self.dismissReason = LeakDialogDismissalReason::kClickedCheckPasswords;
@@ -106,16 +101,19 @@ using password_manager::metrics_util::LeakDialogType;
       [self.presenter openPasswordManager];
     }
   } else {
-    [self confirmationAlertDismissAction];
+    [self dismissSheet];
   }
 }
 
 - (void)confirmationAlertSecondaryAction {
-  [self confirmationAlertDismissAction];
+  [self dismissSheet];
 }
 
-- (void)confirmationAlertLearnMoreAction {
-  [self.presenter presentLearnMore];
+#pragma mark - Private
+
+- (void)dismissSheet {
+  self.dismissReason = LeakDialogDismissalReason::kClickedOk;
+  [self.presenter stop];
 }
 
 @end

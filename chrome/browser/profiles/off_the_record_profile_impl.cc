@@ -65,6 +65,7 @@
 #include "chrome/common/chrome_switches.h"
 #include "components/background_sync/background_sync_controller_impl.h"
 #include "components/content_settings/core/browser/host_content_settings_map.h"
+#include "components/guest_view/buildflags/buildflags.h"
 #include "components/heavy_ad_intervention/heavy_ad_service.h"
 #include "components/keyed_service/content/browser_context_dependency_manager.h"
 #include "components/keyed_service/core/simple_dependency_manager.h"
@@ -110,12 +111,14 @@
 #endif
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
-#include "chrome/browser/extensions/extension_service.h"
-#include "components/guest_view/browser/guest_view_manager.h"
 #include "extensions/browser/api/web_request/extension_web_request_event_router.h"
 #include "extensions/browser/extension_pref_store.h"
 #include "extensions/browser/extension_pref_value_map_factory.h"
 #include "extensions/common/extension.h"
+#endif
+
+#if BUILDFLAG(ENABLE_GUEST_VIEW)
+#include "components/guest_view/browser/guest_view_manager.h"
 #endif
 
 #if BUILDFLAG(ENABLE_PLUGINS)
@@ -330,10 +333,6 @@ std::string OffTheRecordProfileImpl::GetProfileUserName() const {
   return std::string();
 }
 
-base::FilePath OffTheRecordProfileImpl::GetPath() {
-  return profile_->GetPath();
-}
-
 base::FilePath OffTheRecordProfileImpl::GetPath() const {
   return profile_->GetPath();
 }
@@ -401,11 +400,6 @@ OffTheRecordProfileImpl::GetExtensionSpecialStoragePolicy() {
 
 bool OffTheRecordProfileImpl::IsChild() const {
   return profile_->IsChild();
-}
-
-bool OffTheRecordProfileImpl::AllowsBrowserWindows() const {
-  return profile_->AllowsBrowserWindows() &&
-         otr_profile_id_->AllowsBrowserWindows();
 }
 
 PrefService* OffTheRecordProfileImpl::GetPrefs() {
@@ -523,7 +517,7 @@ OffTheRecordProfileImpl::GetReduceAcceptLanguageControllerDelegate() {
 
 std::unique_ptr<media::VideoDecodePerfHistory>
 OffTheRecordProfileImpl::CreateVideoDecodePerfHistory() {
-  // Use the original profile's DB to seed the OTR VideoDecodePerfHisotry. The
+  // Use the original profile's DB to seed the OTR VideoDecodePerfHistory. The
   // original DB is treated as read-only, while OTR playbacks will write stats
   // to the InMemory version (cleared on profile destruction). Guest profiles
   // don't have a root profile like incognito, meaning they don't have a seed

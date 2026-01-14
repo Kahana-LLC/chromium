@@ -96,9 +96,6 @@ public class OmniboxFeatures {
     /// Holds the information whether logic should focus on preserving memory on this device.
     private static @Nullable Boolean sIsLowMemoryDevice;
 
-    public static final CachedFlag sOmniboxAnswerActions =
-            newFlag(OmniboxFeatureList.OMNIBOX_ANSWER_ACTIONS, FeatureState.ENABLED_IN_TEST);
-
     public static final CachedFlag sAnimateSuggestionsListAppearance =
             newFlag(
                     OmniboxFeatureList.ANIMATE_SUGGESTIONS_LIST_APPEARANCE,
@@ -108,6 +105,9 @@ public class OmniboxFeatures {
             newFlag(
                     OmniboxFeatureList.OMNIBOX_TOUCH_DOWN_TRIGGER_FOR_PREFETCH,
                     FeatureState.ENABLED_IN_PROD);
+
+    public static final CachedFlag sUrlBarWithoutLigatures =
+            newFlag(OmniboxFeatureList.URL_BAR_WITHOUT_LIGATURES, FeatureState.ENABLED_IN_PROD);
 
     /**
      * Whether GeolocationHeader should use {@link
@@ -134,23 +134,45 @@ public class OmniboxFeatures {
     public static final CachedFlag sOmniboxSiteSearch =
             newFlag(OmniboxFeatureList.OMNIBOX_SITE_SEARCH, FeatureState.ENABLED_IN_TEST);
 
+    public static final CachedFlag sOmniboxMultimodalInput =
+            newFlag(OmniboxFeatureList.OMNIBOX_MULTIMODAL_INPUT, FeatureState.ENABLED_IN_TEST);
+
+    public static final BooleanCachedFeatureParam sShowDedicatedModeButton =
+            newBooleanParam(sOmniboxMultimodalInput, "show_dedicated_mode_button", false);
+
+    public static final BooleanCachedFeatureParam sShowTryAiModeHintInDedicatedModeButton =
+            newBooleanParam(sOmniboxMultimodalInput, "show_try_aimode_hint_in_mode_button", false);
+
+    public static final BooleanCachedFeatureParam sShowImageGenerationButtonInIncognito =
+            newBooleanParam(sOmniboxMultimodalInput, "show_image_gen_button_in_incognito", true);
+
+    public static final BooleanCachedFeatureParam sCompactFusebox =
+            newBooleanParam(sOmniboxMultimodalInput, "compact_fusebox", false);
+
+    public static final BooleanCachedFeatureParam sMultiattachmentFusebox =
+            newBooleanParam(sOmniboxMultimodalInput, "multi_context", false);
+
     public static final CachedFlag sMultilineEditField =
-            newFlag(OmniboxFeatureList.MULTILINE_EDIT_FIELD, FeatureState.DISABLED);
+            newFlag(OmniboxFeatureList.MULTILINE_EDIT_FIELD, FeatureState.ENABLED_IN_PROD);
+
+    public static final BooleanCachedFeatureParam sWrapAutocompleteText =
+            newBooleanParam(sOmniboxMultimodalInput, "wrap_autocomplete_text", false);
 
     public static final CachedFlag sAndroidHubSearchTabGroups =
             newFlag(OmniboxFeatureList.ANDROID_HUB_SEARCH_TAB_GROUPS, FeatureState.ENABLED_IN_TEST);
 
+    public static final CachedFlag sOmniboxImprovementForLFF =
+            newFlag(OmniboxFeatureList.OMNIBOX_IMPROVEMENT_FOR_LFF, FeatureState.DISABLED);
+
+    public static final CachedFlag sRemoveSearchReadyOmnibox =
+            newFlag(OmniboxFeatureList.REMOVE_SEARCH_READY_OMNIBOX, FeatureState.ENABLED_IN_TEST);
+
+    public static final BooleanCachedFeatureParam sRemoveSroIncludingVerbatimMatch =
+            newBooleanParam(
+                    sRemoveSearchReadyOmnibox, "remove_sro_including_verbatim_match", false);
+
     public static final BooleanCachedFeatureParam sOmniboxParityRetrieveBuiltInEngineIcon =
-            newBooleanParam(sOmniboxMobileParityUpdateV2, "retrieve_builtin_favicon", false);
-
-    public static final BooleanCachedFeatureParam sAnswerActionsShowAboveKeyboard =
-            newBooleanParam(sOmniboxAnswerActions, "AnswerActionsShowAboveKeyboard", false);
-
-    public static final BooleanCachedFeatureParam sAnswerActionsShowIfUrlsPresent =
-            newBooleanParam(sOmniboxAnswerActions, "ShowIfUrlsPresent", false);
-
-    public static final BooleanCachedFeatureParam sAnswerActionsShowRichCard =
-            newBooleanParam(sOmniboxAnswerActions, "ShowRichCard", false);
+            newBooleanParam(sOmniboxMobileParityUpdateV2, "retrieve_builtin_favicon", true);
 
     public static final IntCachedFeatureParam sGeolocationRequestTimeoutMinutes =
             newIntParam(
@@ -186,7 +208,7 @@ public class OmniboxFeatures {
             newIntParam(sJumpStartOmnibox, "jump_start_memory_threshold_kb", 2 * 1024 * 1024);
 
     public static final IntCachedFeatureParam sJumpStartOmniboxMinAwayTimeMinutes =
-            newIntParam(sJumpStartOmnibox, "jump_start_min_away_time_minutes", 0 * 60);
+            newIntParam(sJumpStartOmnibox, "jump_start_min_away_time_minutes", 15);
 
     public static final IntCachedFeatureParam sJumpStartOmniboxMaxAwayTimeMinutes =
             newIntParam(sJumpStartOmnibox, "jump_start_max_away_time_minutes", 8 * 60);
@@ -198,6 +220,29 @@ public class OmniboxFeatures {
     // suggestions on SearchActivity.
     public static final BooleanCachedFeatureParam sJumpStartOmniboxCoverRecentlyVisitedPage =
             newBooleanParam(sJumpStartOmnibox, "jump_start_cover_recently_visited_page", false);
+
+    // This parameter enables the hub search entrypoints on the tab groups pane.
+    public static final BooleanCachedFeatureParam sAndroidHubSearchEnableOnTabGroupsPane =
+            newBooleanParam(sAndroidHubSearchTabGroups, "enable_hub_search_tab_groups_pane", true);
+
+    // This parameter enables the tab group string on the hub search box entrypoint.
+    public static final BooleanCachedFeatureParam sAndroidHubSearchEnableTabGroupStrings =
+            newBooleanParam(
+                    sAndroidHubSearchTabGroups, "enable_hub_search_tab_group_strings", false);
+
+    // This parameter enables showing the switch-to-tab chip on large form factors.
+    public static final BooleanCachedFeatureParam sOmniboxImprovementForLFFSwitchToTabChip =
+            newBooleanParam(sOmniboxImprovementForLFF, "switch_to_tab_chip", false);
+
+    // This parameter enables removing suggestion via "x" button.
+    public static final BooleanCachedFeatureParam
+            sOmniboxImprovementForLFFRemoveSuggestionViaButton =
+                    newBooleanParam(
+                            sOmniboxImprovementForLFF, "remove_suggestion_via_button", false);
+
+    // This parameter enables persisting editing state.
+    public static final BooleanCachedFeatureParam sOmniboxImprovementForLFFPersistEditingState =
+            newBooleanParam(sOmniboxImprovementForLFF, "persist_editing_state", false);
 
     // Omnibox Diagnostics
     private static final CachedFlag sDiagnostics =
@@ -314,29 +359,6 @@ public class OmniboxFeatures {
      */
     public static int getMaxPrefetchesPerOmniboxSession() {
         return sTouchDownTriggerMaxPrefetchesPerSession.getValue();
-    }
-
-    /** Returns whether answer suggestions should be annotated with attached action chips. */
-    public static boolean shouldShowAnswerActions() {
-        return sOmniboxAnswerActions.isEnabled();
-    }
-
-    /** Returns whether answers with actions should be re-ordered to just above the keyboard */
-    public static boolean shouldShowAnswerWithActionsAboveKeyboard() {
-        return shouldShowAnswerActions() && sAnswerActionsShowAboveKeyboard.getValue();
-    }
-
-    /**
-     * Returns whether answers with actions should be displayed if there are url suggestions
-     * present.
-     */
-    public static boolean shouldShowAnswerWithActionsIfUrlsPresent() {
-        return shouldShowAnswerActions() && sAnswerActionsShowIfUrlsPresent.getValue();
-    }
-
-    /** Returns whether answers with actions should be presented as a rich card */
-    public static boolean shouldShowRichAnswerCard() {
-        return shouldShowAnswerActions() && sAnswerActionsShowRichCard.getValue();
     }
 
     /**

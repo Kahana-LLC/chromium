@@ -8,6 +8,7 @@ import static org.chromium.build.NullUtil.assumeNonNull;
 
 import android.app.Activity;
 import android.os.SystemClock;
+import android.view.View;
 import android.view.ViewGroup;
 
 import androidx.annotation.VisibleForTesting;
@@ -22,6 +23,7 @@ import org.chromium.base.ResettersForTesting;
 import org.chromium.base.supplier.ObservableSupplier;
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
+import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.magic_stack.ModuleRegistry.OnViewCreatedCallback;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.tab.Tab;
@@ -85,7 +87,21 @@ public class HomeModulesCoordinator implements ModuleDelegate, OnViewCreatedCall
             ModuleRegistry moduleRegistry) {
         mModuleDelegateHost = moduleDelegateHost;
         mHomeModulesConfigManager = homeModulesConfigManager;
-        mHomeModulesStateListener = this::onModuleConfigChanged;
+        mHomeModulesStateListener =
+                new HomeModulesConfigManager.HomeModulesStateListener() {
+                    @Override
+                    public void onModuleConfigChanged(int moduleType, boolean isEnabled) {
+                        HomeModulesCoordinator.this.onModuleConfigChanged(moduleType, isEnabled);
+                    }
+
+                    @Override
+                    public void allCardsConfigChanged(boolean isEnabled) {
+                        if (ChromeFeatureList.isEnabled(
+                                ChromeFeatureList.HOME_MODULE_PREF_REFACTOR)) {
+                            mRecyclerView.setVisibility(isEnabled ? View.VISIBLE : View.GONE);
+                        }
+                    }
+                };
         mHomeModulesConfigManager.addListener(mHomeModulesStateListener);
         mModuleRegistry = moduleRegistry;
 
@@ -233,12 +249,13 @@ public class HomeModulesCoordinator implements ModuleDelegate, OnViewCreatedCall
             return;
         }
 
-        if (mProfileSupplier.hasValue()) {
+        var profile = mProfileSupplier.get();
+        if (profile != null) {
             mMediator.showModules(callback, this);
         } else {
             long waitForProfileStartTimeMs = SystemClock.elapsedRealtime();
             mOnProfileAvailableObserver =
-                    (profile) -> {
+                    (p) -> {
                         onProfileAvailable(callback, waitForProfileStartTimeMs);
                     };
 

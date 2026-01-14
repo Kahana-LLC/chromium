@@ -46,8 +46,11 @@ IdentityProviderData::IdentityProviderData(
 IdentityProviderData::~IdentityProviderData() = default;
 
 RelyingPartyData::RelyingPartyData(const std::u16string& rp_for_display,
-                                   const std::u16string& iframe_for_display)
-    : rp_for_display(rp_for_display), iframe_for_display(iframe_for_display) {}
+                                   const std::u16string& iframe_for_display,
+                                   bool display_strings_may_change)
+    : rp_for_display(rp_for_display),
+      iframe_for_display(iframe_for_display),
+      display_strings_may_change(display_strings_may_change) {}
 RelyingPartyData::RelyingPartyData(const RelyingPartyData& other) = default;
 RelyingPartyData::~RelyingPartyData() = default;
 
@@ -75,8 +78,6 @@ bool IdentityRequestDialogController::ShowAccountsDialog(
     const std::vector<scoped_refptr<content::IdentityProviderData>>& idp_list,
     const std::vector<scoped_refptr<content::IdentityRequestAccount>>& accounts,
     blink::mojom::RpMode rp_mode,
-    const std::vector<scoped_refptr<content::IdentityRequestAccount>>&
-        new_accounts,
     AccountSelectionCallback on_selected,
     LoginToIdPCallback on_add_account,
     DismissCallback dismiss_callback,

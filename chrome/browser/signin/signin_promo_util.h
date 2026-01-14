@@ -9,6 +9,7 @@
 #include "base/scoped_observation.h"
 #include "build/build_config.h"
 #include "components/signin/public/base/signin_buildflags.h"
+#include "components/signin/public/base/signin_prefs.h"
 #include "components/signin/public/identity_manager/account_info.h"
 #include "components/signin/public/identity_manager/identity_manager.h"
 #include "extensions/buildflags/buildflags.h"
@@ -61,8 +62,9 @@ bool ShouldShowAddressSignInPromo(Profile& profile,
 // Whether we should show the sign in promo after a bookmark was saved.
 bool ShouldShowBookmarkSignInPromo(Profile& profile);
 
-// Returns whether `access_point` has an equivalent autofill signin promo.
-bool IsAutofillSigninPromo(signin_metrics::AccessPoint access_point);
+// Returns whether `access_point` has an equivalent signin promo which is its
+// own bubble, rather than a footnote.
+bool IsBubbleSigninPromo(signin_metrics::AccessPoint access_point);
 
 // Returns whether `access_point` has an equivalent signin promo.
 bool IsSignInPromo(signin_metrics::AccessPoint access_point);
@@ -75,6 +77,53 @@ SignInPromoType GetSignInPromoTypeFromAccessPoint(
 // promo, or for the profile if there is no account available.
 void RecordSignInPromoShown(signin_metrics::AccessPoint access_point,
                             Profile* profile);
+
+// Structure containing information needed for the promos.
+struct ProfileMenuAvatarButtonPromoInfo {
+  // Different promo types that can be shown in the ProfileMenu and
+  // AvatarButton.
+  // These values are persisted to logs. Entries should not be renumbered and
+  // numeric values should never be reused.
+  //
+  // LINT.IfChange(ProfileMenuAvatarButtonPromoType)
+  enum class Type {
+    kHistorySyncPromo = 0,
+    kBatchUploadPromo = 1,
+    kBatchUploadBookmarksPromo = 2,
+    kBatchUploadWindows10DepreciationPromo = 3,
+    kSyncPromo = 4,
+
+    kMaxValue = kSyncPromo,
+  };
+  // LINT.ThenChange(//tools/metrics/histograms/metadata/signin/enums.xml:ProfileMenuAvatarButtonPromoType)
+
+  std::optional<Type> type = std::nullopt;
+  size_t local_data_count = 0;
+
+  friend bool operator==(const ProfileMenuAvatarButtonPromoInfo& info1,
+                         const ProfileMenuAvatarButtonPromoInfo& info2) =
+      default;
+};
+
+// Records the show count at which the AvatarButton was showing `promo_type`
+// that lead to the promo being accepted.
+void RecordAvatarButtonPromoAcceptedAtPromoShownCount(
+    ProfileMenuAvatarButtonPromoInfo::Type promo_type,
+    signin::IdentityManager* identity_manager,
+    PrefService& prefs);
+
+// Access point used to mark the source from the AvatarButton click event for
+// HistorySync promo.
+inline constexpr signin_metrics::AccessPoint
+    kHistoryOptinAvatarPromoAccessPoint =
+        signin_metrics::AccessPoint::kHistorySyncOptinExpansionPillOnStartup;
+
+// Based on the `profile` current state, compute the data to be shown for the
+// promos, if any, based on the promo priority and the profile state. The promo
+// between the ProfileMenu and the AvatarButton should always be aligned.
+void ComputeProfileMenuAvatarButtonPromoInfo(
+    Profile& profile,
+    base::OnceCallback<void(ProfileMenuAvatarButtonPromoInfo)> result_callback);
 
 class SyncPromoIdentityPillManager : public signin::IdentityManager::Observer {
  public:
@@ -96,9 +145,9 @@ class SyncPromoIdentityPillManager : public signin::IdentityManager::Observer {
   SyncPromoIdentityPillManager& operator=(SyncPromoIdentityPillManager&&) =
       delete;
 
-  bool ShouldShowPromo() const;
-  void RecordPromoShown();
-  void RecordPromoUsed();
+  bool ShouldShowPromo(ProfileMenuAvatarButtonPromoInfo::Type promo_type);
+  void RecordPromoShown(ProfileMenuAvatarButtonPromoInfo::Type promo_type);
+  void RecordPromoUsed(ProfileMenuAvatarButtonPromoInfo::Type promo_type);
 
   // signin::IdentityManager::Observer:
   void OnIdentityManagerShutdown(IdentityManager* identity_manager) override;
@@ -110,7 +159,8 @@ class SyncPromoIdentityPillManager : public signin::IdentityManager::Observer {
   AccountInfo GetSignedInAccountInfo() const;
 
   raw_ptr<signin::IdentityManager> identity_manager_;
-  const raw_ref<PrefService> pref_service_;
+  // Only nullptr after the `identity_manager_` starts shutting down.
+  std::unique_ptr<SigninPrefs> signin_prefs_;
 
   const int max_shown_count_ = 0;
   const int max_used_count_ = 0;

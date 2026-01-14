@@ -38,7 +38,7 @@
 #include "base/containers/heap_array.h"
 #include "base/containers/span.h"
 #include "base/dcheck_is_on.h"
-#include "base/functional/callback_forward.h"
+#include "base/functional/callback.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "third_party/blink/public/common/messaging/message_port_channel.h"
 #include "third_party/blink/public/common/messaging/message_port_descriptor.h"
@@ -105,7 +105,7 @@ class CORE_EXPORT SerializedScriptValue
   using ArrayBufferContentsArray = Vector<ArrayBufferContents, 1>;
   using SharedArrayBufferContentsArray = Vector<ArrayBufferContents, 1>;
   using ImageBitmapContentsArray = Vector<scoped_refptr<StaticBitmapImage>, 1>;
-  using TransferredWasmModulesArray = WTF::Vector<v8::CompiledWasmModule>;
+  using TransferredWasmModulesArray = Vector<v8::CompiledWasmModule>;
   using MessagePortChannelArray = Vector<MessagePortChannel>;
   using StreamArray = Vector<Stream>;
   using FileSystemAccessTokensArray =

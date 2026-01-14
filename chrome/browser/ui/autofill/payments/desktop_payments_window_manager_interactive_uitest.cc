@@ -13,9 +13,12 @@
 #include "chrome/browser/ui/autofill/payments/desktop_payments_window_manager.h"
 #include "chrome/browser/ui/autofill/payments/desktop_payments_window_manager_test_api.h"
 #include "chrome/browser/ui/browser.h"
+#include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/browser_tabstrip.h"
 #include "chrome/browser/ui/browser_window.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_interface_iterator.h"
 #include "chrome/browser/ui/test/test_browser_ui.h"
 #include "chrome/browser/ui/views/autofill/payments/payments_window_user_consent_dialog_view.h"
 #include "chrome/test/base/interactive_test_utils.h"
@@ -81,6 +84,7 @@ class DesktopPaymentsWindowManagerInteractiveUiTest : public UiBrowserTest {
   DesktopPaymentsWindowManagerInteractiveUiTest() = default;
 
   void ShowUi(const std::string& name) override {
+    ui_test_utils::BrowserCreatedObserver browser_created_observer;
     if (name.find("Vcn3ds") != std::string::npos) {
       client()->set_last_committed_primary_main_frame_url(GURL(kTestUrl));
 
@@ -113,12 +117,13 @@ class DesktopPaymentsWindowManagerInteractiveUiTest : public UiBrowserTest {
     } else {
       NOTREACHED();
     }
+    popup_browser_ = browser_created_observer.Wait();
   }
 
   bool VerifyUi() override {
     // There should be two browsers present, the original browser and the
     // pop-up's browser.
-    if (BrowserList::GetInstance()->size() != 2U) {
+    if (chrome::GetTotalBrowserCount() != 2U) {
       return false;
     }
 
@@ -156,22 +161,15 @@ class DesktopPaymentsWindowManagerInteractiveUiTest : public UiBrowserTest {
 
  protected:
   content::WebContents* GetOriginalPageWebContents() {
-    // The original page is always created first, so it is the first browser in
-    // the browser list.
-    return BrowserList::GetInstance()
-        ->get(0)
-        ->tab_strip_model()
-        ->GetActiveWebContents();
+    // The original page is always created first.
+    return browser()->GetTabStripModel()->GetActiveWebContents();
   }
 
   content::WebContents* GetPopupWebContents() {
-    // The pop-up must be created from `source_web_contents`, so it is the
-    // second browser in the BrowserList.
-    return BrowserList::GetInstance()
-        ->get(1)
-        ->tab_strip_model()
-        ->GetActiveWebContents();
+    return popup_browser_->GetTabStripModel()->GetActiveWebContents();
   }
+
+  BrowserWindowInterface* popup_browser() { return popup_browser_; }
 
   void ClosePopupAndWait() {
     base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
@@ -219,6 +217,8 @@ class DesktopPaymentsWindowManagerInteractiveUiTest : public UiBrowserTest {
 
   std::optional<PaymentsWindowManager::Vcn3dsAuthenticationResponse>
       authentication_response_;
+
+  raw_ptr<BrowserWindowInterface> popup_browser_;
 };
 
 // Tests that an error dialog is shown if there is no metadata returned from the
@@ -807,13 +807,11 @@ IN_PROC_BROWSER_TEST_F(DesktopPaymentsWindowManagerInteractiveUiTest,
 
   // Activate the original browser and check that the browser containing the
   // pop-up's web contents becomes the last active browser.
-  ui_test_utils::BrowserActivationWaiter waiter(
-      BrowserList::GetInstance()->get(1));
-  BrowserList::GetInstance()->get(0)->window()->Activate();
+  ui_test_utils::BrowserActivationWaiter waiter(popup_browser());
+  browser()->GetWindow()->Activate();
   waiter.WaitForActivation();
-  EXPECT_TRUE(BrowserList::GetInstance()
-                  ->GetLastActive()
-                  ->tab_strip_model()
+  EXPECT_TRUE(GetLastActiveBrowserWindowInterfaceWithAnyProfile()
+                  ->GetTabStripModel()
                   ->GetActiveWebContents() == GetPopupWebContents());
 }
 #endif  // #if BUILDFLAG(IS_LINUX)
@@ -1075,12 +1073,9 @@ class PaymentsWindowUserConsentDialogIntegrationTest
   }
 
   DesktopPaymentsWindowManager& GetWindowManager() {
-    // The original page is always created first, so it is the first browser in
-    // the browser list.
-    auto* original_page_web_contents = BrowserList::GetInstance()
-                                           ->get(0)
-                                           ->tab_strip_model()
-                                           ->GetActiveWebContents();
+    // The original page is always created first.
+    auto* original_page_web_contents =
+        browser()->GetTabStripModel()->GetActiveWebContents();
     return *static_cast<DesktopPaymentsWindowManager*>(
         test_autofill_client_injector_[original_page_web_contents]
             ->GetPaymentsAutofillClient()
@@ -1150,7 +1145,7 @@ IN_PROC_BROWSER_TEST_F(PaymentsWindowUserConsentDialogIntegrationTest,
 // accept callback and creates the pop-up.
 IN_PROC_BROWSER_TEST_F(PaymentsWindowUserConsentDialogIntegrationTest,
                        DialogAccepted) {
-  EXPECT_EQ(BrowserList::GetInstance()->size(), 1U);
+  EXPECT_EQ(chrome::GetTotalBrowserCount(), 1U);
 
   RunTestSequence(
       TriggerDialogAndWaitForShow(views::DialogClientView::kOkButtonElementId),
@@ -1158,16 +1153,15 @@ IN_PROC_BROWSER_TEST_F(PaymentsWindowUserConsentDialogIntegrationTest,
       // must be used.
       InSameContext(
           PressButton(views::DialogClientView::kOkButtonElementId),
-          AfterHide(PaymentsWindowUserConsentDialogView::kTopViewId, []() {
-            EXPECT_EQ(BrowserList::GetInstance()->size(), 2U);
-          })));
+          AfterHide(PaymentsWindowUserConsentDialogView::kTopViewId,
+                    []() { EXPECT_EQ(chrome::GetTotalBrowserCount(), 2U); })));
 }
 
 // Tests that the VCN 3DS consent dialog accepted histogram bucket is logged to
 // when the consent dialog is accepted.
 IN_PROC_BROWSER_TEST_F(PaymentsWindowUserConsentDialogIntegrationTest,
                        DialogAccepted_AcceptedHistogramBucketLogs) {
-  EXPECT_EQ(BrowserList::GetInstance()->size(), 1U);
+  EXPECT_EQ(chrome::GetTotalBrowserCount(), 1U);
 
   RunTestSequence(
       TriggerDialogAndWaitForShow(views::DialogClientView::kOkButtonElementId),
@@ -1175,9 +1169,8 @@ IN_PROC_BROWSER_TEST_F(PaymentsWindowUserConsentDialogIntegrationTest,
       // must be used.
       InSameContext(
           PressButton(views::DialogClientView::kOkButtonElementId),
-          AfterHide(
-              PaymentsWindowUserConsentDialogView::kTopViewId,
-              []() { EXPECT_EQ(BrowserList::GetInstance()->size(), 2U); }),
+          AfterHide(PaymentsWindowUserConsentDialogView::kTopViewId,
+                    []() { EXPECT_EQ(chrome::GetTotalBrowserCount(), 2U); }),
           Check([this]() {
             return histogram_tester_.GetBucketCount(
                        kVcn3dsFlowEventsHistogramName,

@@ -17,6 +17,7 @@
 #include "base/memory/scoped_refptr.h"
 #include "base/sequence_checker.h"
 #include "base/values.h"
+#include "chrome/updater/registration_data.h"
 #include "chrome/updater/update_service.h"
 
 namespace base {
@@ -37,7 +38,6 @@ namespace updater {
 class Configurator;
 class PersistedData;
 class PolicyService;
-struct RegistrationRequest;
 
 // All functions and callbacks must be called on the same sequence.
 class UpdateServiceImplImpl : public UpdateService {
@@ -87,6 +87,16 @@ class UpdateServiceImplImpl : public UpdateService {
       const std::string& language,
       base::RepeatingCallback<void(const UpdateState&)> state_update,
       base::OnceCallback<void(Result)> callback) override;
+  void GetUpdaterState(
+      base::OnceCallback<void(const UpdaterState&)> callback) override;
+  void GetUpdaterPolicies(
+      base::OnceCallback<void(const base::flat_map<std::string, PolicyValue>&)>
+          callback) override;
+  void GetAppPolicies(
+      base::OnceCallback<
+          void(const base::flat_map<std::string,
+                                    base::flat_map<std::string, PolicyValue>>&)>
+          callback) override;
 
  private:
   ~UpdateServiceImplImpl() override;

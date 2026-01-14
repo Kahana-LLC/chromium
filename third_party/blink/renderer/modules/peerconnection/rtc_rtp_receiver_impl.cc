@@ -9,6 +9,7 @@
 #include "base/functional/bind.h"
 #include "base/notreached.h"
 #include "base/task/single_thread_task_runner.h"
+#include "third_party/blink/renderer/modules/mediastream/video_track_adapter.h"  // For kMediaStreamTrackEmptyVideoFrameMonitor.
 #include "third_party/blink/renderer/modules/peerconnection/peer_connection_features.h"
 #include "third_party/blink/renderer/platform/peerconnection/rtc_encoded_audio_stream_transformer.h"
 #include "third_party/blink/renderer/platform/peerconnection/rtc_encoded_video_stream_transformer.h"
@@ -20,9 +21,13 @@
 
 namespace blink {
 
-BASE_FEATURE(kRTCAlignReceivedEncodedVideoTransforms,
-             "RTCAlignReceivedEncodedVideoTransforms",
-             base::FEATURE_ENABLED_BY_DEFAULT);
+// The kWebRtcUnmuteTracksWhenPacketArrives2 feature is also gated on
+// kMediaStreamTrackEmptyVideoFrameMonitor.
+bool ShouldUnmuteTrackWhenPacketsArrive() {
+  return base::FeatureList::IsEnabled(
+             kMediaStreamTrackEmptyVideoFrameMonitor) &&
+         base::FeatureList::IsEnabled(kWebRtcUnmuteTracksWhenPacketArrives2);
+}
 
 RtpReceiverState::RtpReceiverState(
     scoped_refptr<base::SingleThreadTaskRunner> main_task_runner,
@@ -146,7 +151,6 @@ class RTCRtpReceiverImpl::RTCRtpReceiverInternal
   RTCRtpReceiverInternal(webrtc::scoped_refptr<webrtc::PeerConnectionInterface>
                              native_peer_connection,
                          RtpReceiverState state,
-                         bool require_encoded_insertable_streams,
                          std::unique_ptr<webrtc::Metronome> decode_metronome)
       : native_peer_connection_(std::move(native_peer_connection)),
         main_task_runner_(state.main_task_runner()),
@@ -158,22 +162,19 @@ class RTCRtpReceiverImpl::RTCRtpReceiverInternal
     if (webrtc_receiver_->media_type() == webrtc::MediaType::AUDIO) {
       encoded_audio_transformer_ =
           std::make_unique<RTCEncodedAudioStreamTransformer>(main_task_runner_);
-      webrtc_receiver_->SetDepacketizerToDecoderFrameTransformer(
+      webrtc_receiver_->SetFrameTransformer(
           encoded_audio_transformer_->Delegate());
     } else {
       CHECK(webrtc_receiver_->media_type() == webrtc::MediaType::VIDEO);
       encoded_video_transformer_ =
           std::make_unique<RTCEncodedVideoStreamTransformer>(
-              main_task_runner_, base::FeatureList::IsEnabled(
-                                     kRTCAlignReceivedEncodedVideoTransforms)
-                                     ? std::move(decode_metronome)
-                                     : nullptr);
-      webrtc_receiver_->SetDepacketizerToDecoderFrameTransformer(
+              main_task_runner_, std::move(decode_metronome));
+      webrtc_receiver_->SetFrameTransformer(
           encoded_video_transformer_->Delegate());
     }
     DCHECK(!encoded_audio_transformer_ || !encoded_video_transformer_);
     // TODO(https://crbug.com/40821064): Remove killswitch after rollout.
-    if (base::FeatureList::IsEnabled(kWebRtcUnmuteTracksWhenPacketArrives)) {
+    if (ShouldUnmuteTrackWhenPacketsArrive()) {
       CHECK(webrtc_receiver_);
       webrtc_receiver_->SetObserver(this);
     }
@@ -230,14 +231,17 @@ class RTCRtpReceiverImpl::RTCRtpReceiverInternal
   }
 
   // RtpReceiverObserverInterface implementation.
-  // Note: unregistering from the event is not necessary.
   void OnFirstPacketReceived(webrtc::MediaType media_type) override {
+    // No-op.
+  }
+  void OnFirstPacketReceivedAfterReceptiveChange(
+      webrtc::MediaType media_type) override {
     DCHECK(webrtc_receiver_);
     if (!main_task_runner_->BelongsToCurrentThread()) {
       main_task_runner_->PostTask(
           FROM_HERE,
           base::BindOnce(&RTCRtpReceiverImpl::RTCRtpReceiverInternal::
-                             OnFirstPacketReceived,
+                             OnFirstPacketReceivedAfterReceptiveChange,
                          this, media_type));
       return;
     }
@@ -253,8 +257,7 @@ class RTCRtpReceiverImpl::RTCRtpReceiverInternal
   ~RTCRtpReceiverInternal() override {
     DCHECK(main_task_runner_->BelongsToCurrentThread());
     // TODO(https://crbug.com/40821064): Remove killswitch after rollout.
-    if (webrtc_receiver_ &&
-        base::FeatureList::IsEnabled(kWebRtcUnmuteTracksWhenPacketArrives)) {
+    if (webrtc_receiver_ && ShouldUnmuteTrackWhenPacketsArrive()) {
       webrtc_receiver_->SetObserver(nullptr);
     }
   }
@@ -305,12 +308,10 @@ RTCRtpReceiverImpl::RTCRtpReceiverImpl(
     webrtc::scoped_refptr<webrtc::PeerConnectionInterface>
         native_peer_connection,
     RtpReceiverState state,
-    bool require_encoded_insertable_streams,
     std::unique_ptr<webrtc::Metronome> decode_metronome)
     : internal_(base::MakeRefCounted<RTCRtpReceiverInternal>(
           std::move(native_peer_connection),
           std::move(state),
-          require_encoded_insertable_streams,
           std::move(decode_metronome))) {}
 
 RTCRtpReceiverImpl::RTCRtpReceiverImpl(const RTCRtpReceiverImpl& other)

@@ -22,15 +22,13 @@
 #include "content/public/test/browser_task_environment.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
-#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
 namespace {
 
-const char kTestEmail[] = "me@gmail.com";
-const char kTestEmail2[] = "me2@gmail.com";
-const char kExampleEmail[] = "me@example.com";
+constexpr char kTestEmail[] = "me@gmail.com";
+constexpr char kTestEmail2[] = "me2@gmail.com";
+constexpr char kExampleEmail[] = "me@example.com";
 
 }  // namespace
-#endif  //  BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
 
 class AccountsPolicyManagerTest : public testing::Test {
  public:
@@ -62,10 +60,8 @@ class AccountsPolicyManagerTest : public testing::Test {
     identity_test_env_adaptor_ =
         std::make_unique<IdentityTestEnvironmentProfileAdaptor>(profile_.get());
 
-#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC)
     AccountsPolicyManagerFactory::GetForProfile(GetProfile())
         ->SetHideUIForTesting(true);
-#endif
   }
 
   void DestroyProfile() {
@@ -107,15 +103,9 @@ class AccountsPolicyManagerTest : public testing::Test {
       identity_test_env_adaptor_;
 };
 
-#if !BUILDFLAG(IS_CHROMEOS)
-// All primary accounts are allowed on ChromeOS, so this
-// AccountsPolicyManagerTest does not clear the primary account on ChromeOS.
-//
-// TODO(msarda): Exclude |AccountsPolicyManager| from the ChromeOS
-// build.
 TEST_F(AccountsPolicyManagerTest, ClearPrimarySyncAccountWhenSigninNotAllowed) {
   GetIdentityTestEnv()->MakePrimaryAccountAvailable(
-      "test@foo.com", signin::ConsentLevel::kSync);
+      "test@foo.com", signin::ConsentLevel::kSignin);
   GetProfile()->GetPrefs()->SetBoolean(prefs::kSigninAllowed, false);
 
   EXPECT_FALSE(GetIdentityTestEnv()->identity_manager()->HasPrimaryAccount(
@@ -127,20 +117,17 @@ TEST_F(AccountsPolicyManagerTest, ClearPrimarySyncAccountWhenSigninNotAllowed) {
 TEST_F(AccountsPolicyManagerTest,
        ClearPrimarySyncAccountWhenPatternNotAllowed) {
   GetIdentityTestEnv()->MakePrimaryAccountAvailable(
-      "test@foo.com", signin::ConsentLevel::kSync);
+      "test@foo.com", signin::ConsentLevel::kSignin);
   GetLocalState()->SetString(prefs::kGoogleServicesUsernamePattern,
                              ".*@bar.com");
 
   EXPECT_FALSE(GetIdentityTestEnv()->identity_manager()->HasPrimaryAccount(
-      signin::ConsentLevel::kSync));
-  EXPECT_FALSE(GetIdentityTestEnv()->identity_manager()->HasPrimaryAccount(
       signin::ConsentLevel::kSignin));
 }
 
-#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC)
 TEST_F(AccountsPolicyManagerTest, ClearProfileWhenSigninAndSignoutNotAllowed) {
   GetIdentityTestEnv()->MakePrimaryAccountAvailable(
-      "test@foo.com", signin::ConsentLevel::kSync);
+      "test@foo.com", signin::ConsentLevel::kSignin);
 
   // Create a second profile.
   GetProfileManager()->CreateTestingProfile(
@@ -154,29 +141,6 @@ TEST_F(AccountsPolicyManagerTest, ClearProfileWhenSigninAndSignoutNotAllowed) {
   GetSigninSlient(GetProfile())
       ->set_is_clear_primary_account_allowed_for_testing(
           SigninClient::SignoutDecision::CLEAR_PRIMARY_ACCOUNT_DISALLOWED);
-  GetProfile()->GetPrefs()->SetBoolean(prefs::kSigninAllowed, false);
-  base::RunLoop().RunUntilIdle();
-
-  EXPECT_EQ(1u, GetProfileManager()->profile_manager()->GetNumberOfProfiles());
-}
-
-TEST_F(AccountsPolicyManagerTest,
-       ClearProfileWhenSigninAndRevokeSyncNotAllowed) {
-  GetIdentityTestEnv()->MakePrimaryAccountAvailable(
-      "test@foo.com", signin::ConsentLevel::kSync);
-
-  // Create a second profile.
-  GetProfileManager()->CreateTestingProfile(
-      "accounts_policy_manager_test_profile_path_1",
-      IdentityTestEnvironmentProfileAdaptor::
-          GetIdentityTestEnvironmentFactories());
-  ASSERT_EQ(2u, GetProfileManager()->profile_manager()->GetNumberOfProfiles());
-
-  // Disable sign out and sign in. This should result in the initial profile
-  // being deleted.
-  GetSigninSlient(GetProfile())
-      ->set_is_clear_primary_account_allowed_for_testing(
-          SigninClient::SignoutDecision::REVOKE_SYNC_DISALLOWED);
   GetProfile()->GetPrefs()->SetBoolean(prefs::kSigninAllowed, false);
   base::RunLoop().RunUntilIdle();
 
@@ -265,6 +229,3 @@ TEST_F(AccountsPolicyManagerTest, ClearProfileUnallowedAccountsDisabled) {
   EXPECT_TRUE(identity_manager()->HasAccountWithRefreshToken(account_id2));
   EXPECT_TRUE(identity_manager()->HasAccountWithRefreshToken(account_id3));
 }
-#endif  // #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC)
-
-#endif  // !BUILDFLAG(IS_CHROMEOS)

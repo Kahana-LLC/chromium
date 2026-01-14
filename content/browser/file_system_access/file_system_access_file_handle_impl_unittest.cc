@@ -27,6 +27,7 @@
 #include "base/test/task_environment.h"
 #include "base/test/test_future.h"
 #include "build/build_config.h"
+#include "content/browser/blob_storage/chrome_blob_storage_context.h"
 #include "content/browser/file_system_access/features.h"
 #include "content/browser/file_system_access/fixed_file_system_access_permission_grant.h"
 #include "content/browser/file_system_access/mock_file_system_access_permission_grant.h"
@@ -71,6 +72,18 @@ using blink::mojom::PermissionStatus;
 using storage::FileSystemURL;
 using testing::_;
 using testing::FieldsAre;
+
+namespace {
+struct WriteModeTestParams {
+  const char* test_name_suffix;
+  bool is_feature_enabled;
+};
+
+constexpr WriteModeTestParams kTestParams[] = {
+    {"WriteModeDisabled", false},
+    {"WriteModeEnabled", true},
+};
+}  // namespace
 
 // A matcher to check if a `RequestPermission()` call is successful and
 // returns the expected permission status.
@@ -1407,7 +1420,8 @@ TEST_P(FileSystemAccessFileHandleImplMovePermissionsTest, Move_SensitiveName) {
       FileSystemAccessPermissionContext::SensitiveEntryResult::kAbort);
 }
 
-class FileSystemAccessFileHandleImplPermissionTest
+// Base class for file handle tests that require mock permission grants.
+class FileSystemAccessFileHandleImplMockGrantTestBase
     : public FileSystemAccessFileHandleImplTestBase {
  public:
   void SetUp() override {
@@ -1484,7 +1498,7 @@ class FileSystemAccessFileHandleImplPermissionTest
 };
 
 class FileSystemAccessFileHandleImplGetPermissionStatusTest
-    : public FileSystemAccessFileHandleImplPermissionTest {};
+    : public FileSystemAccessFileHandleImplMockGrantTestBase {};
 
 TEST_F(FileSystemAccessFileHandleImplGetPermissionStatusTest, ReadHandle) {
   auto test_path = dir_.GetPath().AppendASCII("test_file");
@@ -1571,7 +1585,7 @@ TEST_F(FileSystemAccessFileHandleImplGetPermissionStatusTest, ReadWriteHandle) {
 }
 
 class FileSystemAccessFileHandleImplRequestPermissionTest
-    : public FileSystemAccessFileHandleImplPermissionTest {};
+    : public FileSystemAccessFileHandleImplMockGrantTestBase {};
 
 TEST_F(FileSystemAccessFileHandleImplRequestPermissionTest,
        RequestRead_Granted) {
@@ -1682,5 +1696,142 @@ TEST_F(FileSystemAccessFileHandleImplRequestPermissionTest,
                         blink::mojom::FileSystemAccessPermissionMode::kWrite),
       IsOkAndPermissionStatus(PermissionStatus::DENIED));
 }
+
+class FileSystemAccessFileHandleImplRemoveWriteModeTest
+    : public FileSystemAccessFileHandleImplMockGrantTestBase,
+      public testing::WithParamInterface<WriteModeTestParams> {
+ public:
+  FileSystemAccessFileHandleImplRemoveWriteModeTest() {
+    scoped_feature_list_.InitWithFeatureState(
+        blink::features::kFileSystemAccessWriteMode,
+        GetParam().is_feature_enabled);
+  }
+
+ private:
+  base::test::ScopedFeatureList scoped_feature_list_;
+};
+
+// Verifies that `Remove()` requests the correct permissions before removing a
+// file. When `kFileSystemAccessWriteMode` is
+// - disabled: it should request both read and write permissions.
+// - enabled: it should only request write permission.
+TEST_P(FileSystemAccessFileHandleImplRemoveWriteModeTest,
+       RequestsCorrectPermissions) {
+  auto handle = CreateHandle();
+  if (!GetParam().is_feature_enabled) {
+    SetUpGrantExpectations(*mock_read_grant_, PermissionStatus::GRANTED,
+                           FileSystemAccessPermissionGrant::
+                               PermissionRequestOutcome::kUserGranted);
+  }
+  SetUpGrantExpectations(
+      *mock_write_grant_, PermissionStatus::GRANTED,
+      FileSystemAccessPermissionGrant::PermissionRequestOutcome::kUserGranted);
+
+  base::test::TestFuture<blink::mojom::FileSystemAccessErrorPtr> future;
+  handle->Remove(future.GetCallback());
+  EXPECT_EQ(future.Get()->status, FileSystemAccessStatus::kOk);
+  EXPECT_FALSE(base::PathExists(dir_.GetPath().AppendASCII("test_file")));
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    All,
+    FileSystemAccessFileHandleImplRemoveWriteModeTest,
+    testing::ValuesIn(kTestParams),
+    [](const testing::TestParamInfo<WriteModeTestParams>& info) {
+      return info.param.test_name_suffix;
+    });
+
+// Tests for the rename() method on the file handle, parameterized to run
+// with the kFileSystemAccessWriteMode feature enabled and disabled.
+class FileSystemAccessFileHandleImplRenameWriteModeTest
+    : public FileSystemAccessFileHandleImplMockGrantTestBase,
+      public testing::WithParamInterface<WriteModeTestParams> {
+ public:
+  FileSystemAccessFileHandleImplRenameWriteModeTest() {
+    scoped_feature_list_.InitWithFeatureState(
+        blink::features::kFileSystemAccessWriteMode,
+        GetParam().is_feature_enabled);
+  }
+
+ private:
+  base::test::ScopedFeatureList scoped_feature_list_;
+};
+
+// Verifies that rename() on a file handle requests the correct permission
+// mode depending on whether the kFileSystemAccessWriteMode feature is enabled.
+TEST_P(FileSystemAccessFileHandleImplRenameWriteModeTest,
+       RequestsCorrectPermissions) {
+  auto handle = CreateHandle();
+  if (!GetParam().is_feature_enabled) {
+    SetUpGrantExpectations(*mock_read_grant_, PermissionStatus::GRANTED,
+                           FileSystemAccessPermissionGrant::
+                               PermissionRequestOutcome::kUserGranted);
+  }
+  SetUpGrantExpectations(
+      *mock_write_grant_, PermissionStatus::GRANTED,
+      FileSystemAccessPermissionGrant::PermissionRequestOutcome::kUserGranted);
+
+  base::test::TestFuture<blink::mojom::FileSystemAccessErrorPtr> future;
+  handle->Rename("new-name", future.GetCallback());
+  EXPECT_EQ(future.Get()->status, FileSystemAccessStatus::kOk);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    All,
+    FileSystemAccessFileHandleImplRenameWriteModeTest,
+    testing::ValuesIn(kTestParams),
+    [](const testing::TestParamInfo<WriteModeTestParams>& info) {
+      return info.param.test_name_suffix;
+    });
+
+// Tests for the move() method on the file handle, parameterized to run
+// with the kFileSystemAccessWriteMode feature enabled and disabled.
+class FileSystemAccessFileHandleImplMoveWriteModeTest
+    : public FileSystemAccessFileHandleImplMockGrantTestBase,
+      public testing::WithParamInterface<WriteModeTestParams> {
+ public:
+  FileSystemAccessFileHandleImplMoveWriteModeTest() {
+    scoped_feature_list_.InitWithFeatureState(
+        blink::features::kFileSystemAccessWriteMode,
+        GetParam().is_feature_enabled);
+  }
+
+ private:
+  base::test::ScopedFeatureList scoped_feature_list_;
+};
+
+// Verifies that move() on a file handle requests the correct permission
+// mode depending on whether the kFileSystemAccessWriteMode feature is enabled.
+TEST_P(FileSystemAccessFileHandleImplMoveWriteModeTest,
+       RequestsCorrectPermissions) {
+  auto handle = CreateHandle();
+  auto dest_handle = GetDirectoryHandleWithPermissions(
+      dir_.GetPath(), allow_grant_, allow_grant_);
+
+  if (!GetParam().is_feature_enabled) {
+    SetUpGrantExpectations(*mock_read_grant_, PermissionStatus::GRANTED,
+                           FileSystemAccessPermissionGrant::
+                               PermissionRequestOutcome::kUserGranted);
+  }
+  SetUpGrantExpectations(
+      *mock_write_grant_, PermissionStatus::GRANTED,
+      FileSystemAccessPermissionGrant::PermissionRequestOutcome::kUserGranted);
+
+  mojo::PendingRemote<blink::mojom::FileSystemAccessTransferToken> dest_token;
+  manager_->CreateTransferToken(*dest_handle,
+                                dest_token.InitWithNewPipeAndPassReceiver());
+
+  base::test::TestFuture<blink::mojom::FileSystemAccessErrorPtr> future;
+  handle->Move(std::move(dest_token), "new-name", future.GetCallback());
+  EXPECT_EQ(future.Get()->status, FileSystemAccessStatus::kOk);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    All,
+    FileSystemAccessFileHandleImplMoveWriteModeTest,
+    testing::ValuesIn(kTestParams),
+    [](const testing::TestParamInfo<WriteModeTestParams>& info) {
+      return info.param.test_name_suffix;
+    });
 
 }  // namespace content

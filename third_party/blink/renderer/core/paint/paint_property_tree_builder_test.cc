@@ -1362,7 +1362,7 @@ TEST_P(PaintPropertyTreeBuilderTest, SVGRootLocalToBorderBoxSnappingScale) {
             svg_properties->PaintOffsetTranslation()->Get2dTranslation());
   const float snapped_height = 99;
   const PhysicalSize unsnapped_size(LayoutUnit(100), LayoutUnit(99.99f));
-  EXPECT_EQ(To<LayoutSVGRoot>(svg).Size(), unsnapped_size);
+  EXPECT_EQ(To<LayoutSVGRoot>(svg).StitchedSize(), unsnapped_size);
   const float unsnapped_height = unsnapped_size.height.ToFloat();
   ASSERT_NE(svg_properties->ReplacedContentTransform(), nullptr);
   EXPECT_TRANSFORM_EQ(MakeScaleMatrix(snapped_height / unsnapped_height),
@@ -1396,7 +1396,7 @@ TEST_P(PaintPropertyTreeBuilderTest, SVGRootLocalToBorderBoxSnappingScaleWide) {
             svg_properties->PaintOffsetTranslation()->Get2dTranslation());
   const gfx::SizeF snapped_size(211, 2);
   const PhysicalSize unsnapped_size(LayoutUnit(211.419f), LayoutUnit(2.20228f));
-  EXPECT_EQ(To<LayoutSVGRoot>(svg).Size(), unsnapped_size);
+  EXPECT_EQ(To<LayoutSVGRoot>(svg).StitchedSize(), unsnapped_size);
   ASSERT_NE(svg_properties->ReplacedContentTransform(), nullptr);
   EXPECT_TRANSFORM_EQ(
       MakeScaleMatrix(snapped_size.width() / unsnapped_size.width.ToFloat(),
@@ -1432,7 +1432,7 @@ TEST_P(PaintPropertyTreeBuilderTest,
             svg_properties->PaintOffsetTranslation()->Get2dTranslation());
   const gfx::SizeF snapped_size(2, 211);
   const PhysicalSize unsnapped_size(LayoutUnit(2.20228f), LayoutUnit(211.419f));
-  EXPECT_EQ(To<LayoutSVGRoot>(svg).Size(), unsnapped_size);
+  EXPECT_EQ(To<LayoutSVGRoot>(svg).StitchedSize(), unsnapped_size);
   ASSERT_NE(svg_properties->ReplacedContentTransform(), nullptr);
   EXPECT_TRANSFORM_EQ(
       MakeScaleMatrix(snapped_size.width() / unsnapped_size.width.ToFloat(),
@@ -3733,7 +3733,7 @@ TEST_P(PaintPropertyTreeBuilderTest, ReplacedContentTransformFlattening) {
 TEST_P(PaintPropertyTreeBuilderTest, ContainPaintOrStyleLayoutTreeState) {
   for (const char* containment : {"paint", "style layout"}) {
     SCOPED_TRACE(containment);
-    SetBodyInnerHTML(String::Format(R"HTML(
+    SetBodyInnerHTML(UNSAFE_TODO(String::Format(R"HTML(
       <style>body { margin: 20px 30px; }</style>
       <div id='clipper'
           style='contain: %s; width: 300px; height: 200px;'>
@@ -3741,7 +3741,7 @@ TEST_P(PaintPropertyTreeBuilderTest, ContainPaintOrStyleLayoutTreeState) {
             style='position: relative; width: 400px; height: 500px;'></div>
       </div>
     )HTML",
-                                    containment));
+                                                containment)));
 
     auto* clipper =
         To<LayoutBoxModelObject>(GetLayoutObjectByElementId("clipper"));
@@ -4822,17 +4822,15 @@ TEST_P(PaintPropertyTreeBuilderTest, BecomingUnfragmented) {
     </div>
   )HTML");
 
-  LayoutObject* target = GetLayoutObjectByElementId("target");
+  Element* target_element = GetElementById("target");
   EXPECT_EQ(PhysicalOffset(LayoutUnit(208), LayoutUnit(8)),
-            target->FirstFragment().PaintOffset());
-  Element* target_element =
-      GetDocument().getElementById(AtomicString("target"));
+            target_element->GetLayoutObject()->FirstFragment().PaintOffset());
 
   target_element->setAttribute(html_names::kStyleAttr,
                                AtomicString("position: absolute"));
   UpdateAllLifecyclePhasesForTest();
   EXPECT_EQ(PhysicalOffset(LayoutUnit(8), LayoutUnit(28)),
-            target->FirstFragment().PaintOffset());
+            target_element->GetLayoutObject()->FirstFragment().PaintOffset());
 }
 
 TEST_P(PaintPropertyTreeBuilderTest, Reflection) {
@@ -5036,16 +5034,28 @@ TEST_P(PaintPropertyTreeBuilderTest, ChangePositionUpdateDescendantProperties) {
     </div>
   )HTML");
 
-  LayoutObject* ancestor = GetLayoutObjectByElementId("ancestor");
-  LayoutObject* descendant = GetLayoutObjectByElementId("descendant");
-  EXPECT_EQ(ancestor->FirstFragment().PaintProperties()->OverflowClip(),
-            &descendant->FirstFragment().LocalBorderBoxProperties().Clip());
+  Element* ancestor = GetElementById("ancestor");
+  Element* descendant = GetElementById("descendant");
+  EXPECT_EQ(ancestor->GetLayoutObject()
+                ->FirstFragment()
+                .PaintProperties()
+                ->OverflowClip(),
+            &descendant->GetLayoutObject()
+                 ->FirstFragment()
+                 .LocalBorderBoxProperties()
+                 .Clip());
 
-  To<Element>(ancestor->GetNode())
-      ->setAttribute(html_names::kStyleAttr, AtomicString("position: static"));
+  ancestor->setAttribute(html_names::kStyleAttr,
+                         AtomicString("position: static"));
   UpdateAllLifecyclePhasesForTest();
-  EXPECT_NE(ancestor->FirstFragment().PaintProperties()->OverflowClip(),
-            &descendant->FirstFragment().LocalBorderBoxProperties().Clip());
+  EXPECT_NE(ancestor->GetLayoutObject()
+                ->FirstFragment()
+                .PaintProperties()
+                ->OverflowClip(),
+            &descendant->GetLayoutObject()
+                 ->FirstFragment()
+                 .LocalBorderBoxProperties()
+                 .Clip());
 }
 
 TEST_P(PaintPropertyTreeBuilderTest,
@@ -5695,7 +5705,8 @@ TEST_P(PaintPropertyTreeBuilderTest, SVGRootWithMask) {
 
 TEST_P(PaintPropertyTreeBuilderTest, SVGRootWithCSSMask) {
   SetBodyInnerHTML(R"HTML(
-    <svg id="svg" width="16" height="16" style="-webkit-mask-image: url(fake);">
+    <svg id="svg" width="16" height="16"
+        style="-webkit-mask-image: linear-gradient(black, transparent);">
     </svg>
   )HTML");
 

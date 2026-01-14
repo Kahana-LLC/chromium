@@ -13,8 +13,11 @@
 #include "base/memory/raw_ptr.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
+#include "build/build_config.h"
+#include "chrome/browser/glic/glic_enums.h"
 #include "chrome/browser/glic/host/context/glic_tab_data.h"
 #include "chrome/browser/glic/host/glic.mojom.h"
+#include "chrome/browser/glic/public/glic_instance.h"
 #include "components/prefs/pref_change_registrar.h"
 #include "services/metrics/public/cpp/ukm_source_id.h"
 #include "ui/display/display.h"
@@ -78,6 +81,28 @@ enum class PercentOverlap {
   kMaxValue = kNoVisibleChromeBrowser,
 };
 // LINT.ThenChange(//tools/metrics/histograms/metadata/glic/enums.xml:PercentOverlap)
+
+// LINT.IfChange(ShareImageResult)
+enum class ShareImageResult {
+  kSuccess = 0,
+  kFailedNoTab = 1,
+  kFailedNoFrame = 2,
+  kFailedNoBrowser = 3,
+  kFailedTimedOut = 4,
+  kFailedNoImage = 5,
+  kFailedReplacedByNewShare = 6,
+  kFailedNoTabContext = 7,
+  kFailedSawNavigation = 8,
+  kFailedDiscardedContents = 9,
+  kFailedDetachedTab = 10,
+  kFailedClipboardCopyPolicy = 11,
+  kFailedClipboardPastePolicy = 12,
+  kFailedNoInstance = 13,
+  kFailedClientUnreadied = 14,
+  kMaxValue = kFailedClientUnreadied,
+};
+
+// LINT.ThenChange(//tools/metrics/histograms/metadata/glic/enums.xml:ShareImageResult)
 
 // LINT.IfChange(Error)
 enum class Error {
@@ -159,7 +184,11 @@ enum class ResponseSegmentation {
   kActorTaskIconAttachedAudio = 50,
   kActorTaskIconDetachedText = 51,
   kActorTaskIconDetachedAudio = 52,
-  kMaxValue = kActorTaskIconDetachedAudio,
+  kHandoffButtonAttachedText = 53,
+  kHandoffButtonAttachedAudio = 54,
+  kHandoffButtonDetachedText = 55,
+  kHandoffButtonDetachedAudio = 56,
+  kMaxValue = kHandoffButtonDetachedAudio,
 };
 // LINT.ThenChange(//tools/metrics/histograms/metadata/glic/enums.xml:GlicResponseSegmentation)
 
@@ -198,17 +227,14 @@ enum class GlicRequestEvent {
 };
 // LINT.ThenChange(//tools/metrics/histograms/metadata/glic/enums.xml:GlicRequestEvent)
 
-// LINT.IfChange(GlicGetContextFromFocusedTabError)
-enum class GlicGetContextFromFocusedTabError {
-  kUnknown = 0,
-  kPermissionDeniedWindowNotShowing = 1,
-  kTabNotFound = 2,
-  kPermissionDeniedContextPermissionNotEnabled = 3,
-  kPermissionDenied = 4,
-  kWebContentsChanged = 5,
-  kMaxValue = kWebContentsChanged,
+// LINT.IfChange(GlicTabPinnedForSharingResult)
+enum class GlicTabPinnedForSharingResult {
+  kPinTabForSharingFailedTooManyTabs = 0,
+  kPinTabForSharingFailedNotValidForSharing = 1,
+  kPinTabForSharingSucceeded = 2,
+  kMaxValue = kPinTabForSharingSucceeded,
 };
-// LINT.ThenChange(//tools/metrics/histograms/metadata/glic/enums.xml:GlicGetContextFromFocusedTabError)
+// LINT.ThenChange(//tools/metrics/histograms/metadata/glic/enums.xml:GlicTabPinnedForSharingResult)
 
 // The different states of active tab sharing.
 // LINT.IfChange(ActiveTabSharingState)
@@ -223,7 +249,7 @@ enum class ActiveTabSharingState {
 
 class GlicEnabling;
 class GlicSharingManager;
-class GlicWindowController;
+class GlicWindowControllerInterface;
 
 namespace internal {
 class BrowserActivityObserver;
@@ -240,9 +266,11 @@ class GlicMetrics {
     virtual gfx::Size GetWindowSize() const = 0;
     virtual bool IsWindowShowing() const = 0;
     virtual bool IsWindowAttached() const = 0;
-    virtual content::WebContents* GetContents() = 0;
+    virtual content::WebContents* GetFocusedWebContents() = 0;
     virtual ActiveTabSharingState GetActiveTabSharingState() = 0;
     virtual int32_t GetNumPinnedTabs() const = 0;
+    virtual std::vector<content::WebContents*>
+    GetPinnedAndSharedWebContents() = 0;
   };
 
   GlicMetrics(Profile* profile, GlicEnabling* enabling);
@@ -254,11 +282,16 @@ class GlicMetrics {
   // lifetime of the web client is scoped to that of the window, so if these
   // methods are called then controller_ is guaranteed to exist.
   void OnUserInputSubmitted(mojom::WebClientMode mode);
+  void OnContextUploadStarted();
+  void OnContextUploadCompleted();
+  void OnReaction(mojom::MetricUserInputReactionType reaction_type);
   void OnResponseStarted();
   void OnResponseStopped(mojom::ResponseStopCause cause);
   void OnSessionTerminated();
   void OnResponseRated(bool positive);
   void OnTurnCompleted(mojom::WebClientModel model, base::TimeDelta duration);
+  void OnModelChanged(mojom::WebClientModel model);
+  void OnRecordUseCounter(uint16_t counter);
 
   void OnAttachedToBrowser(AttachChangeReason reason);
   void OnDetachedFromBrowser(AttachChangeReason reason);
@@ -267,7 +300,12 @@ class GlicMetrics {
   // Called when the user clicks Accept in the FRE.
   void OnFreAccepted();
   // Called when the glic window starts to open.
-  void OnGlicWindowOpen(bool attached, mojom::InvocationSource source);
+  void OnGlicWindowStartedOpening(bool attached,
+                                  mojom::InvocationSource source);
+  // Called to signal that the Glic window opening was interrupted for some
+  // reason (e.g, an error happened, reached a login page instead of the web
+  // client, etc).
+  void OnGlicWindowOpenInterrupted();
   // Called just after the the glic window has been loaded into the UI.
   void OnGlicWindowShown(Browser* browser,
                          std::optional<display::Display> glic_display,
@@ -291,29 +329,52 @@ class GlicMetrics {
   // triggered.
   void OnGlicScrollComplete(bool success);
 
+  // Called when a tab is pinned for sharing with glic. `success` is true if the
+  // pinning was successful.
+  void OnTabPinnedForSharing(GlicTabPinnedForSharingResult result);
+
   // Called when a response is received with closed captions showing.
   void LogClosedCaptionsShown();
 
+  // Called when an attempt to share an image with glic is begun.
+  void OnShareImageStarted();
+
+  // Called when an attempt to share an image with glic completes.
+  void OnShareImageComplete(ShareImageResult result);
+
+  // Called when a tab is activated via the glic page.
+  void OnActivateTabFromInstance(tabs::TabInterface* tab);
+
   // Logs an error that occurred while trying to get context from the focused
   // tab.
-  void LogGetContextFromFocusedTabError(
-      GlicGetContextFromFocusedTabError error);
+  void LogGetContextFromFocusedTabError(GlicGetContextFromTabError error);
 
-  // See `last_input_mode_` for details.
-  mojom::WebClientMode last_input_mode() const { return last_input_mode_; }
+  // Logs an error that occurred while trying to get context from an arbitrary
+  // tab.
+  void LogGetContextFromTabError(GlicGetContextFromTabError error);
 
-  // Must be called immediately after constructor before any calls from
-  // glic.mojom.
-  void SetControllers(GlicWindowController* window_controller,
+  // Logs an error that occurred while an actor tried to get context from an
+  // arbitrary tab.
+  void LogGetContextForActorFromTabError(GlicGetContextFromTabError error);
+
+  // One of these three must be called immediately after constructor before any
+  // calls from glic.mojom.
+  void SetControllers(GlicWindowControllerInterface* window_controller,
                       GlicSharingManager* sharing_manager);
+  void SetControllersWithInstance(GlicInstance* glic_instance,
+                                  GlicSharingManager* sharing_manager);
+  void ClearControllers();
+
   void SetDelegateForTesting(std::unique_ptr<Delegate> delegate);
 
-  // Must be called when context is requested.
-  void DidRequestContextFromFocusedTab();
+  // Must be called when context is requested from a tab.
+  void DidRequestContextFromTab(content::WebContents& web_contents);
 
-  void set_show_start_time(base::TimeTicks time) { show_start_time_ = time; }
+  // Sets the input mode of the web client. Should be called when the panel is
+  // opened and in every subsequent mode change.
+  void SetWebClientMode(mojom::WebClientMode mode);
 
-  void set_starting_mode(mojom::WebClientMode mode) { starting_mode_ = mode; }
+  mojom::WebClientModel current_model() const { return current_model_; }
 
  private:
   // Called when `impression_timer_` fires.
@@ -334,37 +395,57 @@ class GlicMetrics {
   // Called when kGlicTabContextEnabled changes.
   void OnTabContextEnabledPrefChanged();
 
-  // Resets the window timing state variables.
-  void ResetGlicWindowPresentationTimingState();
-
   // Returns the area in the display a given center point is.
   DisplayPosition GetDisplayPositionOfPoint(
       std::optional<display::Display> display,
       const gfx::Point& glic_center_point);
 
+#if !BUILDFLAG(IS_ANDROID)
   // Returns the area relative to the given chrome browser a given center point
   // is.
   ChromeRelativePosition GetChromeRelativePositionOfPoint(
       Browser* browser,
       const gfx::Point& glic_center_point);
-
   // Returns the percent overlap of the given glic bounds and the given chrome
   // browser.
   PercentOverlap GetPercentOverlapWithBrowser(Browser* browser,
                                               const gfx::Rect& glic_bounds);
+#endif
 
   base::TimeTicks fre_accepted_time_;
 
   // These members are cleared in OnResponseStopped.
-  base::TimeTicks input_submitted_time_;
-  mojom::WebClientMode input_mode_;
-  bool did_request_context_ = false;
+  struct TurnInfo {
+    base::TimeTicks input_submitted_time_;
+    // Set to true in OnResponseStarted() and set to false in
+    // OnResponseStopped(). This is a workaround and should be removed, see
+    // crbug.com/399151164.
+    bool response_started_ = false;
+    bool reported_reaction_time_canned_ = false;
+    bool reported_reaction_time_modelled_ = false;
+    // A chosen source id from which context was requested.
+    ukm::SourceId chosen_source_id_ = ukm::NoURLSourceId();
+  };
+
+  // Tracks information related to individual request/response turns.
+  // It is reset when new user input is submitted and populated as the turn
+  // progresses. It is also reset at when the response stops.
+  TurnInfo turn_;
+
+  // The last web client input mode used by the user.
+  mojom::WebClientMode input_mode_ = mojom::WebClientMode::kUnknown;
   std::set<mojom::WebClientMode> inputs_modes_used_;
   int attach_change_count_ = 0;
 
+  // Tracks the source ID from the latest tab context requested by the web
+  // client. It is reset when user input is submitted.
+  ukm::SourceId last_tab_context_source_id_ = ukm::NoURLSourceId();
+
+  mojom::WebClientModel current_model_ = mojom::WebClientModel::kDefault;
+
   // Session state. `session_start_time_` is a sentinel that is cleared in
-  // OnGlicWindowClose() and is used to determine whether OnGlicWindowOpen was
-  // called.
+  // OnGlicWindowClose() and is used to determine whether
+  // OnGlicWindowStartedOpening was called.
   int session_responses_ = 0;
   base::TimeTicks session_start_time_;
   mojom::InvocationSource invocation_source_ =
@@ -376,12 +457,6 @@ class GlicMetrics {
   // Used to record metrics about the glic window size.
   base::RepeatingTimer glic_window_size_timer_;
 
-  // A context-free source id used when no web contents is targeted.
-  ukm::SourceId no_url_source_id_ = ukm::NoURLSourceId();
-  // The source id at the time context is requested. If context was not
-  // requested then this is `no_url_source_id_`.
-  ukm::SourceId source_id_ = ukm::NoURLSourceId();
-
   // The owner of this class is responsible for maintaining appropriate lifetime
   // for controller_.
   std::unique_ptr<Delegate> delegate_;
@@ -391,10 +466,6 @@ class GlicMetrics {
   // Whether Glic is enabled and FRE has been completed. Tracked to trigger
   // metric(s) on change.
   bool is_enabled_ = false;
-
-  // Set to true in OnResponseStarted() and set to false in OnResponseStopped().
-  // This is a workaround and should be removed, see crbug.com/399151164.
-  bool response_started_ = false;
 
   std::vector<base::CallbackListSubscription> subscriptions_;
 
@@ -407,8 +478,6 @@ class GlicMetrics {
   // reset together after the metric is recorded.
   // The timestamp when the glic window starts to be shown.
   base::TimeTicks show_start_time_;
-  // Web client's operation modes.
-  mojom::WebClientMode starting_mode_ = mojom::WebClientMode::kUnknown;
 
   // The following variables are used for recording scroll related metrics.
   // The number of scroll attempts  (tracked per session and reset when the
@@ -421,12 +490,12 @@ class GlicMetrics {
   // `OnResponseStopped()`, which resets `input_submitted_time_` and
   // `input_mode_`.
   base::TimeTicks scroll_input_submitted_time_;
-  mojom::WebClientMode scroll_input_mode_;
+  mojom::WebClientMode scroll_input_mode_ = mojom::WebClientMode::kUnknown;
 
-  // The last input mode used by the user. This is not cleared when the response
-  // is finished, so it can be used to attribute events that happen after the
-  // response has completed to the input mode that triggered them.
-  mojom::WebClientMode last_input_mode_ = mojom::WebClientMode::kUnknown;
+  std::optional<base::TimeTicks> last_upload_start_time_;
+
+  // The time the last attempt to share an image started.
+  base::TimeTicks share_image_start_time_;
 
   std::unique_ptr<internal::BrowserActivityObserver> browser_activity_observer_;
 };

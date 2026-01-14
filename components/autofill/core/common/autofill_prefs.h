@@ -19,26 +19,60 @@ class PrefRegistrySyncable;
 namespace autofill::prefs {
 
 // Alphabetical list of preference names specific to the Autofill
-// component. Keep alphabetized, and document each in the .cc file.
-// Do not get/set the value of this pref directly. Use provided getter/setter.
+// component. Keep in alphabetical order. Do not get/set the value of this pref
+// directly. Use provided getter/setter.
 
 // Please use kAutofillCreditCardEnabled and kAutofillProfileEnabled instead.
 inline constexpr char kAutofillEnabledDeprecated[] = "autofill.enabled";
 // String serving as a seed for ablation studies.
 inline constexpr std::string_view kAutofillAblationSeedPref =
     "autofill.ablation_seed";
+// Boolean that is true if identity-related entities of Autofill AI are enabled.
+// Otherwise, saving and filling of these entities is disabled.
+inline constexpr char kAutofillAiIdentityEntitiesEnabled[] =
+    "autofill.autofill_ai.identity_entities_enabled";
+// Boolean that is true if Autofill AI synced pref is enabled.
+// This pref supersedes the non-synced pref `kAutofillAiOptInStatus`, which is
+// in the process of being deprecated. Users who have previously interacted with
+// `kAutofillAiOptInStatus` will have its current value migrated to
+// `kAutofillAiSyncedOptInStatus` at start-up time, this way users will not need
+// to opt-in into the feature twice.
+// TODO(crbug.com/459767753): Delete this pref as feature is obsolete.
+inline constexpr char kAutofillAiSyncedOptInStatus[] =
+    "autofill.autofill_ai.synced_opt_in_status";
 // A dictionary that contains (hashed) GAIA ids and their opt-in status for
-// AutofillAI.
+// Autofill AI.
+// Note that the feature AutofillAiAvailableByDefault is currently in the
+// process of being launched. Once this is done, this pref will not control
+// whether Autofill AI is available, but whether online model calls and MQLS
+// logging (Enhanced Autofill) are.
 inline constexpr char kAutofillAiOptInStatus[] =
     "autofill.autofill_ai.opt_in_status";
-#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) || \
+#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN) || BUILDFLAG(IS_ANDROID) || \
     BUILDFLAG(IS_CHROMEOS)
+// Boolean that is true if re-authentication is required before viewing Autofill
+// AI values. This could happen during the filling moment or when visiting the
+// management page.
+inline constexpr char kAutofillAiReauthBeforeViewingSensitiveData[] =
+    "autofill.autofill_ai.reauth_before_viewing_sensitive_data";
+#endif  // BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN) || BUILDFLAG(IS_ANDROID) ||
+        // BUILDFLAG(IS_CHROMEOS)
+// Integer that is set to the last version where the Autofill AI deduping
+// routine was run. This routine will be run once per version.
+inline constexpr char kAutofillAiLastVersionDeduped[] =
+    "autofill.ai_last_version_deduped";
+// Boolean that is true if travel-related entities of Autofill AI are enabled.
+// Otherwise, saving and filling of these entities is disabled.
+inline constexpr char kAutofillAiTravelEntitiesEnabled[] =
+    "autofill.autofill_ai.travel_entities_enabled";
 // Boolean that is true if BNPL on Autofill is enabled.
 inline constexpr char kAutofillBnplEnabled[] = "autofill.bnpl_enabled";
 // Boolean that is true if the user has ever seen a BNPL suggestion.
 inline constexpr char kAutofillHasSeenBnpl[] = "autofill.has_seen_bnpl";
-#endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) ||
-        // BUILDFLAG(IS_CHROMEOS)
+// Boolean that is true if the Chrome user has seen the Amount Extraction AI
+// terms.
+inline constexpr char kAutofillAmountExtractionAiTermsSeen[] =
+    "autofill.amount_extraction_ai_terms_seen";
 // Boolean that is true if Autofill is enabled and allowed to save credit card
 // data.
 inline constexpr char kAutofillCreditCardEnabled[] =
@@ -110,19 +144,30 @@ inline constexpr char kAutofillUploadEventsLastResetTimestamp[] =
 // coming from the Account Name Email profile.
 inline constexpr char kAutofillNameAndEmailProfileSignature[] =
     "autofill.name_and_email_profile_signature";
+// A counter responsible for keeping track of number of times the user did not
+// accept `kAccountNameEmail` profile suggestion.
+inline constexpr char kAutofillNameAndEmailProfileNotSelectedCounter[] =
+    "autofill.name_and_email_profile_not_selected_counter";
+// Boolean responsible for storing if kAccountNameEmail profile suggestion was
+// filled and submitted. The use_count (and other types of `AutofillProfile`
+// metadata) are not synced for kAccountNameEmail profile, thus making the
+// tracking of the usage pref based.
+inline constexpr char kAutofillWasNameAndEmailProfileUsed[] =
+    "autofill.was_name_and_email_profile_used";
 // Integer that is set to the last major version where the Autocomplete
 // retention policy was run.
 inline constexpr char kAutocompleteLastVersionRetentionPolicy[] =
     "autocomplete.retention_policy_last_version";
 #if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN) || BUILDFLAG(IS_ANDROID) || \
-    BUILDFLAG(IS_IOS)
+    BUILDFLAG(IS_IOS) || BUILDFLAG(IS_CHROMEOS)
 // Boolean that is set when payment methods mandatory re-auth is enabled by the
 // user.
 inline constexpr char kAutofillPaymentMethodsMandatoryReauth[] =
     "autofill.payment_methods_mandatory_reauth";
 #endif  // BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN) || BUILDFLAG(IS_ANDROID) ||
-        // BUILDFLAG(IS_IOS)
-#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN) || BUILDFLAG(IS_ANDROID)
+        // BUILDFLAG(IS_IOS) || BUILDFLAG(IS_CHROMEOS)
+#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN) || BUILDFLAG(IS_ANDROID) || \
+    BUILDFLAG(IS_CHROMEOS)
 // Integer that is incremented when the mandatory re-auth promo is shown. If
 // this is less than `kMaxValueForMandatoryReauthPromoShownCounter`, that
 // implies that the user has not yet decided whether or not to turn on the
@@ -130,7 +175,8 @@ inline constexpr char kAutofillPaymentMethodsMandatoryReauth[] =
 inline constexpr char
     kAutofillPaymentMethodsMandatoryReauthPromoShownCounter[] =
         "autofill.payment_methods_mandatory_reauth_promo_counter";
-#endif  // BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN) || BUILDFLAG(IS_ANDROID)
+#endif  // BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN) || BUILDFLAG(IS_ANDROID) ||
+        // BUILDFLAG(IS_CHROMEOS)
 #if BUILDFLAG(IS_ANDROID)
 // Boolean that is true iff Chrome only provdides a virtual view structure that
 // Android Autofill providers can use for filling. This pref is profile bound
@@ -209,6 +255,14 @@ bool IsAutofillProfileEnabled(const PrefService* prefs);
 
 void SetAutofillProfileEnabled(PrefService* prefs, bool enabled);
 
+bool IsAutofillAiSyncedOptInStatusEnabled(const PrefService* prefs);
+
+void SetAutofillAiSyncedOptInStatus(PrefService* prefs, bool enabled);
+
+bool IsAutofillAiReauthBeforeFillingEnabled(const PrefService* prefs);
+
+void SetAutofillAiReauthBeforeFillingEnabled(PrefService* prefs, bool enabled);
+
 bool IsPaymentMethodsMandatoryReauthEnabled(const PrefService* prefs);
 
 // Returns true if the user has ever made an explicit decision for
@@ -250,21 +304,17 @@ bool IsFacilitatedPaymentsA2AEnabled(const PrefService* prefs);
 
 void SetFacilitatedPaymentsA2ATriggeredOnce(PrefService* prefs, bool value);
 
-#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) || \
-    BUILDFLAG(IS_CHROMEOS)
 void SetAutofillBnplEnabled(PrefService* prefs, bool value);
-#endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) ||
-        // BUILDFLAG(IS_CHROMEOS)
 
 bool IsAutofillBnplEnabled(const PrefService* prefs);
 
-#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) || \
-    BUILDFLAG(IS_CHROMEOS)
 void SetAutofillHasSeenBnpl(PrefService* prefs);
 
 bool HasSeenBnpl(const PrefService* prefs);
-#endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) ||
-        // BUILDFLAG(IS_CHROMEOS)
+
+void SetAutofillAmountExtractionAiTermsSeen(PrefService* prefs);
+
+bool AmountExtractionAiTermsSeen(const PrefService* prefs);
 }  // namespace autofill::prefs
 
 #endif  // COMPONENTS_AUTOFILL_CORE_COMMON_AUTOFILL_PREFS_H_

@@ -7,10 +7,8 @@ package org.chromium.chrome.browser.compositor;
 import static org.chromium.build.NullUtil.assumeNonNull;
 
 import android.app.Activity;
-import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
-import android.content.IntentFilter;
 import android.graphics.PixelFormat;
 import android.graphics.Rect;
 import android.graphics.drawable.Drawable;
@@ -26,7 +24,8 @@ import org.jni_zero.JNINamespace;
 import org.jni_zero.JniType;
 import org.jni_zero.NativeMethods;
 
-import org.chromium.base.ContextUtils;
+import org.chromium.base.ScreenOffBroadcastReceiver;
+import org.chromium.base.ScreenOffBroadcastReceiver.ScreenOffListener;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.TraceEvent;
 import org.chromium.build.annotations.Initializer;
@@ -65,7 +64,7 @@ public class CompositorView extends FrameLayout
 
     private CompositorSurfaceManager mCompositorSurfaceManager;
     private boolean mOverlayVideoEnabled;
-    private boolean mLowMemDevice;
+    private boolean mPreferRgb565ForDisplay;
     private boolean mIsXrFullSpaceMode;
 
     // Are we waiting to hide the outgoing surface until the foreground has something to display?
@@ -103,26 +102,21 @@ public class CompositorView extends FrameLayout
     // On P and above, toggling the screen off gets us in a state where the Surface is destroyed but
     // it is never recreated when it is turned on again. This is the only workaround that seems to
     // be working, see crbug.com/931195.
-    class ScreenStateReceiverWorkaround extends BroadcastReceiver {
+    class ScreenStateReceiverWorkaround implements ScreenOffListener {
         // True indicates we should destroy and recreate the surface manager.
         private boolean mNeedsReset;
 
         ScreenStateReceiverWorkaround() {
-            IntentFilter filter = new IntentFilter(Intent.ACTION_SCREEN_OFF);
-            ContextUtils.registerProtectedBroadcastReceiver(
-                    getContext().getApplicationContext(), this, filter);
+            ScreenOffBroadcastReceiver.addListener(this);
         }
 
         void shutDown() {
-            getContext().getApplicationContext().unregisterReceiver(this);
+            ScreenOffBroadcastReceiver.removeListener(this);
         }
 
         @Override
-        public void onReceive(Context context, Intent intent) {
-            if (Intent.ACTION_SCREEN_OFF.equals(intent.getAction())
-                    && mCompositorSurfaceManager != null
-                    && !mIsInXr
-                    && mNativeCompositorView != 0) {
+        public void onScreenOff(Context context, Intent intent) {
+            if (mCompositorSurfaceManager != null && !mIsInXr && mNativeCompositorView != 0) {
                 mNeedsReset = true;
             }
         }
@@ -298,15 +292,12 @@ public class CompositorView extends FrameLayout
     /**
      * Initializes the {@link CompositorView}'s native parts (e.g. the rendering parts).
      *
-     * @param lowMemDevice If this is a low memory device.
      * @param windowAndroid A {@link WindowAndroid} instance.
      * @param tabContentManager A {@link TabContentManager} instance.
      */
     @Initializer
     public void initNativeCompositor(
-            boolean lowMemDevice,
-            WindowAndroid windowAndroid,
-            TabContentManager tabContentManager) {
+            WindowAndroid windowAndroid, TabContentManager tabContentManager) {
         // https://crbug.com/802160. We can't call setWindowAndroid here because updating the window
         // visibility here breaks exiting Reader Mode somehow.
         mWindowAndroid = windowAndroid;
@@ -317,17 +308,17 @@ public class CompositorView extends FrameLayout
         mNativeCompositorView =
                 CompositorViewJni.get().init(this, windowAndroid, tabContentManager);
 
-        // compositor_impl_android.cc will use 565 EGL surfaces if and only if we're using a low
-        // memory device, and no alpha channel is desired.  Otherwise, it will use 8888.  Since
-        // SurfaceFlinger doesn't need the eOpaque flag to optimize out alpha blending during
+        mIsSurfaceControlEnabled = CompositorViewJni.get().isSurfaceControlEnabled();
+
+        // Since SurfaceFlinger doesn't need the eOpaque flag to optimize out alpha blending during
         // composition if the buffer has no alpha channel, we can avoid using the extra background
         // surface (and the memory it requires) in the low memory case.  The output buffer will
         // either have an alpha channel or not, depending on whether the compositor needs it.  We
         // can keep the surface translucent all the times without worrying about the impact on power
-        // usage during SurfaceFlinger composition. We might also want to set |mLowMemDevice|
+        // usage during SurfaceFlinger composition. We might also want to set since
         // on non-low memory devices, if we are running on hardware that implements efficient alpha
         // blending.
-        mLowMemDevice = lowMemDevice;
+        mPreferRgb565ForDisplay = CompositorViewJni.get().preferRgb565ForDisplay();
 
         // In case we changed the requested format due to |lowMemDevice|,
         // re-request the surface now.
@@ -393,7 +384,7 @@ public class CompositorView extends FrameLayout
     }
 
     private int getSurfacePixelFormat() {
-        if (mOverlayVideoEnabled || mLowMemDevice || mIsXrFullSpaceMode) {
+        if (mOverlayVideoEnabled || mPreferRgb565ForDisplay || mIsXrFullSpaceMode) {
             return PixelFormat.TRANSLUCENT;
         }
 
@@ -412,7 +403,7 @@ public class CompositorView extends FrameLayout
     }
 
     private boolean canUseSurfaceControl() {
-        if (mSelectionHandlesActive || mLowMemDevice) {
+        if (mSelectionHandlesActive || mPreferRgb565ForDisplay || !mIsSurfaceControlEnabled) {
             return false;
         }
         boolean xrUsesSurfaceControl =
@@ -689,19 +680,6 @@ public class CompositorView extends FrameLayout
         updateNeedsDidSwapBuffersCallback();
     }
 
-    @CalledByNative
-    private void notifyWillUseSurfaceControl() {
-        mIsSurfaceControlEnabled = true;
-
-        // mIsSurfaceControlEnabled can change the output of `getSurfacePixelFormat`. Re-request
-        // the current surface format to keep it up-to-date.
-        if (ChromeFeatureList.isEnabled(ChromeFeatureList.UPDATE_COMPOSTIROR_FOR_SURFACE_CONTROL)
-                && mCompositorSurfaceManager != null
-                && mCompositorSurfaceManager.getFormatOfOwnedSurface() != getSurfacePixelFormat()) {
-            mCompositorSurfaceManager.requestSurface(getSurfacePixelFormat());
-        }
-    }
-
     /**
      * Converts the layout into compositor layers. This is to be called on every frame the layout is
      * changing.
@@ -795,12 +773,20 @@ public class CompositorView extends FrameLayout
         CompositorViewJni.get().onTabChanged(mNativeCompositorView);
     }
 
+    void setCompositorSurfaceManagerForTesting(CompositorSurfaceManager manager) {
+        mCompositorSurfaceManager = manager;
+    }
+
     @NativeMethods
     interface Natives {
         long init(
                 CompositorView self,
                 WindowAndroid windowAndroid,
                 TabContentManager tabContentManager);
+
+        boolean isSurfaceControlEnabled();
+
+        boolean preferRgb565ForDisplay();
 
         void destroy(long nativeCompositorView);
 

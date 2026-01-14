@@ -6,9 +6,10 @@ import '/shared/settings/prefs/prefs.js';
 import 'chrome://resources/cr_elements/cr_button/cr_button.js';
 import 'chrome://resources/cr_elements/cr_collapse/cr_collapse.js';
 import 'chrome://resources/cr_elements/cr_dialog/cr_dialog.js';
-import 'chrome://resources/cr_elements/cr_toast/cr_toast.js';
 import 'chrome://resources/cr_elements/cr_expand_button/cr_expand_button.js';
+import 'chrome://resources/cr_elements/cr_link_row/cr_link_row.js';
 import 'chrome://resources/cr_elements/cr_shared_style.css.js';
+import 'chrome://resources/cr_elements/cr_toast/cr_toast.js';
 import '../controls/settings_toggle_button.js';
 import '../settings_page/settings_subpage.js';
 import './privacy_sandbox_interest_item.js';
@@ -106,17 +107,6 @@ export class SettingsPrivacySandboxTopicsSubpageElement extends
       },
 
       /**
-       * If true, the Ads API UX Enhancement should be shown.
-       */
-      shouldShowV2_: {
-        type: Boolean,
-        value: () => {
-          return loadTimeData.getBoolean(
-              'isPrivacySandboxAdsApiUxEnhancementsEnabled');
-        },
-      },
-
-      /**
        * If true, the Ad Topics Content parity should be shown.
        */
       shouldShowAdTopicsContentParity_: {
@@ -148,7 +138,6 @@ export class SettingsPrivacySandboxTopicsSubpageElement extends
   declare private shouldShowBlockTopicDialog_: boolean;
   declare private blockTopicDialogTitle_: string;
   declare private blockTopicDialogBody_: string;
-  declare private shouldShowV2_: boolean;
   declare private shouldShowAdTopicsContentParity_: boolean;
   declare private adTopicsToggleSubLabel_: string;
 

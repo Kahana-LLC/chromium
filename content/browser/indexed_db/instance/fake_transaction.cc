@@ -25,11 +25,10 @@ FakeTransaction::FakeTransaction(
 
 FakeTransaction::~FakeTransaction() = default;
 
-Status FakeTransaction::CommitPhaseOne(BlobWriteCallback callback,
-                                       SerializeFsaCallback /*unused*/) {
-  return std::move(callback).Run(
-      BlobWriteResult::kRunPhaseTwoAndReturnResult,
-      storage::mojom::WriteBlobToFileResult::kSuccess);
+StatusOr<bool> FakeTransaction::CommitPhaseOne(
+    BlobWriteCallback callback,
+    SerializeFsaCallback /*unused*/) {
+  return false;
 }
 
 Status FakeTransaction::CommitPhaseTwo() {
@@ -38,8 +37,8 @@ Status FakeTransaction::CommitPhaseTwo() {
 
 void FakeTransaction::Rollback() {}
 
-void FakeTransaction::Begin(std::vector<PartitionedLock> locks) {
-  wrapped_transaction_->Begin(std::move(locks));
+Status FakeTransaction::Begin(std::vector<PartitionedLock> locks) {
+  return wrapped_transaction_->Begin(std::move(locks));
 }
 
 Status FakeTransaction::SetDatabaseVersion(int64_t version) {

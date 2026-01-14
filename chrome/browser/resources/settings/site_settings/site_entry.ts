@@ -13,6 +13,7 @@ import 'chrome://resources/cr_elements/cr_lazy_render/cr_lazy_render.js';
 import 'chrome://resources/cr_elements/cr_shared_style.css.js';
 import '../settings_shared.css.js';
 import '../site_favicon.js';
+import '/shared/settings/controls/cr_policy_pref_indicator.js';
 
 import type {CrCollapseElement} from 'chrome://resources/cr_elements/cr_collapse/cr_collapse.js';
 import type {CrIconButtonElement} from 'chrome://resources/cr_elements/cr_icon_button/cr_icon_button.js';
@@ -31,8 +32,8 @@ import {Router} from '../router.js';
 
 import {AllSitesAction2, SortMethod} from './constants.js';
 import {getTemplate} from './site_entry.html.js';
+import type {OriginInfo, SiteGroup} from './site_settings_browser_proxy.js';
 import {SiteSettingsMixin} from './site_settings_mixin.js';
-import type {OriginInfo, SiteGroup} from './site_settings_prefs_browser_proxy.js';
 
 
 export interface SiteEntryElement {

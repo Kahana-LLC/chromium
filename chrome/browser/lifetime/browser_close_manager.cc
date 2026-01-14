@@ -9,7 +9,6 @@
 #include <ranges>
 #include <vector>
 
-#include "base/containers/contains.h"
 #include "base/functional/bind.h"
 #include "base/metrics/histogram_functions.h"
 #include "build/build_config.h"
@@ -23,6 +22,8 @@
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/browser_window.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_interface_iterator.h"
+#include "chrome/browser/ui/browser_window/public/global_browser_collection.h"
 #include "chrome/browser/ui/chrome_pages.h"
 #include "chrome/browser/ui/scoped_tabbed_browser_displayer.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
@@ -79,9 +80,12 @@ void BrowserCloseManager::CancelBrowserClose() {
   }
 
   browser_shutdown::SetTryingToQuit(false);
-  for (Browser* browser : *BrowserList::GetInstance()) {
-    browser->ResetTryToCloseWindow();
-  }
+  GlobalBrowserCollection::GetInstance()->ForEach(
+      [](BrowserWindowInterface* browser) {
+        browser->GetBrowserForMigrationOnly()->ResetTryToCloseWindow();
+        return true;
+      },
+      BrowserCollection::Order::kCreation);
 }
 
 void BrowserCloseManager::TryToCloseBrowsers() {
@@ -90,13 +94,21 @@ void BrowserCloseManager::TryToCloseBrowsers() {
   // stop closing. CallBeforeUnloadHandlers prompts the user and calls
   // OnBrowserReportCloseable with the result. If the user confirms the close,
   // this will trigger TryToCloseBrowsers to try again.
-  for (Browser* browser : *BrowserList::GetInstance()) {
-    if (browser->TryToCloseWindow(
-            false, base::BindRepeating(
-                       &BrowserCloseManager::OnBrowserReportCloseable, this))) {
-      current_browser_ = browser;
-      return;
-    }
+  bool should_stop = false;
+  GlobalBrowserCollection::GetInstance()->ForEach(
+      [this, &should_stop](BrowserWindowInterface* browser) {
+        if (browser->GetBrowserForMigrationOnly()->TryToCloseWindow(
+                false,
+                base::BindRepeating(
+                    &BrowserCloseManager::OnBrowserReportCloseable, this))) {
+          current_browser_ = browser;
+          should_stop = true;
+        }
+        return !should_stop;
+      },
+      BrowserCollection::Order::kCreation);
+  if (should_stop) {
+    return;
   }
 
   // This is the success endpoint. If we get here, all beforeunload handlers
@@ -144,16 +156,19 @@ void BrowserCloseManager::CheckForDownloadsInProgress() {
 void BrowserCloseManager::ConfirmCloseWithPendingDownloads(
     int download_count,
     base::OnceCallback<void(bool)> callback) {
-  Browser* browser = BrowserList::GetInstance()->GetLastActive();
-  if (browser == nullptr) {
+  BrowserWindowInterface* const bwi =
+      GetLastActiveBrowserWindowInterfaceWithAnyProfile();
+  if (!bwi) {
     // Background may call CloseAllBrowsers() with no Browsers. In this
     // case immediately continue with shutting down.
     std::move(callback).Run(/* proceed= */ true);
     return;
   }
-  browser->window()->ConfirmBrowserCloseWithPendingDownloads(
-      download_count, Browser::DownloadCloseType::kBrowserShutdown,
-      std::move(callback));
+  bwi->GetBrowserForMigrationOnly()
+      ->window()
+      ->ConfirmBrowserCloseWithPendingDownloads(
+          download_count, Browser::DownloadCloseType::kBrowserShutdown,
+          std::move(callback));
 }
 
 void BrowserCloseManager::OnReportDownloadsCancellable(bool proceed) {
@@ -200,24 +215,28 @@ void BrowserCloseManager::CloseBrowsers() {
   }
 #endif
 
-  BrowserList::GetInstance()->ForEachCurrentAndNewBrowser([](Browser* browser) {
-    bool ignore_unload_handlers =
-        browser_shutdown::ShouldIgnoreUnloadHandlers();
-    browser->set_force_skip_warning_user_on_close(ignore_unload_handlers);
-    browser->window()->Close();
-    if (ignore_unload_handlers) {
-      // This path is hit during logoff/power-down. It could be the case that
-      // there are some tabs which would have prevented the browser from closing
-      // (Ex: A form with an open dialog asking for permission to leave the
-      // current site). Since we are attempting to end the session, we will
-      // force skip these warnings and manually close all the tabs to make sure
-      // the browser is destroyed and cleanup can happen.
-      browser->tab_strip_model()->CloseAllTabs();
-      browser->SynchronouslyDestroyBrowser();
-      // Destroying the browser should have removed it from the browser list.
-      DCHECK(!base::Contains(*BrowserList::GetInstance(), browser));
-    }
-  });
+  ForEachCurrentAndNewBrowserWindowInterfaceOrderedByActivation(
+      [](BrowserWindowInterface* browser_window) {
+        bool ignore_unload_handlers =
+            browser_shutdown::ShouldIgnoreUnloadHandlers();
+
+        Browser* const browser = browser_window->GetBrowserForMigrationOnly();
+        browser->set_force_skip_warning_user_on_close(ignore_unload_handlers);
+        browser_window->GetWindow()->Close();
+
+        if (ignore_unload_handlers) {
+          // This path is hit during logoff/power-down. It could be the case
+          // that there are some tabs which would have prevented the browser
+          // from closing (Ex: A form with an open dialog asking for permission
+          // to leave the current site). Since we are attempting to end the
+          // session, we will force skip these warnings and manually close all
+          // the tabs to make sure the browser is destroyed and cleanup can
+          // happen.
+          browser_window->GetTabStripModel()->CloseAllTabs();
+          browser->SynchronouslyDestroyBrowser();
+        }
+        return true;
+      });
 
 #if BUILDFLAG(ENABLE_CHROME_NOTIFICATIONS)
   NotificationUIManager* notification_manager =

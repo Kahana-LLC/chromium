@@ -71,7 +71,8 @@ MATCHER(NotEmpty, "") {
 }
 MATCHER(IsJSONDictionary, "") {
   std::string result(arg.begin(), arg.end());
-  std::optional<base::Value> root = base::JSONReader::Read(result);
+  std::optional<base::Value> root =
+      base::JSONReader::Read(result, base::JSON_PARSE_CHROMIUM_EXTENSIONS);
   return (root && root->type() == base::Value::Type::DICT);
 }
 MATCHER(IsNullTime, "") {
@@ -279,8 +280,8 @@ scoped_refptr<DecoderBuffer> CreateEncryptedBuffer(
     const std::vector<uint8_t>& key_id,
     const std::vector<uint8_t>& iv,
     const std::vector<SubsampleEntry>& subsample_entries) {
-  DCHECK(!data.empty());
-  DCHECK(!iv.empty());
+  CHECK(!data.empty());
+  CHECK(!iv.empty());
   auto encrypted_buffer = base::MakeRefCounted<DecoderBuffer>(data.size());
   memcpy(encrypted_buffer->writable_data(), data.data(), data.size());
   std::string key_id_string(key_id.begin(), key_id.end());
@@ -292,7 +293,7 @@ scoped_refptr<DecoderBuffer> CreateEncryptedBuffer(
 
 scoped_refptr<DecoderBuffer> CreateClearBuffer(
     const std::vector<uint8_t>& data) {
-  DCHECK(!data.empty());
+  CHECK(!data.empty());
   auto encrypted_buffer = base::MakeRefCounted<DecoderBuffer>(data.size());
   memcpy(encrypted_buffer->writable_data(), data.data(), data.size());
   return encrypted_buffer;
@@ -452,7 +453,7 @@ class AesDecryptorTest : public testing::TestWithParam<TestType> {
 
   // Creates a new session using |key_id|. Returns the session ID.
   std::string CreateSession(const std::vector<uint8_t>& key_id) {
-    DCHECK(!key_id.empty());
+    CHECK(!key_id.empty());
     EXPECT_CALL(cdm_client_,
                 OnSessionMessage(NotEmpty(), _, IsJSONDictionary()));
     cdm_->CreateSessionAndGenerateRequest(CdmSessionType::kTemporary,
@@ -482,7 +483,7 @@ class AesDecryptorTest : public testing::TestWithParam<TestType> {
                               const std::string& key,
                               ExpectedResult expected_result,
                               bool new_key_expected) {
-    DCHECK(!key.empty());
+    CHECK(!key.empty());
 
     if (expected_result == RESOLVED) {
       EXPECT_CALL(cdm_client_,
@@ -785,10 +786,10 @@ TEST_P(AesDecryptorTest, MultipleKeysAndFrames) {
           kIv2.data(),
           base::span<const uint8_t>(kIv2).subspan(std::size(kIv2)).data()),
       no_subsample_entries_);
-  UNSAFE_TODO(ASSERT_NO_FATAL_FAILURE(DecryptAndExpect(
+  ASSERT_NO_FATAL_FAILURE(DecryptAndExpect(
       encrypted_buffer,
       std::vector<uint8_t>(kOriginalData2.begin(), kOriginalData2.end()),
-      SUCCESS)));
+      SUCCESS));
 }
 
 TEST_P(AesDecryptorTest, CorruptedIv) {

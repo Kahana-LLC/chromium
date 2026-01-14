@@ -36,13 +36,14 @@
 #import "ios/chrome/browser/omnibox/ui/popup/carousel/carousel_item_menu_provider.h"
 #import "ios/chrome/browser/omnibox/ui/popup/omnibox_popup_consumer.h"
 #import "ios/chrome/browser/omnibox/ui/popup/omnibox_popup_presenter.h"
-#import "ios/chrome/browser/shared/public/commands/application_commands.h"
+#import "ios/chrome/browser/shared/public/commands/omnibox_commands.h"
 #import "ios/chrome/browser/shared/public/commands/open_new_tab_command.h"
+#import "ios/chrome/browser/shared/public/commands/scene_commands.h"
 #import "ios/chrome/browser/shared/public/features/features.h"
 #import "ios/chrome/browser/shared/public/features/system_flags.h"
 #import "ios/chrome/browser/shared/ui/util/pasteboard_util.h"
 #import "ios/chrome/browser/shared/ui/util/uikit_ui_util.h"
-#import "ios/chrome/browser/toolbar/ui_bundled/public/toolbar_omnibox_consumer.h"
+#import "ios/chrome/browser/toolbar/legacy/ui_bundled/public/toolbar_omnibox_consumer.h"
 #import "net/base/apple/url_conversions.h"
 #import "ui/base/l10n/l10n_util.h"
 
@@ -101,7 +102,10 @@ const NSUInteger kMaxSuggestTileTypePosition = 15;
             (OmniboxAutocompleteController*)autocompleteController
                                            hasSuggestions:(BOOL)hasSuggestions
                                                isFocusing:(BOOL)isFocusing {
+  [self.consumer setKeyboardAttachedBottomOmniboxHeight:
+                     self.presenter.keyboardAttachedBottomOmniboxHeight];
   [self.consumer newResultsAvailable];
+  [_consumer setUseBottomOmniboxInPopup:self.presenter.useBottomOmniboxInPopup];
 
   self.open = hasSuggestions;
   [self.presenter updatePopupOnFocus:isFocusing];
@@ -142,6 +146,7 @@ const NSUInteger kMaxSuggestTileTypePosition = 15;
 
 - (void)onTraitCollectionChange {
   [self.presenter updatePopupAfterTraitCollectionChange];
+  [_consumer setUseBottomOmniboxInPopup:self.presenter.useBottomOmniboxInPopup];
 }
 
 - (void)selectSuggestion:(id<AutocompleteSuggestion>)suggestion
@@ -189,9 +194,7 @@ const NSUInteger kMaxSuggestTileTypePosition = 15;
     [self.omniboxAutocompleteController
         selectMatchForOpening:match
                         inRow:row
-                       openIn:IsDiamondPrototypeEnabled()
-                                  ? WindowOpenDisposition::NEW_FOREGROUND_TAB
-                                  : WindowOpenDisposition::CURRENT_TAB];
+                       openIn:WindowOpenDisposition::CURRENT_TAB];
   } else {
     DUMP_WILL_BE_NOTREACHED()
         << "Suggestion type " << NSStringFromClass(suggestion.class)
@@ -241,37 +244,16 @@ const NSUInteger kMaxSuggestTileTypePosition = 15;
 
 - (void)tapTrailingButtonOnSuggestion:(id<AutocompleteSuggestion>)suggestion
                                 inRow:(NSUInteger)row {
+  if (!suggestion) {
+    return;
+  }
+
   if ([suggestion isKindOfClass:[AutocompleteMatchFormatter class]]) {
     AutocompleteMatchFormatter* autocompleteMatchFormatter =
         (AutocompleteMatchFormatter*)suggestion;
     const AutocompleteMatch& match =
         autocompleteMatchFormatter.autocompleteMatch;
-    if (suggestion.hasAimShortcut) {
-      GURL aimURL;
-      for (const auto& action : match.actions) {
-        const OmniboxActionInSuggest* action_in_suggest =
-            OmniboxActionInSuggest::FromAction(action.get());
-        if (action_in_suggest &&
-            action_in_suggest->Type() ==
-                omnibox::
-                    SuggestTemplateInfo_TemplateAction_ActionType_CHROME_AIM) {
-          aimURL = GURL(action_in_suggest->template_action.action_uri());
-          break;
-        }
-      }
-      CHECK(aimURL.is_valid());
-      AutocompleteMatch aimMatch = match;
-      UMA_HISTOGRAM_COUNTS_100("IOS.Omnibox.AimShortcutTapped",
-                               aimMatch.contents.length());
-      OmniboxActionInSuggest::RecordShownAndUsedMetrics(
-          omnibox::SuggestTemplateInfo_TemplateAction_ActionType_CHROME_AIM,
-          true /* used */);
-      [self.omniboxAutocompleteController
-             selectMatchForOpening:aimMatch
-          withCustomDestinationURL:aimURL
-                             inRow:row
-                            openIn:WindowOpenDisposition::CURRENT_TAB];
-    } else if (match.has_tab_match.value_or(false)) {
+    if (match.has_tab_match.value_or(false)) {
       [self.omniboxAutocompleteController
           selectMatchForOpening:match
                           inRow:row
@@ -305,6 +287,11 @@ const NSUInteger kMaxSuggestTileTypePosition = 15;
         << "Suggestion type " << NSStringFromClass(suggestion.class)
         << " not handled for deletion.";
   }
+}
+
+- (void)closeButtonTapped {
+  [self.omniboxCommandsHandler cancelOmniboxEdit];
+  [self.omniboxAutocompleteController closeOmniboxPopup];
 }
 
 - (void)onScroll {
@@ -516,7 +503,7 @@ const NSUInteger kMaxSuggestTileTypePosition = 15;
         UIAccessibilityCustomAction*) {
       NSUserActivity* activity =
           ActivityToLoadURL(WindowActivityContentSuggestionsOrigin, copyURL);
-      [weakSelf.applicationCommandsHandler openNewWindowWithActivity:activity];
+      [weakSelf.sceneHandler openNewWindowWithActivity:activity];
       return YES;
     };
     UIAccessibilityCustomAction* newWindowAction =
@@ -584,20 +571,20 @@ const NSUInteger kMaxSuggestTileTypePosition = 15;
 /// `incognito`: open in incognito tab.
 - (void)openNewTabWithMostVisitedItem:(CarouselItem*)carouselItem
                             incognito:(BOOL)incognito {
-  DCHECK(self.applicationCommandsHandler);
+  DCHECK(self.sceneHandler);
   OpenNewTabCommand* command =
       [OpenNewTabCommand commandWithURLFromChrome:carouselItem.URL.gurl
                                       inIncognito:incognito];
-  [self.applicationCommandsHandler openURLInNewTab:command];
+  [self.sceneHandler openURLInNewTab:command];
 }
 
 /// Opens suggestAction in a new tab.
 - (void)openNewTabWithSuggestAction:(SuggestAction*)suggestAction {
-  DCHECK(self.applicationCommandsHandler);
+  DCHECK(self.sceneHandler);
   OpenNewTabCommand* command =
       [OpenNewTabCommand commandWithURLFromChrome:suggestAction.actionURI
                                       inIncognito:NO];
-  [self.applicationCommandsHandler openURLInNewTab:command];
+  [self.sceneHandler openURLInNewTab:command];
 }
 
 @end

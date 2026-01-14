@@ -42,27 +42,16 @@ void RecordActionOnSafariExportEducationScreen(
 
 #pragma mark - Import
 
-// Available user actions on password conflicts screen.
-// LINT.IfChange(SafariDataImportPasswordConflictScreenAction)
-enum class SafariDataImportPasswordConflictScreenAction {
-  kCancel = 0,
-  kDeselectAll = 1,
-  kSelectAll = 2,
-  kContinue = 3,
-  kMaxValue = kContinue,
-};
-// LINT.ThenChange(/tools/metrics/histograms/metadata/ios/enums.xml:SafariDataImportPasswordConflictScreenAction)
-
-// Records `action` in conflict resolution screen.
-void RecordSafariDataImportDismissPasswordConflictScreen(
-    SafariDataImportPasswordConflictScreenAction action);
-
 // Records requests to display invalid passwords.
 void RecordSafariDataImportInvalidPasswordDisplay();
 
 // Records file preparation failures, and whether the failure alert has
 // successfully displayed.
 void RecordSafariDataImportFailure(bool alert_displayed);
+
+// Records the current stage of import when the user taps the "back" button.
+// Only applicable for users who reach the import screen.
+void RecordSafariDataImportTapsBackAtImportStage(SafariDataImportStage stage);
 
 // Records the current stage of import when the user exits the workflow. Only
 // applicable for users who reach the import screen.

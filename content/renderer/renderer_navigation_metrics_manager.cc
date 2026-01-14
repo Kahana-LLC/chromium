@@ -5,10 +5,10 @@
 #include "content/renderer/renderer_navigation_metrics_manager.h"
 
 #include "base/check.h"
-#include "base/containers/contains.h"
 #include "base/logging.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/no_destructor.h"
+#include "base/strings/strcat.h"
 #include "base/task/thread_pool.h"
 #include "base/trace_event/trace_event.h"
 #include "base/trace_event/trace_id_helper.h"
@@ -26,7 +26,6 @@ constexpr base::TimeDelta kLazyCleanupTimeout = base::Seconds(300);
 // trace events and metrics, in case they cause any unexpected overhead or other
 // issues. See https://crbug.com/415821826.
 BASE_FEATURE(kEnableRendererNavigationTimeline,
-             "EnableRendererNavigationTimeline",
              base::FEATURE_ENABLED_BY_DEFAULT);
 
 // Used to record how ready a renderer process is for an incoming

@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
-#pragma allow_unsafe_libc_calls
-#endif
-
 // Unit test for VideoCaptureBufferPool.
 
 #include "media/capture/video/video_capture_buffer_pool.h"
@@ -19,6 +14,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/compiler_specific.h"
 #include "base/functional/bind.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/scoped_refptr.h"
@@ -64,7 +60,6 @@ static constexpr media::VideoPixelFormat kCapturePixelFormats[] = {
 
 static constexpr media::VideoCaptureBufferType kVideoCaptureBufferTypes[] = {
     media::VideoCaptureBufferType::kSharedMemory,
-    media::VideoCaptureBufferType::kMailboxHolder,
     media::VideoCaptureBufferType::kGpuMemoryBuffer};
 
 static constexpr int kTestBufferPoolSize = 3;
@@ -103,7 +98,7 @@ class VideoCaptureBufferPoolTest
     ~Buffer() { pool_->RelinquishProducerReservation(id()); }
     int id() const { return id_; }
     size_t mapped_size() { return buffer_handle_->mapped_size(); }
-    void* data() { return buffer_handle_->data(); }
+    void* data() { return buffer_handle_->data().data(); }
 
    private:
     const int id_;
@@ -202,11 +197,11 @@ TEST_P(VideoCaptureBufferPoolTest, BufferPool) {
 
   // Touch the memory.
   if (buffer1->data() != nullptr)
-    memset(buffer1->data(), 0x11, buffer1->mapped_size());
+    UNSAFE_TODO(memset(buffer1->data(), 0x11, buffer1->mapped_size()));
   if (buffer2->data() != nullptr)
-    memset(buffer2->data(), 0x44, buffer2->mapped_size());
+    UNSAFE_TODO(memset(buffer2->data(), 0x44, buffer2->mapped_size()));
   if (buffer3->data() != nullptr)
-    memset(buffer3->data(), 0x77, buffer3->mapped_size());
+    UNSAFE_TODO(memset(buffer3->data(), 0x77, buffer3->mapped_size()));
 
   // Fourth buffer should fail.  Buffer pool utilization should be at 100%.
   ASSERT_FALSE(ReserveBuffer(size_lo, pixel_format)) << "Pool should be empty";
@@ -323,13 +318,13 @@ TEST_P(VideoCaptureBufferPoolTest, BufferPool) {
 
   // Touch the memory.
   if (buffer2->data() != nullptr)
-    memset(buffer2->data(), 0x22, buffer2->mapped_size());
+    UNSAFE_TODO(memset(buffer2->data(), 0x22, buffer2->mapped_size()));
   if (buffer4->data() != nullptr)
-    memset(buffer4->data(), 0x55, buffer4->mapped_size());
+    UNSAFE_TODO(memset(buffer4->data(), 0x55, buffer4->mapped_size()));
   buffer2.reset();
 
   if (buffer4->data() != nullptr)
-    memset(buffer4->data(), 0x77, buffer4->mapped_size());
+    UNSAFE_TODO(memset(buffer4->data(), 0x77, buffer4->mapped_size()));
   buffer4.reset();
 }
 

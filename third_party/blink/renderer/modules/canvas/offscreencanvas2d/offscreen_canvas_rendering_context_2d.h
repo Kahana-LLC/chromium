@@ -13,17 +13,16 @@
 #include "third_party/blink/renderer/core/html/canvas/canvas_rendering_context_factory.h"
 #include "third_party/blink/renderer/core/offscreencanvas/offscreen_canvas.h"
 #include "third_party/blink/renderer/modules/canvas/canvas2d/base_rendering_context_2d.h"
-#include "third_party/blink/renderer/modules/canvas/canvas2d/identifiability_study_helper.h"
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
 #include "third_party/blink/renderer/platform/graphics/canvas_2d_color_params.h"
 #include "third_party/blink/renderer/platform/graphics/canvas_resource_provider.h"
 #include "third_party/blink/renderer/platform/graphics/skia/skia_utils.h"
-#include "third_party/blink/renderer/platform/privacy_budget/identifiability_digest_helpers.h"
 
 namespace blink {
 
 class CanvasResourceProvider;
 class ExceptionState;
+class ExecutionContext;
 class MemoryManagedPaintCanvas;
 
 class MODULES_EXPORT OffscreenCanvasRenderingContext2D final
@@ -38,6 +37,7 @@ class MODULES_EXPORT OffscreenCanvasRenderingContext2D final
     ~Factory() override = default;
 
     CanvasRenderingContext* Create(
+        ExecutionContext*,
         CanvasRenderingContextHost* host,
         const CanvasContextCreationAttributesCore& attrs) override;
 
@@ -62,7 +62,7 @@ class MODULES_EXPORT OffscreenCanvasRenderingContext2D final
   V8RenderingContext* AsV8RenderingContext() final;
   V8OffscreenRenderingContext* AsV8OffscreenRenderingContext() final;
   void Stop() final { NOTREACHED(); }
-  scoped_refptr<StaticBitmapImage> GetImage(FlushReason) final;
+  scoped_refptr<StaticBitmapImage> GetImage() final;
   void Reset() override;
   // CanvasRenderingContext - ActiveScriptWrappable
   // This method will avoid this class to be garbage collected, as soon as
@@ -82,8 +82,7 @@ class MODULES_EXPORT OffscreenCanvasRenderingContext2D final
   int Width() const final;
   int Height() const final;
 
-  bool CanCreateCanvas2dResourceProvider() final;
-  CanvasResourceProvider* GetResourceProviderForCanvas2D() const override;
+  bool CanCreateResourceProvider() final;
 
   // Offscreen canvas doesn't have any notion of image orientation.
   RespectImageOrientationEnum RespectImageOrientation() const final {
@@ -119,22 +118,6 @@ class MODULES_EXPORT OffscreenCanvasRenderingContext2D final
   CanvasRenderingContextHost* GetCanvasRenderingContextHost() const override;
   ExecutionContext* GetTopExecutionContext() const override;
 
-  IdentifiableToken IdentifiableTextToken() const override {
-    return identifiability_study_helper_.GetToken();
-  }
-
-  bool IdentifiabilityEncounteredSkippedOps() const override {
-    return identifiability_study_helper_.encountered_skipped_ops();
-  }
-
-  bool IdentifiabilityEncounteredSensitiveOps() const override {
-    return identifiability_study_helper_.encountered_sensitive_ops();
-  }
-
-  bool IdentifiabilityEncounteredPartiallyDigestedImage() const override {
-    return identifiability_study_helper_.encountered_partially_digested_image();
-  }
-
   std::optional<cc::PaintRecord> FlushCanvas(FlushReason) override;
 
  protected:
@@ -150,14 +133,15 @@ class MODULES_EXPORT OffscreenCanvasRenderingContext2D final
   bool ResolveFont(const String& new_font) override;
 
  private:
+  CanvasResourceProvider* GetResourceProvider() const override;
   void FinalizeFrame(FlushReason) final;
 
   bool IsPaintable() const final;
 
   scoped_refptr<CanvasResource> ProduceCanvasResource(FlushReason);
 
-  CanvasResourceProvider* GetOrCreateCanvas2DResourceProvider() override;
-  std::unique_ptr<CanvasResourceProvider> ReplaceResourceProviderForCanvas2D(
+  CanvasResourceProvider* GetOrCreateResourceProvider() override;
+  std::unique_ptr<CanvasResourceProvider> ReplaceResourceProvider(
       std::unique_ptr<CanvasResourceProvider>) override;
 
   std::unique_ptr<CanvasResourceProvider> resource_provider_;

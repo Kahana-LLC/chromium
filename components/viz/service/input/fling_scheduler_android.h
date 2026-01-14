@@ -5,6 +5,7 @@
 #ifndef COMPONENTS_VIZ_SERVICE_INPUT_FLING_SCHEDULER_ANDROID_H_
 #define COMPONENTS_VIZ_SERVICE_INPUT_FLING_SCHEDULER_ANDROID_H_
 
+#include "base/gtest_prod_util.h"
 #include "base/memory/raw_ptr.h"
 #include "components/input/fling_controller.h"
 #include "components/input/fling_scheduler_base.h"
@@ -65,7 +66,6 @@ class VIZ_SERVICE_EXPORT FlingSchedulerAndroid
   // BeginFrameObserverBase implementation.
   bool OnBeginFrameDerivedImpl(const BeginFrameArgs& args) override;
   void OnBeginFrameSourcePausedChanged(bool paused) override {}
-  bool IsRoot() const override;
 
   const FrameSinkId frame_sink_id_;
 };

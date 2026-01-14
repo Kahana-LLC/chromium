@@ -100,8 +100,7 @@ class RecentActivityBubbleDialogViewInteractiveUiTest
 
   void SetUp() override {
     scoped_feature_list_.InitWithFeatures(
-        {tab_groups::kTabGroupSyncServiceDesktopMigration,
-         data_sharing::features::kDataSharingFeature,
+        {data_sharing::features::kDataSharingFeature,
          collaboration::features::kCollaborationMessaging},
         {});
     ASSERT_TRUE(embedded_test_server()->InitializeAndListen());
@@ -125,7 +124,7 @@ class RecentActivityBubbleDialogViewInteractiveUiTest
   std::unique_ptr<net::test_server::HttpResponse> HandleRequest(
       const net::test_server::HttpRequest& request) {
     GURL absolute_url = embedded_test_server()->GetURL(request.relative_url);
-    if (absolute_url.path() != avatar_url_) {
+    if (absolute_url.GetPath() != avatar_url_) {
       return nullptr;
     }
 

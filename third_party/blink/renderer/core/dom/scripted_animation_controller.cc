@@ -83,8 +83,8 @@ void ScriptedAnimationController::ContextLifecycleStateChanged(
     ScheduleAnimationIfNeeded();
 }
 
-void ScriptedAnimationController::DispatchEventsAndCallbacksForPrinting() {
-  DispatchEvents(WTF::BindRepeating([](Event* event) {
+void ScriptedAnimationController::DispatchMediaQueryListEventsAndCallbacks() {
+  DispatchEvents(BindRepeating([](Event* event) {
     return event->InterfaceName() ==
            event_interface_names::kMediaQueryListEvent;
   }));

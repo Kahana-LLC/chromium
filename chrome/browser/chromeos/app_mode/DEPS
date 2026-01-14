@@ -24,9 +24,7 @@ include_rules = [
   "+chrome/browser/extensions/external_loader.h",
   "+chrome/browser/extensions/external_provider_impl.h",
   "+chrome/browser/extensions/forced_extensions/install_stage_tracker.h",
-  "+chrome/browser/extensions/install_observer.h",
   "+chrome/browser/extensions/install_tracker_factory.h",
-  "+chrome/browser/extensions/install_tracker.h",
   "+chrome/browser/extensions/updater",
   "+chrome/browser/lifetime",
   "+chrome/browser/profiles/profile.h",
@@ -36,14 +34,17 @@ include_rules = [
   "+chrome/browser/ui/ash/system_web_apps",
   "+chrome/browser/ui/browser.h",
   "+chrome/browser/ui/browser_commands.h",
+  "+chrome/browser/ui/browser_finder.h",
   "+chrome/browser/ui/browser_list.h",
   "+chrome/browser/ui/browser_list_observer.h",
   "+chrome/browser/ui/browser_navigator.h",
   "+chrome/browser/ui/browser_window.h",
+  "+chrome/browser/ui/browser_window/public",
   "+chrome/browser/ui/exclusive_access",
   "+chrome/browser/ui/extensions/application_launch.h",
   "+chrome/browser/ui/tabs/tab_activity_simulator.h",
   "+chrome/browser/ui/web_applications",
+  "+chrome/browser/ui/views/frame/browser_view.h",
   "+chrome/browser/web_applications",
   "+chrome/common",
   "+chrome/test",
@@ -56,6 +57,7 @@ specific_include_rules = {
   "chrome_kiosk_app_launcher_unittest.cc": [
     "+ash/test/ash_test_helper.h",
     "+chrome/browser/ash/app_mode/test_kiosk_extension_builder.h",
+    "+chrome/browser/ash/extensions/scoped_app_window.h",
   ],
   "kiosk_troubleshooting_controller_ash.cc": [
     "+ash/accelerators/accelerator_commands.h",
@@ -85,5 +87,6 @@ specific_include_rules = {
   ],
   "kiosk_app_windows_logs_collector_unittest.cc": [
     "+ash/test/ash_test_helper.h",
+    "+chrome/browser/ash/extensions/scoped_app_window.h",
   ],
 }

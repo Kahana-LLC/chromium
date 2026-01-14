@@ -9,6 +9,7 @@
 #include <memory>
 #include <utility>
 
+#include "base/byte_size.h"
 #include "base/functional/callback_forward.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/notreached.h"
@@ -95,6 +96,14 @@ class MODULES_EXPORT BaseRenderingContext2D : public CanvasRenderingContext,
 
   void ResetInternal() override;
 
+  base::ByteSize AllocatedBufferSize() const override {
+    auto* provider = GetResourceProvider();
+    if (provider) {
+      return provider->EstimatedSizeInBytes();
+    }
+    return base::ByteSize();
+  }
+
   CanvasRenderingContext2DSettings* getContextAttributes() const;
 
   ImageData* createImageData(ImageData*, ExceptionState&) const;
@@ -149,7 +158,8 @@ class MODULES_EXPORT BaseRenderingContext2D : public CanvasRenderingContext,
   // before `transferToGPUTexture` is first called.
   V8GPUTextureFormat getTextureFormat() const;
 
-  virtual bool CanCreateCanvas2dResourceProvider() = 0;
+  virtual bool CanCreateResourceProvider() = 0;
+  virtual CanvasResourceProvider* GetOrCreateResourceProvider() = 0;
 
   String lang() const;
   void setLang(const String&);
@@ -221,20 +231,19 @@ class MODULES_EXPORT BaseRenderingContext2D : public CanvasRenderingContext,
   gfx::ColorSpace GetColorSpace() const final {
     return color_params_.GetGfxColorSpace();
   }
+  void DisableAccelerationForCanvas2D() final { DisableAcceleration(); }
   bool Is2DCanvasAccelerated() const final;
   void PageVisibilityChanged() override {}
   void RestoreCanvasMatrixClipStack(cc::PaintCanvas* c) const final;
   void Reset() override;
   scoped_refptr<StaticBitmapImage> PaintRenderingResultsToSnapshot(
-      SourceDrawingBuffer source_buffer,
-      FlushReason reason) final;
+      SourceDrawingBuffer source_buffer) final;
 
-  void SetTryRestoreContextIntervalForTesting(base::TimeDelta delay) {
-    try_restore_context_interval_ = delay;
-  }
   void SetRestoreFailedCallbackForTesting(base::RepeatingClosure callback) {
     on_restore_failed_callback_for_testing_ = std::move(callback);
   }
+
+  bool IsResourceProviderValid();
 
   HeapTaskRunnerTimer<BaseRenderingContext2D>
       dispatch_context_lost_event_timer_;
@@ -273,9 +282,8 @@ class MODULES_EXPORT BaseRenderingContext2D : public CanvasRenderingContext,
   void TryRestoreContextEvent(TimerBase*);
   void RestoreFromInvalidSizeIfNeeded() override;
 
-  virtual std::unique_ptr<CanvasResourceProvider>
-      ReplaceResourceProviderForCanvas2D(
-          std::unique_ptr<CanvasResourceProvider>) = 0;
+  virtual std::unique_ptr<CanvasResourceProvider> ReplaceResourceProvider(
+      std::unique_ptr<CanvasResourceProvider>) = 0;
 
   static const char kInheritString[];
 
@@ -290,13 +298,15 @@ class MODULES_EXPORT BaseRenderingContext2D : public CanvasRenderingContext,
   bool context_restorable_{true};
 
  private:
+  virtual bool IsHibernating() const { return false; }
+  virtual CanvasResourceProvider* GetResourceProvider() const { NOTREACHED(); }
   virtual void EnableAccelerationIfPossible() {}
   void DrawTextInternal(const String& text,
                         double x,
                         double y,
                         CanvasRenderingContext2DState::PaintType paint_type,
-                        V8CanvasTextAlign align,
-                        V8CanvasTextBaseline baseline,
+                        V8CanvasTextAlign::Enum align,
+                        V8CanvasTextBaseline::Enum baseline,
                         unsigned run_start,
                         unsigned run_end,
                         double* max_width = nullptr,
@@ -311,10 +321,10 @@ class MODULES_EXPORT BaseRenderingContext2D : public CanvasRenderingContext,
   int num_readbacks_performed_ = 0;
   unsigned read_count_ = 0;
   Member<GPUTexture> webgpu_access_texture_ = nullptr;
-  std::unique_ptr<CanvasResourceProvider> resource_provider_from_webgpu_access_;
+  std::unique_ptr<CanvasResourceProviderSharedImage>
+      resource_provider_from_webgpu_access_;
   Canvas2DColorParams color_params_;
   bool need_dispatch_context_restored_ = false;
-  base::TimeDelta try_restore_context_interval_ = kTryRestoreContextInterval;
   base::RepeatingClosure on_restore_failed_callback_for_testing_;
 };
 

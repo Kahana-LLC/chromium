@@ -9,7 +9,6 @@
 #include <memory>
 #include <string>
 
-#include "base/containers/contains.h"
 #include "base/containers/heap_array.h"
 #include "base/containers/span_writer.h"
 #include "base/hash/hash.h"
@@ -51,7 +50,7 @@ bool ProgramCache::HasSuccessfullyCompiledShader(
     const std::string& shader_signature) const {
   Hash sha;
   ComputeShaderHash(shader_signature, sha);
-  return base::Contains(compiled_shaders_, sha);
+  return compiled_shaders_.contains(sha);
 }
 
 ProgramCache::LinkedProgramStatus ProgramCache::GetLinkedProgramStatus(
@@ -186,16 +185,14 @@ void ProgramCache::ComputeProgramHash(
 }
 
 void ProgramCache::HandleMemoryPressure(
-    base::MemoryPressureListener::MemoryPressureLevel memory_pressure_level) {
-  if (memory_pressure_level ==
-      base::MemoryPressureListener::MEMORY_PRESSURE_LEVEL_NONE) {
+    base::MemoryPressureLevel memory_pressure_level) {
+  if (memory_pressure_level == base::MEMORY_PRESSURE_LEVEL_NONE) {
     return;
   }
 
   // Set a low limit on cache size for MEMORY_PRESSURE_LEVEL_MODERATE.
   size_t limit = max_size_bytes_ / 4;
-  if (memory_pressure_level ==
-      base::MemoryPressureListener::MEMORY_PRESSURE_LEVEL_CRITICAL) {
+  if (memory_pressure_level == base::MEMORY_PRESSURE_LEVEL_CRITICAL) {
     limit = 0;
   }
 

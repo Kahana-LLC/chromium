@@ -7,7 +7,6 @@
 #include <optional>
 
 #include "base/compiler_specific.h"
-#include "base/containers/contains.h"
 #include "base/files/file_util.h"
 #include "base/files/memory_mapped_file.h"
 #include "base/json/json_reader.h"
@@ -74,8 +73,8 @@ bool VideoBitstream::LoadMetadata(const base::FilePath& json_file_path,
   if (!base::ReadFileToString(json_file_path, &json_data)) {
     return false;
   }
-  auto metadata_result =
-      base::JSONReader::ReadAndReturnValueWithError(json_data);
+  auto metadata_result = base::JSONReader::ReadAndReturnValueWithError(
+      json_data, base::JSON_PARSE_CHROMIUM_EXTENSIONS);
   if (!metadata_result.has_value()) {
     LOG(ERROR) << "Failed to parse video metadata: " << json_file_path << ": "
                << metadata_result.error().message;
@@ -191,8 +190,8 @@ std::unique_ptr<VideoBitstream> VideoBitstream::Create(
       std::find_if(std::cbegin(kKeyFrameLessResolutionChangeFiles),
                    std::cend(kKeyFrameLessResolutionChangeFiles),
                    [filepath = data_file_path.value()](base::FilePath substr) {
-                     return base::Contains(base::ToLowerASCII(filepath),
-                                           base::ToLowerASCII(substr.value()));
+                     return base::ToLowerASCII(filepath).contains(
+                         base::ToLowerASCII(substr.value()));
                    });
   return base::WrapUnique(
       new VideoBitstream(std::move(memory_mapped_file), metadata));

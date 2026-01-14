@@ -26,6 +26,7 @@
 #include "components/strings/grit/components_strings.h"
 #include "components/url_formatter/elide_url.h"
 #include "components/vector_icons/vector_icons.h"
+#include "media/base/media_switches.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
 #include "ui/base/ui_base_features.h"
@@ -219,14 +220,17 @@ void PermissionToggleRowView::InitForUserSource(
       views::DISTANCE_RELATED_LABEL_HORIZONTAL);
   AddToggleButton(toggle_accessible_name, icon_label_spacing);
 
-  const int icon_size = GetLayoutConstant(PAGE_INFO_ICON_SIZE);
+  const int icon_size = GetLayoutConstant(LayoutConstant::kPageInfoIconSize);
 
   if (permission_.is_one_time ||
       permissions::PermissionUtil::DoesSupportTemporaryGrants(
           permission_.type) ||
       (permission_.type == ContentSettingsType::FILE_SYSTEM_WRITE_GUARD &&
        base::FeatureList::IsEnabled(
-           features::kFileSystemAccessPersistentPermissions))) {
+           features::kFileSystemAccessPersistentPermissions)) ||
+      (permission_.type == ContentSettingsType::AUTO_PICTURE_IN_PICTURE &&
+       base::FeatureList::IsEnabled(
+           media::kAutoPictureInPicturePageInfoDetails))) {
     auto subpage_button = views::CreateVectorImageButtonWithNativeTheme(
         base::BindRepeating(
             [=](PermissionToggleRowView* row) {
@@ -304,7 +308,7 @@ void PermissionToggleRowView::UpdateUiOnPermissionChanged() {
 
   // Reset |state_label_|, readd it after if needed.
   if (state_label_) {
-    row_view_->RemoveChildView(std::exchange(state_label_, nullptr));
+    delete std::exchange(state_label_, nullptr);
   }
 
   // Add explanation for the user-managed permission state if needed. This would

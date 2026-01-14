@@ -4,6 +4,8 @@
 
 #include "chrome/browser/ui/webui/chrome_urls/chrome_urls_handler.h"
 
+#include <algorithm>
+
 #include "base/test/mock_callback.h"
 #include "base/test/scoped_feature_list.h"
 #include "chrome/common/webui_url_constants.h"
@@ -148,10 +150,9 @@ TEST_F(ChromeUrlsHandlerTest, GetUrls) {
   chrome_urls::mojom::ChromeUrlsDataPtr url_data;
   EXPECT_CALL(callback, Run(testing::_))
       .Times(1)
-      .WillOnce(testing::Invoke(
-          [&url_data](chrome_urls::mojom::ChromeUrlsDataPtr arg) {
-            url_data = std::move(arg);
-          }));
+      .WillOnce([&url_data](chrome_urls::mojom::ChromeUrlsDataPtr arg) {
+        url_data = std::move(arg);
+      });
   handler_->GetUrls(callback.Get());
 
   // Validate WebUI URL data.
@@ -208,7 +209,7 @@ TEST_F(ChromeUrlsHandlerTest, GetUrls) {
   base::span<const base::cstring_view> expected_urls =
       chrome::ChromeDebugURLs();
   for (const GURL& url : url_data->command_urls) {
-    EXPECT_TRUE(base::Contains(expected_urls, url.spec()));
+    EXPECT_TRUE(std::ranges::contains(expected_urls, url.spec()));
   }
 }
 

@@ -93,6 +93,11 @@ chromium-metrics-reviews@google.com.
 
 <!-- LINT.ThenChange(/chrome/browser/external_protocol/external_protocol_handler.cc:LoggedScheme) -->
 
+<enum name="GeolocationAccuracy">
+  <int value="0" label="Precise"/>
+  <int value="1" label="Approximate"/>
+</enum>
+
 <enum name="HandleStateType">
   <int value="0" label="Launch"/>
   <int value="1" label="Checked launch"/>
@@ -142,6 +147,16 @@ chromium-metrics-reviews@google.com.
   <int value="4" label="REVOKED"/>
   <int value="5" label="GRANTED_ONCE"/>
 </enum>
+
+<!-- LINT.IfChange(PermissionAiRelevanceModel) -->
+
+<enum name="PermissionAiRelevanceModel">
+  <int value="0" label="Unknown"/>
+  <int value="1" label="AIv3"/>
+  <int value="2" label="AIv4"/>
+</enum>
+
+<!-- LINT.ThenChange(//components/permissions/permission_request_enums.h:PermissionAiRelevanceModel) -->
 
 <enum name="PermissionChangeAction">
   <int value="0" label="Revoked"/>
@@ -224,6 +239,19 @@ chromium-metrics-reviews@google.com.
   <int value="3" label="Other"/>
 </enum>
 
+<!-- LINT.IfChange(PermissionRequestLikelihood) -->
+
+<enum name="PermissionRequestLikelihood">
+  <int value="0" label="Unspecified"/>
+  <int value="1" label="Very Unlikely"/>
+  <int value="2" label="Unlikely"/>
+  <int value="3" label="Neutral"/>
+  <int value="4" label="Likely"/>
+  <int value="5" label="Very Likely"/>
+</enum>
+
+<!-- LINT.ThenChange(/components/permissions/permission_request_enums.h:PermissionRequestLikelihood) -->
+
 <!-- LINT.IfChange(PermissionRequestRelevance) -->
 
 <enum name="PermissionRequestRelevance">
@@ -237,6 +265,8 @@ chromium-metrics-reviews@google.com.
 
 <!-- LINT.ThenChange(/components/permissions/permission_request_enums.h:PermissionRequestRelevance) -->
 
+<!-- LINT.IfChange(PermissionSourceUI) -->
+
 <enum name="PermissionSourceUI">
   <int value="0" label="Prompt"/>
   <int value="1" label="Page info bubble"/>
@@ -248,7 +278,10 @@ chromium-metrics-reviews@google.com.
   <int value="6" label="Automatic revocation from Safe Browsing"/>
   <int value="7" label="Automatic revocation from Safety Hub"/>
   <int value="8" label="Unidentified source"/>
+  <int value="9" label="Disruptive notification revocation"/>
 </enum>
+
+<!-- LINT.ThenChange(//components/permissions/permission_uma_util.h:PermissionSourceUI) -->
 
 <enum name="PermissionsPolicyConfiguration">
   <int value="0" label="HEADER_NOT_PRESENT_OR_INVALID"/>

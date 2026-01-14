@@ -6,26 +6,34 @@
 
 #import "base/apple/foundation_util.h"
 #import "base/check.h"
+#import "base/functional/callback_helpers.h"
+#import "base/ios/block_types.h"
 #import "base/strings/sys_string_conversions.h"
+#import "base/task/bind_post_task.h"
+#import "base/task/sequenced_task_runner.h"
 #import "components/application_locale_storage/application_locale_storage.h"
+#import "components/prefs/pref_service.h"
 #import "components/signin/public/identity_manager/account_info.h"
 #import "components/sync/service/sync_service.h"
 #import "components/user_data_importer/ios/ios_bookmark_parser.h"
 #import "components/user_data_importer/utility/safari_data_importer.h"
+#import "ios/chrome/browser/data_import/public/credential_import_item.h"
+#import "ios/chrome/browser/data_import/public/credential_import_item_favicon_data_source.h"
+#import "ios/chrome/browser/data_import/public/import_data_item.h"
+#import "ios/chrome/browser/data_import/public/import_data_item_consumer.h"
+#import "ios/chrome/browser/data_import/public/password_import_item.h"
+#import "ios/chrome/browser/data_import/ui/data_import_import_stage_transition_handler.h"
 #import "ios/chrome/browser/favicon/model/favicon_loader.h"
 #import "ios/chrome/browser/safari_data_import/model/ios_safari_data_import_client.h"
-#import "ios/chrome/browser/safari_data_import/public/password_import_item.h"
-#import "ios/chrome/browser/safari_data_import/public/password_import_item_favicon_data_source.h"
 #import "ios/chrome/browser/safari_data_import/public/safari_data_import_stage.h"
-#import "ios/chrome/browser/safari_data_import/public/safari_data_item.h"
-#import "ios/chrome/browser/safari_data_import/public/safari_data_item_consumer.h"
-#import "ios/chrome/browser/safari_data_import/ui/safari_data_import_import_stage_transition_handler.h"
 #import "ios/chrome/browser/shared/model/application_context/application_context.h"
+#import "ios/chrome/browser/shared/ui/util/url_with_title.h"
+#import "ios/chrome/common/ui/favicon/favicon_attributes.h"
 #import "ui/gfx/favicon_size.h"
 #import "url/gurl.h"
 
 @interface SafariDataImportImportMediator () <
-    PasswordImportItemFaviconDataSource>
+    CredentialImportItemFaviconDataSource>
 
 @end
 
@@ -58,6 +66,7 @@
                       bookmarkModel:(bookmarks::BookmarkModel*)bookmarkModel
                    readingListModel:(ReadingListModel*)readingListModel
                         syncService:(syncer::SyncService*)syncService
+                        prefService:(PrefService*)prefService
                       faviconLoader:(FaviconLoader*)faviconLoader {
   self = [super init];
   if (self) {
@@ -78,7 +87,7 @@
     _importer = std::make_unique<user_data_importer::SafariDataImporter>(
         _importClient.get(), _savedPasswordsPresenter.get(),
         paymentsDataManager, historyService, bookmarkModel, readingListModel,
-        syncService, std::move(bookmarkParser), locale);
+        syncService, prefService, std::move(bookmarkParser), locale);
     _faviconLoader = faviconLoader;
   }
   return self;
@@ -126,23 +135,47 @@
   _disconnected = YES;
 }
 
-#pragma mark - PasswordImportItemFaviconDataSource
+#pragma mark - CredentialImportItemFaviconDataSource
 
-- (BOOL)passwordImportItem:(PasswordImportItem*)item
-    loadFaviconAttributesWithCompletion:(ProceduralBlock)completion {
-  GURL url(base::SysNSStringToUTF8(item.url));
-  auto faviconLoadedBlock = ^(FaviconAttributes* attributes) {
+- (BOOL)credentialImportItem:(CredentialImportItem*)item
+    loadFaviconAttributesWithUIHandler:(ProceduralBlock)handler {
+  // Make sure `handler` is run on the original sequence.
+  base::RepeatingClosure faviconLoadClosure =
+      base::BindPostTask(base::SequencedTaskRunner::GetCurrentDefault(),
+                         base::BindRepeating(handler));
+  ProceduralBlock faviconLoadCompletion =
+      base::CallbackToBlock(faviconLoadClosure);
+  auto faviconLoadedBlock = ^(FaviconAttributes* attributes, bool cached) {
     item.faviconAttributes = attributes;
-    completion();
+    faviconLoadCompletion();
   };
-  _faviconLoader->FaviconForPageUrlOrHost(url, gfx::kFaviconSize,
-                                          faviconLoadedBlock);
+  if (item.url) {
+    _faviconLoader->FaviconForPageUrlOrHost(item.url.URL, gfx::kFaviconSize,
+                                            faviconLoadedBlock);
+  } else {
+    /// If the URL does not exist, return the monogram for the username.
+    CHECK(item.username.length > 0);
+    NSString* monogram =
+        [[item.username substringToIndex:1] localizedUppercaseString];
+    faviconLoadedBlock(
+        [FaviconAttributes
+            attributesWithMonogram:monogram
+                         textColor:
+                             [UIColor colorWithWhite:
+                                          kFallbackIconDefaultTextColorGrayscale
+                                               alpha:1]
+                   backgroundColor:UIColor.clearColor
+            defaultBackgroundColor:YES],
+        /*cached*/ true);
+  }
   return YES;
 }
 
-#pragma mark - SafariDataImportPasswordConflictMutator
+#pragma mark - PasswordConflictMutator
 
-- (void)continueToImportPasswords:(NSArray<NSNumber*>*)passwordIdentifiers {
+- (void)continueToImportPasswords:(NSArray<NSNumber*>*)passwordIdentifiers
+                         passkeys:(NSArray<NSNumber*>*)passkeyIdentifiers {
+  CHECK_EQ(passkeyIdentifiers.count, 0u);
   std::vector<int> selected_password_ids;
   for (NSNumber* identifier in passwordIdentifiers) {
     selected_password_ids.push_back([identifier intValue]);
@@ -155,25 +188,25 @@
 
 - (void)documentPicker:(UIDocumentPickerViewController*)controller
     didPickDocumentsAtURLs:(NSArray<NSURL*>*)urls {
-  // Early exit. Workaround for file picker latencies.
+  /// Early exit. Workaround for file picker latencies.
   if (_currentSecurityScopedURL) {
     return;
   }
-  _currentSecurityScopedURL = urls.firstObject;
-  if (!_currentSecurityScopedURL) {
+  NSURL* securityScopedURL = urls.firstObject;
+  if (![securityScopedURL startAccessingSecurityScopedResource]) {
+    [self.importStageTransitionHandler
+        resetToInitialImportStage:DataImportResetReason::kNoImportableData];
     return;
   }
-  if (![_currentSecurityScopedURL startAccessingSecurityScopedResource]) {
-    _currentSecurityScopedURL = nil;
-    return;
-  }
+  _currentSecurityScopedURL = securityScopedURL;
   [self setUpImportClient];
   _importer->PrepareImport(
       base::apple::NSURLToFilePath(_currentSecurityScopedURL));
 }
 
 - (void)documentPickerWasCancelled:(UIDocumentPickerViewController*)controller {
-  [self.importStageTransitionHandler resetToInitialImportStage:YES];
+  [self.importStageTransitionHandler
+      resetToInitialImportStage:DataImportResetReason::kUserInitiated];
 }
 
 #pragma mark - Private
@@ -184,12 +217,13 @@
   if (_importClientReady) {
     return;
   }
-  _importClient->SetSafariDataItemConsumer(self.itemConsumer);
+  _importClient->SetImportDataItemConsumer(self.itemConsumer);
   __weak SafariDataImportImportMediator* weakSelf = self;
   _importClient->RegisterCallbackOnImportFailure(base::BindOnce(^{
     __strong SafariDataImportImportMediator* strongSelf = weakSelf;
     [strongSelf reset];
-    [strongSelf.importStageTransitionHandler resetToInitialImportStage:NO];
+    [strongSelf.importStageTransitionHandler
+        resetToInitialImportStage:DataImportResetReason::kNoImportableData];
   }));
   _importClientReady = YES;
 }

@@ -528,6 +528,8 @@ bool SSLClientSocketImpl::GetSSLInfo(SSLInfo* ssl_info) {
                                  ? SSLInfo::HANDSHAKE_RESUME
                                  : SSLInfo::HANDSHAKE_FULL;
 
+  ssl_info->early_data_accepted = SSL_early_data_accepted(ssl_.get());
+
   return true;
 }
 
@@ -676,15 +678,24 @@ int SSLClientSocketImpl::Init() {
     return ERR_UNEXPECTED;
   }
 
-  if (context_->config().post_quantum_key_agreement_enabled) {
-    const uint16_t kGroups[] = {SSL_GROUP_X25519_MLKEM768, SSL_GROUP_X25519,
-                                SSL_GROUP_SECP256R1, SSL_GROUP_SECP384R1};
-    if (!SSL_set1_group_ids(ssl_.get(), kGroups, std::size(kGroups))) {
-      return ERR_UNEXPECTED;
-    }
+  const std::vector<uint16_t> supported_groups =
+      context_->config().GetSupportedGroups();
+  if (!SSL_set1_group_ids(ssl_.get(), supported_groups.data(),
+                          supported_groups.size())) {
+    return ERR_UNEXPECTED;
+  }
+  const std::vector<uint16_t> key_shares =
+      context_->config().GetSupportedGroups(/*key_shares_only=*/true);
+  if (!key_shares.empty() &&
+      !SSL_set1_client_key_shares(ssl_.get(), key_shares.data(),
+                                  key_shares.size())) {
+    return ERR_UNEXPECTED;
   }
 
   if (IsCachingEnabled()) {
+    initial_session_cache_generation_number_ =
+        context_->ssl_client_session_cache()->generation_number();
+
     bssl::UniquePtr<SSL_SESSION> session =
         context_->ssl_client_session_cache()->Lookup(
             GetSessionCacheKey(/*dest_ip_addr=*/std::nullopt));
@@ -836,12 +847,19 @@ int SSLClientSocketImpl::Init() {
   SSL_set_permute_extensions(ssl_.get(), 1);
 
   // Configure BoringSSL to send Trust Anchor IDs, if provided.
-  if (!ssl_config_.trust_anchor_ids.empty()) {
-    if (!SSL_set1_requested_trust_anchors(
-            ssl_.get(), ssl_config_.trust_anchor_ids.data(),
-            ssl_config_.trust_anchor_ids.size())) {
-      return ERR_UNEXPECTED;
-    }
+  if (ssl_config_.trust_anchor_ids.has_value() &&
+      !SSL_set1_requested_trust_anchors(ssl_.get(),
+                                        ssl_config_.trust_anchor_ids->data(),
+                                        ssl_config_.trust_anchor_ids->size())) {
+    return ERR_UNEXPECTED;
+  }
+
+  // The compliance policy must be the last thing configured in order to have
+  // defined behavior.
+  if (context_->config().tls13_cipher_prefer_aes_256 &&
+      !SSL_set_compliance_policy(ssl_.get(),
+                                 ssl_compliance_policy_cnsa_202407)) {
+    return ERR_UNEXPECTED;
   }
 
   return OK;
@@ -1529,7 +1547,7 @@ int SSLClientSocketImpl::ClientCertRequestCallback(SSL* ssl) {
     // If the key supports rsa_pkcs1_sha256, automatically add support for
     // rsa_pkcs1_sha256_legacy, for use with TLS 1.3. We convert here so that
     // not every `SSLPrivateKey` needs to implement it explicitly.
-    if (base::Contains(preferences, SSL_SIGN_RSA_PKCS1_SHA256)) {
+    if (std::ranges::contains(preferences, SSL_SIGN_RSA_PKCS1_SHA256)) {
       preferences.push_back(SSL_SIGN_RSA_PKCS1_SHA256_LEGACY);
     }
 
@@ -1545,8 +1563,7 @@ int SSLClientSocketImpl::ClientCertRequestCallback(SSL* ssl) {
 
     net_log_.AddEventWithIntParams(
         NetLogEventType::SSL_CLIENT_CERT_PROVIDED, "cert_count",
-        base::checked_cast<int>(1 +
-                                client_cert_->intermediate_buffers().size()));
+        base::checked_cast<int>(client_cert_->cert_buffers().size()));
     return 1;
   }
 #endif  // !BUILDFLAG(ENABLE_CLIENT_CERTIFICATES)
@@ -1577,7 +1594,8 @@ int SSLClientSocketImpl::NewSessionCallback(SSL_SESSION* session) {
   // OpenSSL optionally passes ownership of |session|. Returning one signals
   // that this function has claimed it.
   context_->ssl_client_session_cache()->Insert(
-      GetSessionCacheKey(ip_addr), bssl::UniquePtr<SSL_SESSION>(session));
+      initial_session_cache_generation_number_, GetSessionCacheKey(ip_addr),
+      bssl::UniquePtr<SSL_SESSION>(session));
   return 1;
 }
 

@@ -17,7 +17,6 @@ import org.chromium.chrome.browser.omnibox.suggestions.base.BaseSuggestionViewPr
 import org.chromium.components.omnibox.AnswerTypeProto.AnswerType;
 import org.chromium.components.omnibox.AutocompleteInput;
 import org.chromium.components.omnibox.AutocompleteMatch;
-import org.chromium.components.omnibox.OmniboxFeatures;
 import org.chromium.components.omnibox.OmniboxSuggestionType;
 import org.chromium.components.omnibox.suggestions.OmniboxSuggestionUiType;
 import org.chromium.ui.modelutil.PropertyModel;
@@ -76,13 +75,10 @@ public class AnswerSuggestionProcessor extends BaseSuggestionViewProcessor {
         AnswerType answerType = suggestion.getAnswerType();
         boolean suggestionTextColorReversal = checkColorReversalRequired(answerType);
         AnswerText[] details;
-        boolean shouldShowCardUi = false;
+        boolean shouldShowCardUi = false; // Set to `true` for large answer card.
         model.set(BaseSuggestionViewProperties.TOP_PADDING, 0);
         model.set(AnswerSuggestionViewProperties.RIGHT_PADDING, 0);
         if (suggestion.getAnswerTemplate() != null) {
-            shouldShowCardUi =
-                    OmniboxFeatures.shouldShowRichAnswerCard()
-                            && suggestion.getActions().size() > 0;
             details =
                     RichAnswerText.from(
                             mContext,
@@ -95,7 +91,7 @@ public class AnswerSuggestionProcessor extends BaseSuggestionViewProcessor {
             if (shouldShowCardUi) {
                 int leadInSpacing =
                         mContext.getResources()
-                                .getDimensionPixelSize(R.dimen.omnibox_simple_card_leadin);
+                                .getDimensionPixelSize(R.dimen.omnibox_simple_card_lead_in);
                 model.set(BaseSuggestionViewProperties.ACTION_CHIP_LEAD_IN_SPACING, leadInSpacing);
                 model.set(
                         BaseSuggestionViewProperties.TOP_PADDING,
@@ -127,7 +123,7 @@ public class AnswerSuggestionProcessor extends BaseSuggestionViewProcessor {
         if (shouldShowCardUi) {
             setActionButtons(model, null);
         } else {
-            setTabSwitchOrRefineAction(model, input, suggestion, position);
+            setRemoveOrRefineAction(model, input, suggestion, position);
         }
         if (suggestion.getAnswerTemplate() != null) {
             GURL imageUrl =

@@ -41,7 +41,7 @@ constexpr int kElevatedSystemShelfSizeTabletMode = 136;
 
 int IsDenseForCurrentScreen() {
   const gfx::Rect screen_size =
-      display::Screen::GetScreen()->GetPrimaryDisplay().bounds();
+      display::Screen::Get()->GetPrimaryDisplay().bounds();
 
   return screen_size.width() <= kDenseShelfScreenSizeThreshold ||
          screen_size.height() <= kDenseShelfScreenSizeThreshold;
@@ -166,7 +166,7 @@ void ShelfConfig::Init() {
   shell->overview_controller()->AddObserver(this);
   shell->session_controller()->AddObserver(this);
 
-  in_tablet_mode_ = display::Screen::GetScreen()->InTabletMode();
+  in_tablet_mode_ = display::Screen::Get()->InTabletMode();
   UpdateConfig(is_app_list_visible_, /*tablet_mode_changed=*/false);
 }
 
@@ -464,6 +464,10 @@ SkColor ShelfConfig::GetDefaultShelfColor(const views::Widget* widget) const {
 
   const auto* color_provider = widget->GetColorProvider();
   return color_provider->GetColor(GetShelfBaseLayerColorId());
+}
+
+ui::ColorId ShelfConfig::GetDefaultShelfColorId() const {
+  return GetShelfBaseLayerColorId();
 }
 
 int ShelfConfig::GetShelfControlButtonBlurRadius() const {

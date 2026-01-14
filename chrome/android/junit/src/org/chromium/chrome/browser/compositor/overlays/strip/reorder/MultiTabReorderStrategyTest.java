@@ -22,25 +22,31 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
-import org.mockito.ArgumentCaptor;
+import org.mockito.Mock;
 import org.robolectric.annotation.Config;
 
-import org.chromium.base.supplier.ObservableSupplierImpl;
+import org.chromium.base.supplier.ObservableSuppliers;
+import org.chromium.base.supplier.SettableNonNullObservableSupplier;
 import org.chromium.base.test.BaseRobolectricTestRunner;
+import org.chromium.base.test.util.Features.EnableFeatures;
 import org.chromium.chrome.browser.compositor.overlays.strip.StripLayoutGroupTitle;
 import org.chromium.chrome.browser.compositor.overlays.strip.StripLayoutTab;
 import org.chromium.chrome.browser.compositor.overlays.strip.StripLayoutUtils;
 import org.chromium.chrome.browser.compositor.overlays.strip.StripLayoutView;
 import org.chromium.chrome.browser.compositor.overlays.strip.reorder.ReorderDelegate.ReorderType;
+import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.tab.Tab;
+import org.chromium.chrome.browser.tabmodel.TabGroupModelFilter.MergeNotificationType;
 
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.function.Supplier;
 
 /** Tests for {@link MultiTabReorderStrategy}. */
 @Config(qualifiers = "sw600dp")
@@ -75,20 +81,23 @@ public class MultiTabReorderStrategyTest extends ReorderStrategyTestBase {
     private StripLayoutGroupTitle mCollapsedGroupTitle;
 
     // Dependencies
-    private final ObservableSupplierImpl<Boolean> mInReorderModeSupplier =
-            new ObservableSupplierImpl<>();
+    private final SettableNonNullObservableSupplier<Boolean> mInReorderModeSupplier =
+            ObservableSuppliers.createNonNull(false);
     private final List<StripLayoutTab> mSelectedTabs = new ArrayList<>();
     private final List<Integer> mSelectedTabsIds = new ArrayList<>();
+    private final List<StripLayoutTab> mUnpinnedTabs = new ArrayList<>();
+    private final List<StripLayoutTab> mPinnedTabs = new ArrayList<>();
 
     // Target
     private MultiTabReorderStrategy mStrategy;
+    @Mock protected Supplier<Float> mPinnedTabsBoundarySupplier;
 
     @Before
     @Override
     public void setup() {
         super.setup();
-        mockTabGroup(GROUP_ID1, TAB_ID2, mModel.getTabById(TAB_ID2), mModel.getTabById(TAB_ID3));
-        mockTabGroup(GROUP_ID2, TAB_ID4, mModel.getTabById(TAB_ID4));
+        mockTabGroup(GROUP_ID1, mModel.getTabById(TAB_ID2), mModel.getTabById(TAB_ID3));
+        mockTabGroup(GROUP_ID2, mModel.getTabById(TAB_ID4));
 
         mInReorderModeSupplier.set(false);
         when(mModel.isTabMultiSelected(anyInt()))
@@ -98,6 +107,7 @@ public class MultiTabReorderStrategyTest extends ReorderStrategyTestBase {
                             return mSelectedTabsIds.contains(tabId);
                         });
 
+        when(mPinnedTabsBoundarySupplier.get()).thenReturn(0f);
         mStrategy =
                 new MultiTabReorderStrategy(
                         mReorderDelegate,
@@ -109,19 +119,25 @@ public class MultiTabReorderStrategyTest extends ReorderStrategyTestBase {
                         mContainerView,
                         mGroupIdToHideSupplier,
                         mTabWidthSupplier,
+                        mPinnedTabsBoundarySupplier,
                         mLastReorderScrollTimeSupplier,
                         mInReorderModeSupplier);
         when(mTabGroupModelFilter.getTabUngrouper()).thenReturn(mTabUnGrouper);
+    }
+
+    @After
+    public void tearDown() {
+        mStrategy.clearReorderStateForTesting();
     }
 
     @Override
     protected void setupStripViews() {
         // Layout: [Tab1] [ExpandedGroup]([Tab2][Tab3]) [Tab4(CollapsedGroup)] [Tab5] [Tab6]
         mUngroupedTab1 = buildStripTab(TAB_ID1, 0);
-        mExpandedGroupTitle = buildGroupTitle(TAB_ID2, GROUP_ID1, TAB_WIDTH);
+        mExpandedGroupTitle = buildGroupTitle(GROUP_ID1, TAB_WIDTH);
         mGroupedTab1 = buildStripTab(TAB_ID2, 2 * TAB_WIDTH);
         mGroupedTab2 = buildStripTab(TAB_ID3, 3 * TAB_WIDTH);
-        mCollapsedGroupTitle = buildGroupTitle(TAB_ID4, GROUP_ID2, 4 * TAB_WIDTH);
+        mCollapsedGroupTitle = buildGroupTitle(GROUP_ID2, 4 * TAB_WIDTH);
         mCollapsedGroupTab = buildStripTab(TAB_ID4, 4 * TAB_WIDTH);
         mUngroupedTab2 = buildStripTab(TAB_ID5, 5 * TAB_WIDTH);
         mUngroupedTab3 = buildStripTab(TAB_ID6, 6 * TAB_WIDTH);
@@ -155,6 +171,7 @@ public class MultiTabReorderStrategyTest extends ReorderStrategyTestBase {
 
     // startReorderMode tests
     @Test
+    @SuppressWarnings("DirectInvocationOnMock")
     public void testStartReorder_gatherUngroupedTabs() {
         // Select two non-contiguous ungrouped tabs
         selectTabs(mUngroupedTab1, mUngroupedTab3);
@@ -176,6 +193,7 @@ public class MultiTabReorderStrategyTest extends ReorderStrategyTestBase {
     }
 
     @Test
+    @SuppressWarnings("DirectInvocationOnMock")
     public void testStartReorder_mergeUngroupedTabOnGroupedPrimary() {
         // Select a grouped tab and an ungrouped tab
         selectTabs(mGroupedTab2, mUngroupedTab2);
@@ -186,12 +204,11 @@ public class MultiTabReorderStrategyTest extends ReorderStrategyTestBase {
         verify(mModel).setIndex(eq(2), anyInt());
 
         // Verify the ungrouped tab is merged into the primary tab's group.
-        ArgumentCaptor<List<Tab>> mergeCaptor = ArgumentCaptor.forClass(List.class);
         Tab expectedPrimaryTab = mModel.getTabById(mGroupedTab2.getTabId());
         verify(mTabGroupModelFilter)
                 .mergeListOfTabsToGroup(
-                        mergeCaptor.capture(), eq(expectedPrimaryTab), anyInt(), anyBoolean());
-        assertEquals("Should merge 2 tabs.", 2, mergeCaptor.getValue().size());
+                        mTabListCaptor.capture(), eq(expectedPrimaryTab), anyInt(), anyInt());
+        assertEquals("Should merge 2 tabs.", 2, mTabListCaptor.getValue().size());
 
         // Verify no reorder operations took place.
         verify(mModel, never()).moveTab(anyInt(), anyInt());
@@ -203,6 +220,7 @@ public class MultiTabReorderStrategyTest extends ReorderStrategyTestBase {
     }
 
     @Test
+    @SuppressWarnings("DirectInvocationOnMock")
     public void testStartReorder_ungroupAndGather_ungroupedPrimaryTab() {
         // Select a grouped tab and an ungrouped tab
         selectTabs(mGroupedTab1, mUngroupedTab2);
@@ -213,18 +231,84 @@ public class MultiTabReorderStrategyTest extends ReorderStrategyTestBase {
         verify(mModel).setIndex(eq(4), anyInt());
 
         // Verify ungroup is called for the selected tabs
-        ArgumentCaptor<List<Tab>> ungroupCaptor = ArgumentCaptor.forClass(List.class);
         verify(mTabGroupModelFilter.getTabUngrouper())
-                .ungroupTabs(ungroupCaptor.capture(), anyBoolean(), anyBoolean(), any());
-        assertEquals("Should ungroup 1 tabs.", 1, ungroupCaptor.getValue().size());
+                .ungroupTabs(mTabListCaptor.capture(), anyBoolean(), anyBoolean(), any());
+        assertEquals("Should ungroup 1 tabs.", 1, mTabListCaptor.getValue().size());
         assertEquals(
                 "Incorrect tab ungrouped.",
                 mGroupedTab1.getTabId(),
-                ungroupCaptor.getValue().get(0).getId());
+                mTabListCaptor.getValue().get(0).getId());
 
         // Verify tabs are gathered. After ungrouping, mGroupedTab1 (model index 1) should move
         // next to mUngroupedTab2 (model index 4), so to index 4.
         verify(mModel).moveTab(mUngroupedTab2.getTabId(), 4);
+    }
+
+    @Test
+    @EnableFeatures({ChromeFeatureList.ANDROID_PINNED_TABS_TABLET_TAB_STRIP})
+    @SuppressWarnings("DirectInvocationOnMock")
+    public void testStartReorder_nonPinnedPrimaryTab_pinnedTabMoveToLastPinnedPosition() {
+        // Pin first two tabs.
+        mUngroupedTab1.setIsPinned(true);
+        mGroupedTab1.setIsPinned(true);
+        Tab firstPinnedTab = mModel.getTabById(mUngroupedTab1.getTabId());
+        Tab secondPinnedTab = mModel.getTabById(mGroupedTab1.getTabId());
+        firstPinnedTab.setIsPinned(true);
+        secondPinnedTab.setIsPinned(true);
+
+        // Select an unpinned tab and a pinned tab.
+        selectTabs(mUngroupedTab1, mUngroupedTab2);
+
+        int firstNonPinnedTabIndex = 2;
+        when(mModel.findFirstNonPinnedTabIndex()).thenReturn(firstNonPinnedTabIndex);
+
+        // Start reorder on the unpinned tab.
+        startReorder(mUngroupedTab2);
+
+        // Verify the pinned tab is moved to the last pinned position and offsetX is toward end.
+        verify(mModel).moveTab(eq(mUngroupedTab1.getTabId()), eq(firstNonPinnedTabIndex - 1));
+        // 250f(firstUnpinnedTab IdealX) + 0f(firstUnpinnedTab OffsetX) - 0f(lastPinnedTab idealX) -
+        // 48f(lastPinnedTab width) = 202f.
+        float expectedOffsetX = 202f;
+        assertEquals(
+                "The pinned tab should have positive offsetX.",
+                expectedOffsetX,
+                mUngroupedTab1.getOffsetX(),
+                DELTA);
+    }
+
+    @Test
+    @SuppressWarnings("DirectInvocationOnMock")
+    @EnableFeatures({ChromeFeatureList.ANDROID_PINNED_TABS_TABLET_TAB_STRIP})
+    public void testStartReorder_pinnedPrimaryTab_unpinnedTabMovedToFirstNonPinnedPosition() {
+        // Pin first two tabs.
+        mUngroupedTab1.setIsPinned(true);
+        mGroupedTab1.setIsPinned(true);
+        Tab firstPinnedTab = mModel.getTabById(mUngroupedTab1.getTabId());
+        Tab secondPinnedTab = mModel.getTabById(mGroupedTab1.getTabId());
+        firstPinnedTab.setIsPinned(true);
+        secondPinnedTab.setIsPinned(true);
+
+        // Select an unpinned tab and a pinned tab.
+        selectTabs(mUngroupedTab1, mUngroupedTab2);
+
+        int firstNonPinnedTabIndex = 2;
+        when(mModel.findFirstNonPinnedTabIndex()).thenReturn(firstNonPinnedTabIndex);
+
+        // Start reorder on the pinned tab.
+        startReorder(mUngroupedTab1);
+
+        // Verify the unpinned tab is moved to the first non-pinned position and offsetX is toward
+        // start.
+        verify(mModel).moveTab(eq(mUngroupedTab2.getTabId()), eq(firstNonPinnedTabIndex));
+        // 0f(lastPinnedTab IdealX) + 0f(lastPinnedTab OffsetX) + 48f(lastPinnedTab width) -
+        // 250f(lastUnpinnedTab idealX) = -202f.
+        float expectedOffsetX = -202f;
+        assertEquals(
+                "THe unpinned tab should have negative offsetX.",
+                expectedOffsetX,
+                mUngroupedTab2.getOffsetX(),
+                DELTA);
     }
 
     // updateReorderPosition success tests
@@ -233,6 +317,7 @@ public class MultiTabReorderStrategyTest extends ReorderStrategyTestBase {
         selectTabs(mUngroupedTab2, mUngroupedTab3);
         float rebuildDeltaX = -TAB_WIDTH;
         float dragDeltaX = -DRAG_PAST_COLLAPSED_GROUP_SUCCESS;
+        startReorder(mUngroupedTab2);
         testUpdateReorder_success(
                 mUngroupedTab2, rebuildDeltaX, dragDeltaX, mCollapsedGroupTitle, 5);
         verifyBlockMovedPastGroup();
@@ -245,18 +330,19 @@ public class MultiTabReorderStrategyTest extends ReorderStrategyTestBase {
         drag(DRAG_INTO_GROUP_SUCCESS);
 
         verify(mTabGroupModelFilter)
-                .mergeListOfTabsToGroup(anyList(), any(Tab.class), eq(0), eq(false));
+                .mergeListOfTabsToGroup(
+                        anyList(), any(Tab.class), eq(0), eq(MergeNotificationType.DONT_NOTIFY));
         verify(mAnimationHost, times(2)).startAnimations(anyList(), isNull());
     }
 
     @Test
+    @SuppressWarnings("DirectInvocationOnMock")
     public void testUpdateReorder_success_dragOutOfGroup() {
         // Setup a group with 3 tabs, select 2 of them to drag out.
         reset(mTabGroupModelFilter);
         when(mTabGroupModelFilter.getTabUngrouper()).thenReturn(mTabUnGrouper);
         mockTabGroup(
                 GROUP_ID1,
-                TAB_ID2,
                 mModel.getTabById(TAB_ID2),
                 mModel.getTabById(TAB_ID3),
                 mModel.getTabById(TAB_ID1));
@@ -272,36 +358,149 @@ public class MultiTabReorderStrategyTest extends ReorderStrategyTestBase {
                 .ungroupTabs(anyList(), anyBoolean(), anyBoolean(), any());
     }
 
+    @Test
+    @SuppressWarnings("DirectInvocationOnMock")
+    @EnableFeatures({ChromeFeatureList.ANDROID_PINNED_TABS_TABLET_TAB_STRIP})
+    public void testUpdateReorder_success_dragPinnedTabPastPinnedTab() {
+        mUngroupedTab2.setIsPinned(true);
+        mUngroupedTab3.setIsPinned(true);
+        selectTabs(mUngroupedTab2);
+        startReorder(mUngroupedTab2);
+        testUpdateReorder_fail(mUngroupedTab2, DRAG_PAST_TAB_SUCCESS);
+    }
+
+    @Test
+    @SuppressWarnings("DirectInvocationOnMock")
+    @EnableFeatures({ChromeFeatureList.ANDROID_PINNED_TABS_TABLET_TAB_STRIP})
+    public void testUpdateReorder_unpinnedReorderSuccess_dragMixedPinnedUnpinnedPastUnpinnedTab() {
+        // Pin first two tabs.
+        mUngroupedTab1.setIsPinned(true);
+        mGroupedTab1.setIsPinned(true);
+        Tab firstPinnedTab = mModel.getTabById(mUngroupedTab1.getTabId());
+        Tab secondPinnedTab = mModel.getTabById(mGroupedTab1.getTabId());
+        firstPinnedTab.setIsPinned(true);
+        secondPinnedTab.setIsPinned(true);
+
+        // Select an unpinned tab and a pinned tab.
+        selectTabs(mUngroupedTab1, mUngroupedTab2);
+
+        // Start reorder on the unpinned tab.
+        int firstNonPinnedTabIndex = 2;
+        when(mModel.findFirstNonPinnedTabIndex()).thenReturn(firstNonPinnedTabIndex);
+        startReorder(mUngroupedTab2);
+
+        // Manually reorders the first tab in block to the second position, this should occur in
+        // MultiTabReorderStrategy#gatherBlock, which triggers the mModel#moveTab to move the pinned
+        // tab to last pinned position and subsequently triggers a #rebuildStripTab.
+        StripLayoutTab temp = mStripTabs[0];
+        mStripTabs[0] = mStripTabs[1];
+        mStripTabs[1] = temp;
+
+        // Verify the unpinned tabs are reordered successful and pinned tab offsetX correctly
+        // updated(should anchored to the first unpinned tab).
+        float rebuildDeltaX = TAB_WIDTH;
+        float dragDeltaX = DRAG_PAST_TAB_SUCCESS;
+        testUpdateReorder_success(
+                mUngroupedTab2,
+                rebuildDeltaX,
+                dragDeltaX,
+                mUngroupedTab3,
+                /* expectedModelIndex= */ 4);
+
+        // 350f(firstUnpinnedTab IdealX) + -35f(firstUnpinnedTab OffsetX) - 100f(lastPinnedTab
+        // idealX) - 48f(lastPinnedTab width) = 167f.
+        float expectedOffsetX = 167f;
+        assertEquals(
+                "The offsetX of the pinned tab is incorrect",
+                expectedOffsetX,
+                mUngroupedTab1.getOffsetX(),
+                DELTA);
+    }
+
+    @Test
+    @SuppressWarnings("DirectInvocationOnMock")
+    @EnableFeatures({ChromeFeatureList.ANDROID_PINNED_TABS_TABLET_TAB_STRIP})
+    public void testUpdateReorder_unpinnedReorderSuccess_dragMixedPinnedUnpinnedPastPinnedTab() {
+        // Pin first two tabs.
+        mUngroupedTab1.setIsPinned(true);
+        mGroupedTab1.setIsPinned(true);
+        Tab firstPinnedTab = mModel.getTabById(mUngroupedTab1.getTabId());
+        Tab secondPinnedTab = mModel.getTabById(mGroupedTab1.getTabId());
+        firstPinnedTab.setIsPinned(true);
+        secondPinnedTab.setIsPinned(true);
+        when(mTabGroupModelFilter.isTabInTabGroup(secondPinnedTab)).thenReturn(false);
+
+        // Select an unpinned tab and a pinned tab.
+        selectTabs(mUngroupedTab1, mUngroupedTab2);
+
+        // Start reorder on the pinned tab.
+        int firstNonPinnedTabIndex = 2;
+        when(mModel.findFirstNonPinnedTabIndex()).thenReturn(firstNonPinnedTabIndex);
+        when(mPinnedTabsBoundarySupplier.get()).thenReturn(100f);
+        startReorder(mUngroupedTab1);
+        mUngroupedTab2.setIdealX(44f);
+
+        // Verify the pinned tabs are reordered successfully and unpinned tab offsetX correctly
+        // updated(should anchored to the last pinned tab).
+        float rebuildDeltaX = TAB_WIDTH;
+        float dragDeltaX = 45f;
+        testUpdateReorder_success(
+                mUngroupedTab1,
+                rebuildDeltaX,
+                dragDeltaX,
+                mGroupedTab1,
+                /* expectedModelIndex= */ 0);
+
+        // 50f(lastPinnedTab IdealX) + -5f(firstUnpinnedTab OffsetX) + 48f(lastPinnedTab width) -
+        // 94f(lastUnpinnedTab idealX) = -1f.
+        float expectedOffsetX = -1f;
+        assertEquals(
+                "The offsetX of the unpinned tab is incorrect",
+                expectedOffsetX,
+                mUngroupedTab2.getOffsetX(),
+                DELTA);
+    }
+
     // updateReorderPosition failure tests
     @Test
+    @SuppressWarnings("DirectInvocationOnMock")
+    @EnableFeatures({ChromeFeatureList.ANDROID_PINNED_TABS_TABLET_TAB_STRIP})
+    public void testUpdateReorder_fail_dragPinnedTabPastUnpinnedTab() {
+        mUngroupedTab2.setIsPinned(true);
+        selectTabs(mUngroupedTab2);
+        startReorder(mUngroupedTab2);
+        testUpdateReorder_fail(mUngroupedTab2, DRAG_PAST_TAB_SUCCESS);
+    }
+
+    @Test
+    @SuppressWarnings("DirectInvocationOnMock")
     public void testUpdateReorder_fail_pastTab() {
         selectTabs(mUngroupedTab2);
         startReorder(mUngroupedTab2);
-        reset(mModel, mTabGroupModelFilter.getTabUngrouper());
         testUpdateReorder_fail(mUngroupedTab2, DRAG_PAST_TAB_FAIL);
     }
 
     @Test
+    @SuppressWarnings("DirectInvocationOnMock")
     public void testUpdateReorder_fail_pastCollapsedGroup() {
         selectTabs(mUngroupedTab2, mUngroupedTab3);
         startReorder(mUngroupedTab2);
-        reset(mModel, mTabGroupModelFilter.getTabUngrouper());
         testUpdateReorder_fail(mUngroupedTab2, -DRAG_PAST_COLLAPSED_GROUP_FAIL);
     }
 
     @Test
+    @SuppressWarnings("DirectInvocationOnMock")
     public void testUpdateReorder_fail_mergeIntoGroup() {
         selectTabs(mUngroupedTab1);
         startReorder(mUngroupedTab1);
-        reset(mModel, mTabGroupModelFilter.getTabUngrouper());
         testUpdateReorder_fail(mUngroupedTab1, DRAG_INTO_GROUP_FAIL);
     }
 
     @Test
+    @SuppressWarnings("DirectInvocationOnMock")
     public void testUpdateReorder_fail_dragOutOfGroup() {
         selectTabs(mGroupedTab1, mGroupedTab2);
         startReorder(mGroupedTab1);
-        reset(mModel, mTabGroupModelFilter.getTabUngrouper());
 
         when(mTabGroupModelFilter.isTabInTabGroup(mModel.getTabById(TAB_ID2))).thenReturn(true);
         when(mTabGroupModelFilter.isTabInTabGroup(mModel.getTabById(TAB_ID3))).thenReturn(true);
@@ -330,9 +529,16 @@ public class MultiTabReorderStrategyTest extends ReorderStrategyTestBase {
     private void selectTabs(StripLayoutTab... tabs) {
         mSelectedTabs.clear();
         mSelectedTabsIds.clear();
+        mPinnedTabs.clear();
+        mUnpinnedTabs.clear();
         mSelectedTabs.addAll(Arrays.asList(tabs));
         for (StripLayoutTab tab : tabs) {
             mSelectedTabsIds.add(tab.getTabId());
+            if (tab.getIsPinned()) {
+                mPinnedTabs.add(tab);
+            } else {
+                mUnpinnedTabs.add(tab);
+            }
         }
     }
 
@@ -360,12 +566,11 @@ public class MultiTabReorderStrategyTest extends ReorderStrategyTestBase {
             StripLayoutView viewToMove,
             int expectedModelIndex) {
         mockRebuildForBlockMove(viewToMove, rebuildDeltaX);
-        startReorder(primaryTab);
         drag(dragDeltaX);
 
         verify(mAnimationHost, times(2)).startAnimations(anyList(), isNull());
         float expectedOffset = dragDeltaX - rebuildDeltaX;
-        for (StripLayoutTab tab : mSelectedTabs) {
+        for (StripLayoutTab tab : primaryTab.getIsPinned() ? mPinnedTabs : mUnpinnedTabs) {
             assertEquals(
                     "Unexpected offset for tab " + tab.getTabId(),
                     expectedOffset,
@@ -382,7 +587,6 @@ public class MultiTabReorderStrategyTest extends ReorderStrategyTestBase {
     }
 
     private void testUpdateReorder_fail(StripLayoutTab primaryTab, float dragDeltaX) {
-        startReorder(primaryTab);
         drag(dragDeltaX);
         verifyFailedDrag(dragDeltaX);
     }
@@ -425,13 +629,13 @@ public class MultiTabReorderStrategyTest extends ReorderStrategyTestBase {
         verify(mTabGroupModelFilter, times(1)).moveRelatedTabs(anyInt(), anyInt());
     }
 
+    @SuppressWarnings("DirectInvocationOnMock")
     private void verifyFailedDrag(float expectedOffset) {
-        verify(mModel, never()).moveTab(anyInt(), anyInt());
         verify(mTabGroupModelFilter, never()).moveRelatedTabs(anyInt(), anyInt());
         verify(mTabGroupModelFilter.getTabUngrouper(), times(1))
                 .ungroupTabs(anyList(), anyBoolean(), anyBoolean(), any());
 
-        verify(mAnimationHost, times(2)).startAnimations(anyList(), isNull());
+        verify(mAnimationHost, times(1)).startAnimations(anyList(), isNull());
 
         for (StripLayoutTab tab : mSelectedTabs) {
             assertEquals(

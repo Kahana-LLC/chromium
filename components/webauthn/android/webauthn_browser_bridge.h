@@ -14,7 +14,7 @@ namespace webauthn {
 class WebauthnBrowserBridge {
  public:
   WebauthnBrowserBridge(JNIEnv* env,
-                        const base::android::JavaParamRef<jobject>& jbridge);
+                        const base::android::JavaRef<jobject>& jbridge);
 
   WebauthnBrowserBridge(const WebauthnBrowserBridge&) = delete;
   WebauthnBrowserBridge& operator=(const WebauthnBrowserBridge&) = delete;
@@ -23,39 +23,35 @@ class WebauthnBrowserBridge {
 
   void OnCredentialsDetailsListReceived(
       JNIEnv* env,
-      const base::android::JavaParamRef<jobjectArray>& credentials,
-      const base::android::JavaParamRef<jobject>& jframe_host,
-      jint mediation_type,
-      const base::android::JavaParamRef<jobject>& jget_assertion_callback,
-      const base::android::JavaParamRef<jobject>& jpassword_callback,
-      const base::android::JavaParamRef<jobject>& jhybrid_callback,
-      const base::android::JavaParamRef<jobject>& jreject_immediate_callback)
-      const;
+      const base::android::JavaRef<jobjectArray>& credentials,
+      const base::android::JavaRef<jobject>& jframe_host,
+      int32_t mediation_type,
+      const base::android::JavaRef<jobject>& jcredential_callback,
+      const base::android::JavaRef<jobject>& jhybrid_callback,
+      const base::android::JavaRef<jobject>& jnon_credential_callback) const;
 
-  void CleanupRequest(
-      JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& jframe_host) const;
+  void CleanupRequest(JNIEnv* env,
+                      const base::android::JavaRef<jobject>& jframe_host) const;
 
   void CleanupCredManRequest(
       JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& jframe_host) const;
+      const base::android::JavaRef<jobject>& jframe_host) const;
 
   void OnCredManConditionalRequestPending(
       JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& jframe_host,
-      jboolean jhas_results,
-      const base::android::JavaParamRef<jobject>& jfull_request_runnable);
+      const base::android::JavaRef<jobject>& jframe_host,
+      bool jhas_results,
+      const base::android::JavaRef<jobject>& jfull_request_runnable);
 
-  void OnCredManUiClosed(
-      JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& jframe_host,
-      jboolean jsuccess);
+  void OnCredManUiClosed(JNIEnv* env,
+                         const base::android::JavaRef<jobject>& jframe_host,
+                         bool jsuccess);
 
   void OnPasswordCredentialReceived(
       JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& jframe_host,
-      const base::android::JavaParamRef<jstring>& jusername,
-      const base::android::JavaParamRef<jstring>& jpassword);
+      const base::android::JavaRef<jobject>& jframe_host,
+      const base::android::JavaRef<jstring>& jusername,
+      const base::android::JavaRef<jstring>& jpassword);
 
   void Destroy(JNIEnv* env);
 

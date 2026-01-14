@@ -5,6 +5,7 @@
 #import "ios/chrome/browser/reader_mode/model/reader_mode_distiller_page.h"
 
 #import "base/base64.h"
+#import "base/check.h"
 #import "base/strings/utf_string_conversions.h"
 #import "components/dom_distiller/core/dom_distiller_features.h"
 #import "components/dom_distiller/ios/distiller_page_utils.h"
@@ -14,7 +15,10 @@
 #import "ios/web/public/web_state.h"
 
 ReaderModeDistillerPage::ReaderModeDistillerPage(web::WebState* web_state)
-    : web_state_(web_state) {}
+    : web_state_(web_state) {
+  CHECK(web_state_);
+  web_state_observation_.Observe(web_state_);
+}
 ReaderModeDistillerPage::~ReaderModeDistillerPage() = default;
 
 void ReaderModeDistillerPage::DistillPageImpl(const GURL& url,
@@ -57,7 +61,11 @@ void ReaderModeDistillerPage::HandleJavaScriptResult(
     const base::Value* result) {
   switch (GetDistillerType()) {
     case dom_distiller::DistillerType::kReadability: {
-      OnDistillationDone(url, result);
+      base::Value result_as_value;
+      if (result) {
+        result_as_value = result->Clone();
+      }
+      OnDistillationDone(url, &result_as_value);
       break;
     }
     case dom_distiller::DistillerType::kDOMDistiller: {
@@ -67,4 +75,10 @@ void ReaderModeDistillerPage::HandleJavaScriptResult(
       break;
     }
   }
+}
+
+void ReaderModeDistillerPage::WebStateDestroyed(web::WebState* web_state) {
+  CHECK_EQ(web_state_, web_state);
+  web_state_observation_.Reset();
+  web_state_ = nullptr;
 }

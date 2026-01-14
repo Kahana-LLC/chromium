@@ -7,7 +7,6 @@
 
 #include "base/memory/raw_ptr.h"
 #include "chrome/browser/glic/browser_ui/glic_button_controller_delegate.h"
-#include "chrome/browser/ui/views/tabs/tab_strip_controller.h"
 #include "chrome/browser/ui/views/tabs/tab_strip_nudge_button.h"
 #include "chrome/common/buildflags.h"
 #include "ui/base/metadata/metadata_header_macros.h"
@@ -18,7 +17,9 @@
 #include "chrome/browser/glic/fre/glic_fre.mojom.h"
 #endif  // BUILDFLAG(ENABLE_GLIC)
 
+class BrowserWindowInterface;
 class PrefService;
+class Profile;
 
 namespace glic {
 
@@ -36,14 +37,41 @@ class GlicButton : public TabStripNudgeButton,
                       PressedCallback close_pressed_callback,
                       base::RepeatingClosure hovered_callback,
                       base::RepeatingClosure mouse_down_callback,
-                      const gfx::VectorIcon& icon,
+                      base::RepeatingClosure expansion_animation_done_callback,
                       const std::u16string& tooltip);
   GlicButton(const GlicButton&) = delete;
   GlicButton& operator=(const GlicButton&) = delete;
   ~GlicButton() override;
 
+  static GlicButton* FromBrowser(BrowserWindowInterface* browser);
+
+  // These states represent the button's width and label contents.
+  enum class WidthState {
+    // Spark icon and "Gemini".
+    kNormal,
+
+    // Spark icon, contextual nudge text and "X" close button.
+    kNudge,
+
+    // Just the spark icon.
+    kCollapsed
+  };
+
+  // These functions below work together to hide the nudge label on the static
+  // button when another nudge occupies the display space.
+  //
+  // Suppresses the default label on the glic button with a hide animation.
+  void Collapse();
+  // Shows the default label on the glic button with a show animation.
+  void Expand();
+
+  void SetNudgeLabel(std::string label);
+  void RestoreDefaultLabel();
+  void SetGlicPanelIsOpen(bool open);
+
   // TabStripNudgeButton:
   void SetIsShowingNudge(bool is_showing) override;
+  bool GetIsShowingNudge() const override;
 
   void SetDropToAttachIndicator(bool indicate);
 
@@ -56,6 +84,7 @@ class GlicButton : public TabStripNudgeButton,
   gfx::Size CalculatePreferredSize(
       const views::SizeBounds& available_size) const override;
   void StateChanged(ButtonState old_state) override;
+  void AddedToWidget() override;
 
   // views::ContextMenuController:
   void ShowContextMenuForViewImpl(
@@ -76,10 +105,25 @@ class GlicButton : public TabStripNudgeButton,
   // Sets the button back to its default colors.
   void SetDefaultColors();
 
-  // Sets the button to its highlighted state.
-  void HighlightGlicButton();
+  // Called when the slide animation finishes.
+  void OnAnimationEnded();
+
+  gfx::SlideAnimation* GetExpansionAnimationForTesting() override;
+  bool GetLabelEnabledForTesting() const;
+
+  // Updates the background painter to match the current border insets.
+  void RefreshBackground();
+
+  // Show or hide the split button styling, used when the task indicator is
+  // present.
+  void SetSplitButtonCornerStyling();
+  void ResetSplitButtonCornerStyling();
 
  private:
+  // views::LabelButton:
+  void SetText(std::u16string_view text) override;
+  void NotifyClick(const ui::Event& event) override;
+
   // Creates the model for the context menu.
   std::unique_ptr<ui::SimpleMenuModel> CreateMenuModel();
 
@@ -90,9 +134,32 @@ class GlicButton : public TabStripNudgeButton,
   // announcement.
   void AnnounceNudgeShown();
 
-  PrefService* profile_prefs() {
-    return tab_strip_controller_->GetProfile()->GetPrefs();
-  }
+  PrefService* GetPrefService();
+
+  void UpdateTextAndBackgroundColors();
+  void UpdateIcon();
+  bool IsHighlightVisible() const;
+  void CreateIconAndLabelContainer();
+  void SetCloseButtonVisible(bool visible);
+
+  void ShowNudge();
+  void HideNudge();
+  void ApplyTextAndFadeIn(std::optional<std::u16string> text,
+                          base::TimeDelta delay,
+                          base::TimeDelta duration);
+  void MaybeFadeHighlightOnHover(float final_opacity);
+  int CalculateExpandedWidth();
+
+  bool IsAnimatingTextVisibility() const;
+
+  bool IsHidingNudge() const;
+
+  void SetWidthState(WidthState state);
+
+  gfx::Size PreferredSize() const;
+
+  views::View* highlight_view() { return highlight_view_; }
+  WidthState width_state() { return width_state_; }
 
 #if BUILDFLAG(ENABLE_GLIC)
   void PanelStateChanged(bool active);
@@ -102,6 +169,8 @@ class GlicButton : public TabStripNudgeButton,
   // Used to update the tooltip text when the showing states of the Glic
   // window/FRE change.
   void UpdateTooltipText();
+
+  void OnLabelVisibilityChanged();
 
   // Callback subscription for listening to changes to the Glic window
   // activation changes.
@@ -123,8 +192,8 @@ class GlicButton : public TabStripNudgeButton,
   // Menu runner for the context menu.
   std::unique_ptr<views::MenuRunner> menu_runner_;
 
-  // Tab strip that contains this button.
-  raw_ptr<TabStripController> tab_strip_controller_;
+  // Profile corresponding to the browser that this button is on.
+  raw_ptr<Profile> profile_;
 
   // Callback which is invoked when the button is hovered (i.e., the user is
   // more likely to interact with it soon).
@@ -133,6 +202,35 @@ class GlicButton : public TabStripNudgeButton,
   // Callback which is invoked when there is a mouse down event on the button
   // (i.e., the user is very likely to interact with it soon).
   base::RepeatingClosure mouse_down_callback_;
+
+  // Start and end values for width animations.
+  int start_width_ = 0;
+  int end_width_ = 0;
+
+  // View to be drawn behind the icon and label with a background color.
+  raw_ptr<View> highlight_view_ = nullptr;
+
+  // Container view for the icon and label, and the highlight drawn behind them.
+  raw_ptr<View> icon_label_highlight_view_ = nullptr;
+
+  // Holds the incoming nudge text until the point in the animation when it can
+  // be applied.
+  std::optional<std::u16string> pending_text_;
+
+  const ui::ImageModel normal_icon_;
+  const ui::ImageModel icon_for_highlight_;
+
+  bool glic_panel_is_open_ = false;
+
+  // Width of the button when in WidthState::kNormal, set in AddedToWidget().
+  int normal_width_ = 0;
+  WidthState last_width_state_ = WidthState::kNormal;
+  WidthState width_state_ = WidthState::kNormal;
+
+  class WidthAnimationController;
+  std::unique_ptr<WidthAnimationController> width_animation_controller_;
+
+  base::WeakPtrFactory<GlicButton> weak_ptr_factory_{this};
 };
 
 }  // namespace glic

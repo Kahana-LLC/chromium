@@ -2,12 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/strings/strcat.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "chrome/browser/collaboration/messaging/messaging_backend_service_factory.h"
 #include "chrome/browser/data_sharing/data_sharing_service_factory.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
 #include "chrome/browser/tab_group_sync/tab_group_sync_service_factory.h"
 #include "chrome/browser/ui/browser.h"
+#include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/browser_element_identifiers.h"
 #include "chrome/browser/ui/tabs/features.h"
 #include "chrome/browser/ui/tabs/saved_tab_groups/saved_tab_group_metrics.h"
@@ -67,11 +69,11 @@ class SharedTabGroupInteractiveUiTest
 
   void SetUp() override {
     std::vector<base::test::FeatureRefAndParams> enabled_features = {
-        {tab_groups::kTabGroupSyncServiceDesktopMigration, {}},
         {data_sharing::features::kDataSharingFeature, {}},
-    };
-    std::vector<base::test::FeatureRef> disabled_features = {
-        tabs::kTabGroupShortcuts};
+        {features::kTabGroupMenuImprovements, {}},
+        {features::kTabGroupMenuMoreEntryPoints, {}}};
+
+    std::vector<base::test::FeatureRef> disabled_features = {};
 
     if (GetParam().page_actions_migration_enabled) {
       enabled_features.push_back({
@@ -312,6 +314,7 @@ IN_PROC_BROWSER_TEST_P(SharedTabGroupInteractiveUiTest,
                   FinishTabstripAnimations(), HoverTabGroupHeader(group_id),
                   ClickMouse(ui_controls::RIGHT),
                   WaitForShow(kTabGroupEditorBubbleId),
+                  EnsurePresent(kTabGroupEditorBubbleCloseGroupButtonId),
                   PressButton(kTabGroupEditorBubbleCloseGroupButtonId),
                   WaitForHide(kTabGroupEditorBubbleCloseGroupButtonId),
                   FinishTabstripAnimations());
@@ -337,12 +340,14 @@ IN_PROC_BROWSER_TEST_P(SharedTabGroupInteractiveUiTest,
   RunTestSequence(FinishTabstripAnimations(), ShowBookmarksBar(),
                   EnsurePresent(kSavedTabGroupButtonElementId),
                   PressButton(kSavedTabGroupButtonElementId),
-                  FinishTabstripAnimations());
+                  WaitForShow(STGTabsMenuModel::kOpenGroup),
+                  SelectMenuItem(STGTabsMenuModel::kOpenGroup),
+                  WaitForShow(kTabGroupHeaderElementId));
 
   histogram_tester.ExpectUniqueSample(
       kRecallHistogram,
       saved_tab_groups::metrics::SharedTabGroupRecallTypeDesktop::
-          kOpenedFromBookmarksBar,
+          kOpenedFromSubmenuFromBookmarksBar,
       1);
 }
 
@@ -350,6 +355,7 @@ IN_PROC_BROWSER_TEST_P(SharedTabGroupInteractiveUiTest,
 // opened from the everything menu.
 IN_PROC_BROWSER_TEST_P(SharedTabGroupInteractiveUiTest,
                        RecordMetricOnSharedGroupOpeningFromEverythingMenu) {
+
   ::base::HistogramTester histogram_tester;
 
   TabGroupId group_id = CreateNewTabGroup();
@@ -359,17 +365,20 @@ IN_PROC_BROWSER_TEST_P(SharedTabGroupInteractiveUiTest,
   // Close the tab group.
   browser()->tab_strip_model()->CloseAllTabsInGroup(group_id);
 
-  RunTestSequence(
-      FinishTabstripAnimations(), ShowBookmarksBar(),
-      PressButton(kSavedTabGroupOverflowButtonElementId),
-      SelectMenuItem(STGEverythingMenu::kTabGroup), FinishTabstripAnimations(),
-      // Close the everything menu to prevent flakes on mac.
-      HoverTabAt(0), ClickMouse(), WaitForHide(STGEverythingMenu::kTabGroup));
+  RunTestSequence(FinishTabstripAnimations(), ShowBookmarksBar(),
+                  PressButton(kSavedTabGroupOverflowButtonElementId),
+                  SelectMenuItem(STGEverythingMenu::kTabGroup),
+                  WaitForShow(STGTabsMenuModel::kOpenGroup),
+                  SelectMenuItem(STGTabsMenuModel::kOpenGroup),
+                  WaitForShow(kTabGroupHeaderElementId),
+                  // Close the everything menu to prevent flakes on mac.
+                  HoverTabAt(0), ClickMouse(),
+                  WaitForHide(STGEverythingMenu::kTabGroup));
 
   histogram_tester.ExpectUniqueSample(
       kRecallHistogram,
       saved_tab_groups::metrics::SharedTabGroupRecallTypeDesktop::
-          kOpenedFromEverythingMenu,
+          kOpenedFromSubmenuFromEverythingMenu,
       1);
 }
 
@@ -392,7 +401,7 @@ IN_PROC_BROWSER_TEST_P(SharedTabGroupInteractiveUiTest,
                   SelectMenuItem(AppMenuModel::kTabGroupsMenuItem),
                   SelectMenuItem(STGEverythingMenu::kTabGroup),
                   SelectMenuItem(STGTabsMenuModel::kOpenGroup),
-                  FinishTabstripAnimations(),
+                  WaitForShow(kTabGroupHeaderElementId),
                   // Close the app menu to prevent flakes on mac.
                   HoverTabAt(0), ClickMouse(),
                   WaitForHide(AppMenuModel::kTabGroupsMenuItem));
@@ -400,7 +409,7 @@ IN_PROC_BROWSER_TEST_P(SharedTabGroupInteractiveUiTest,
   histogram_tester.ExpectUniqueSample(
       kRecallHistogram,
       saved_tab_groups::metrics::SharedTabGroupRecallTypeDesktop::
-          kOpenedFromSubmenu,
+          kOpenedFromSubmenuFromAppMenu,
       1);
 }
 
@@ -528,10 +537,8 @@ IN_PROC_BROWSER_TEST_P(SharedTabGroupInteractiveUiTest, GroupCloseLastTab) {
   RunTestSequence(
       WaitForShow(kTabGroupHeaderElementId), FinishTabstripAnimations(),
       Do([&]() {
-        BrowserView* browser_view =
-            static_cast<BrowserView*>(browser()->window());
-        browser_view->tabstrip()->CloseTab(browser_view->tabstrip()->tab_at(0),
-                                           CloseTabSource::kFromMouse);
+        browser()->tab_strip_model()->ActivateTabAt(0);
+        chrome::CloseTab(browser());
       }),
       WaitForShow(kDataSharingSigninPromptDialogCancelButtonElementId),
       PressButton(kDataSharingSigninPromptDialogCancelButtonElementId),

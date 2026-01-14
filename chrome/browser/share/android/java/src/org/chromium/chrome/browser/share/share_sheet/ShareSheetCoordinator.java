@@ -13,12 +13,11 @@ import android.view.View;
 
 import androidx.annotation.VisibleForTesting;
 
-import org.chromium.base.BuildInfo;
 import org.chromium.base.Callback;
 import org.chromium.base.ContextUtils;
+import org.chromium.base.DeviceInfo;
 import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.metrics.RecordUserAction;
-import org.chromium.base.supplier.Supplier;
 import org.chromium.base.task.PostTask;
 import org.chromium.base.task.TaskTraits;
 import org.chromium.build.annotations.Initializer;
@@ -56,6 +55,7 @@ import org.chromium.ui.modelutil.PropertyModel;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
+import java.util.function.Supplier;
 
 /** Coordinator for displaying the share sheet. */
 // TODO(crbug.com/40106499): Should be package-protected once modularization is complete.
@@ -255,7 +255,7 @@ public class ShareSheetCoordinator
 
         // Initialize with an empty list of third party apps for automotive -
         // C++ share ranking breaks on Android automotive.
-        if (BuildInfo.getInstance().isAutomotive) {
+        if (DeviceInfo.isAutomotive()) {
             finishUpdateShareSheet(firstPartyApps, new ArrayList<>(), onUpdateFinished);
             return;
         }
@@ -375,7 +375,7 @@ public class ShareSheetCoordinator
     private boolean shouldShowLinkToText(ChromeShareExtras chromeShareExtras) {
         return chromeShareExtras.getDetailedContentType() == DetailedContentType.HIGHLIGHTED_TEXT
                 && mTabProvider != null
-                && mTabProvider.hasValue();
+                && mTabProvider.get() != null;
     }
 
     /**
@@ -384,7 +384,7 @@ public class ShareSheetCoordinator
      * <p>This method delivers its result asynchronously through {@code callback}, to allow for the
      * upcoming ShareRanking backend, which is asynchronous. The existing backend is synchronous,
      * but this method is an asynchronous wrapper around it so that the design of the rest of this
-     * class won't need to change when ShareRanking is hooked up. TODO(crbug.com/40185097)
+     * class won't need to change when ShareRanking is hooked up.
      */
     @VisibleForTesting
     void createThirdPartyPropertyModels(

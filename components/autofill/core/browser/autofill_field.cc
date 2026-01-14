@@ -11,7 +11,6 @@
 #include <ranges>
 #include <variant>
 
-#include "base/containers/contains.h"
 #include "base/containers/fixed_flat_set.h"
 #include "base/feature_list.h"
 #include "base/no_destructor.h"
@@ -20,11 +19,12 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/types/cxx23_to_underlying.h"
+#include "components/autofill/core/browser/data_model/data_model_utils.h"
 #include "components/autofill/core/browser/field_type_utils.h"
 #include "components/autofill/core/browser/field_types.h"
 #include "components/autofill/core/browser/heuristic_source.h"
 #include "components/autofill/core/browser/ml_model/field_classification_model_handler.h"
+#include "components/autofill/core/browser/proto/api_v1.pb.h"
 #include "components/autofill/core/browser/proto/server.pb.h"
 #include "components/autofill/core/common/autofill_constants.h"
 #include "components/autofill/core/common/autofill_features.h"
@@ -34,9 +34,6 @@
 #include "components/autofill/core/common/signatures.h"
 
 namespace autofill {
-
-using FieldPrediction =
-    AutofillQueryResponse::FormSuggestion::FieldSuggestion::FieldPrediction;
 
 template <>
 struct DenseSetTraits<FieldPrediction::Source>
@@ -179,8 +176,8 @@ bool PreferHeuristicOverHtml(FieldType heuristic_type,
     return true;
   }
 
-  return base::Contains(kAutofillHeuristicsVsHtmlOverrides,
-                        std::make_pair(heuristic_type, html_type));
+  return kAutofillHeuristicsVsHtmlOverrides.contains(
+      std::make_pair(heuristic_type, html_type));
 }
 
 // Returns whether the `heuristic_type` should be preferred over the
@@ -202,8 +199,8 @@ bool PreferHeuristicOverServer(FieldType heuristic_type,
     return true;
   }
 
-  if (base::Contains(kAutofillHeuristicsVsServerOverrides,
-                     std::make_pair(heuristic_type, server_type))) {
+  if (kAutofillHeuristicsVsServerOverrides.contains(
+          std::make_pair(heuristic_type, server_type))) {
     return true;
   }
 
@@ -282,7 +279,7 @@ bool PreferHeuristicOverServer(FieldType heuristic_type,
 // exceptions. Check function `ComputedType` for more details.
 DenseSet<HtmlFieldType> BelievedHtmlTypes(FieldType heuristic_prediction,
                                           FieldType server_prediction) {
-  DenseSet<HtmlFieldType> believed_html_types = kAllHtmlFieldTypes;
+  HtmlFieldTypeSet believed_html_types = HtmlFieldTypeSet::all();
   // We always override unspecified autocomplete attribute.
   believed_html_types.erase(HtmlFieldType::kUnspecified);
   auto is_street_name_or_house_number_type = [](FieldType field_type) {
@@ -415,6 +412,45 @@ std::ostream& operator<<(std::ostream& os, const Section& section) {
   return os << section.ToString();
 }
 
+AutofillFormatString::AutofillFormatString() = default;
+
+AutofillFormatString::AutofillFormatString(std::u16string v,
+                                           FormatString_Type type)
+    : value(std::move(v)), type(type) {
+  DCHECK(IsValid(value, type));
+}
+
+AutofillFormatString::AutofillFormatString(const AutofillFormatString&) =
+    default;
+
+AutofillFormatString& AutofillFormatString::operator=(
+    const AutofillFormatString&) = default;
+
+AutofillFormatString::AutofillFormatString(AutofillFormatString&&) = default;
+
+AutofillFormatString& AutofillFormatString::operator=(AutofillFormatString&&) =
+    default;
+
+AutofillFormatString::~AutofillFormatString() = default;
+
+// static
+bool AutofillFormatString::IsValid(std::u16string_view value,
+                                   FormatString_Type type) {
+  switch (type) {
+    case FormatString_Type_DATE:
+      return data_util::IsValidDateFormat(value);
+    case FormatString_Type_AFFIX:
+      return data_util::IsValidAffixFormat(value);
+    case FormatString_Type_FLIGHT_NUMBER:
+      return data_util::IsValidFlightNumberFormat(value);
+    case FormatString_Type_ICU_DATE:
+      // TODO(crbug.com/464004123): Add validation for ICU date format strings.
+      return true;
+  }
+  // Graceful catch-all because the `type` may come from the server.
+  return false;
+}
+
 AutofillField::AutofillField() {
   local_type_predictions_.fill(NO_SERVER_DATA);
 }
@@ -423,12 +459,9 @@ AutofillField::AutofillField(FieldSignature field_signature) : AutofillField() {
   field_signature_ = field_signature;
 }
 
-AutofillField::AutofillField(const FormFieldData& field)
-    : FormFieldData(field),
-      field_signature_(
-          CalculateFieldSignatureByNameAndType(name(), form_control_type())),
-      parseable_name_(name()),
-      parseable_label_(label()) {
+AutofillField::AutofillField(const FormFieldData& field) {
+  UpdateFieldData(field);
+  initial_value_ = value();
   local_type_predictions_.fill(NO_SERVER_DATA);
 }
 
@@ -508,7 +541,6 @@ void AutofillField::set_server_predictions(
     std::vector<FieldPrediction> predictions) {
   overall_type_ = std::nullopt;
   server_predictions_.clear();
-  experimental_server_predictions_.clear();
 
   for (auto& prediction : predictions) {
     MaybeAddServerPrediction(std::move(prediction));
@@ -520,9 +552,7 @@ void AutofillField::set_server_predictions(
   }
 }
 
-void AutofillField::MaybeAddServerPrediction(
-    AutofillQueryResponse::FormSuggestion::FieldSuggestion::FieldPrediction
-        prediction) {
+void AutofillField::MaybeAddServerPrediction(FieldPrediction prediction) {
   overall_type_ = std::nullopt;
   if (server_predictions_.size() == 1 &&
       server_predictions_[0].type() == NO_SERVER_DATA &&
@@ -565,13 +595,9 @@ void AutofillField::MaybeAddServerPrediction(
   if (IsDefaultPrediction(prediction)) {
     server_predictions_.push_back(std::move(prediction));
   } else if (IsAutofillAiPrediction(prediction)) {
-    if (base::FeatureList::IsEnabled(features::kAutofillAiWithDataSchema) &&
-        (!IsTagType(field_type) ||
-         !base::FeatureList::IsEnabled(features::kAutofillAiNoTagTypes))) {
+    if (base::FeatureList::IsEnabled(features::kAutofillAiWithDataSchema)) {
       server_predictions_.push_back(std::move(prediction));
     }
-  } else {
-    experimental_server_predictions_.push_back(std::move(prediction));
   }
 }
 
@@ -605,9 +631,7 @@ AutofillType AutofillField::MakeAutofillType(FieldType primary_field_type,
   // Indicates whether `ft` may be part of the union type.
   auto is_union_type_candidate = [](FieldType ft) {
     return GroupTypeOfFieldType(ft) == FieldTypeGroup::kAutofillAi &&
-           base::FeatureList::IsEnabled(features::kAutofillAiWithDataSchema) &&
-           base::FeatureList::IsEnabled(
-               features::kAutofillUnionTypesForAutofillAi);
+           base::FeatureList::IsEnabled(features::kAutofillAiWithDataSchema);
   };
 
   // Returns the union of
@@ -733,8 +757,14 @@ AutofillField::PredictionResult AutofillField::GetComputedPredictionResult()
 }
 
 const std::u16string& AutofillField::value_for_import() const {
-  const bool should_consider_value_for_import =
+  bool should_consider_value_for_import =
       IsSelectElement() || initial_value() != value();
+  if (base::FeatureList::IsEnabled(
+          features::kAutofillEnableImportOfUnchangedValuesForCountryAndState)) {
+    should_consider_value_for_import |=
+        Type().GetAddressType() == ADDRESS_HOME_COUNTRY ||
+        Type().GetAddressType() == ADDRESS_HOME_STATE;
+  }
   if (!should_consider_value_for_import) {
     return base::EmptyString16();
   }
@@ -775,19 +805,29 @@ void AutofillField::SetPasswordRequirements(PasswordRequirementsSpec spec) {
   password_requirements_ = std::move(spec);
 }
 
-base::optional_ref<const std::u16string> AutofillField::format_string() const {
+base::optional_ref<const AutofillFormatString> AutofillField::format_string()
+    const {
   if (form_control_type() == FormControlType::kInputDate) {
-    static const base::NoDestructor<std::u16string> kFormat(u"YYYY-MM-DD");
+    static const base::NoDestructor<AutofillFormatString> kFormat(
+        AutofillFormatString(u"YYYY-MM-DD", FormatString_Type_DATE));
     return *kFormat;
   }
   if (form_control_type() == FormControlType::kInputMonth) {
-    static const base::NoDestructor<std::u16string> kFormat(u"YYYY-MM");
+    static const base::NoDestructor<AutofillFormatString> kFormat(
+        AutofillFormatString(u"YYYY-MM", FormatString_Type_DATE));
     return *kFormat;
   }
-  if (format_string_source_ == FormatStringSource::kUnset) {
+  if (format_string_source_ == AutofillFormatStringSource::kUnset) {
     return std::nullopt;
   }
   return format_string_;
+}
+
+void AutofillField::UpdateFieldData(const FormFieldData& field_data) {
+  FormFieldData::operator=(field_data);
+
+  field_signature_ =
+      CalculateFieldSignatureByNameAndType(name(), form_control_type());
 }
 
 bool AutofillField::IsCreditCardPrediction() const {

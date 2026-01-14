@@ -14,7 +14,6 @@
 #include "ash/constants/ash_switches.h"
 #include "base/check.h"
 #include "base/command_line.h"
-#include "base/containers/contains.h"
 #include "base/containers/fixed_flat_map.h"
 #include "base/files/file_util.h"
 #include "base/json/json_file_value_serializer.h"
@@ -85,6 +84,10 @@ constexpr char kDefaultActivateDateStub[] = "2000-01";
 
 constexpr char kStatisticLoadingTimeMetricNamePrefix[] =
     "ChromeOS.MachineStatistic.";
+
+// The cache file for VPD info. This file is used to monitor VPD change.
+const base::FilePath::CharType kVpdCacheFilePath[] =
+    FILE_PATH_LITERAL("/run/vpd/rw.txt");
 
 // Gets the list from the given `dictionary` by given `key`, and returns it as a
 // string with all list values joined by ','. Returns nullopt if `key` is not
@@ -189,6 +192,7 @@ StatisticsProviderImpl::StatisticsSources CreateDefaultSources() {
   sources.machine_info_filepath = GetFilePathIgnoreFailure(FILE_MACHINE_INFO);
   sources.oem_manifest_filepath = base::FilePath(kOemManifestFilePath);
   sources.cros_regions_filepath = base::FilePath(kCrosRegions);
+  sources.vpd_cache_filepath = base::FilePath(kVpdCacheFilePath);
   return sources;
 }
 
@@ -221,6 +225,9 @@ std::string_view StatisticNameToMachineStatisticVariant(
           {kRegionKey, "Region"},
           {kSerialNumberKey, "SerialNumber"},
           {kFlexIdKey, "FlexId"},
+          {kFlexSysVendorKey, "FlexSysVendor"},
+          {kFlexProductNameKey, "FlexProductName"},
+          {kFlexProductVersionKey, "FlexProductVersion"},
           {kLegacySerialNumberKey, "LegacySerialNumber"},
           {kInitialLocaleKey, "InitialLocale"},
           {kInitialTimezoneKey, "InitialTimezone"},
@@ -288,9 +295,23 @@ StatisticsProviderImpl::StatisticsProviderImpl(StatisticsSources sources)
       loading_state_(LoadingState::kNotStarted),
       oem_manifest_loaded_(false),
       statistics_loaded_(base::WaitableEvent::ResetPolicy::MANUAL,
-                         base::WaitableEvent::InitialState::NOT_SIGNALED) {}
+                         base::WaitableEvent::InitialState::NOT_SIGNALED) {
+  if (base::SysInfo::IsRunningOnChromeOS()) {
+    vpd_change_watcher_ = std::make_unique<base::FilePathWatcher>();
+    vpd_change_task_runner_ = base::ThreadPool::CreateSequencedTaskRunner(
+        {base::MayBlock(), base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN});
+    vpd_change_task_runner_->PostTask(
+        FROM_HERE, base::BindOnce(&StatisticsProviderImpl::StartVpdWatcher,
+                                  base::Unretained(this)));
+  }
+}
 
-StatisticsProviderImpl::~StatisticsProviderImpl() = default;
+StatisticsProviderImpl::~StatisticsProviderImpl() {
+  if (vpd_change_watcher_) {
+    vpd_change_task_runner_->DeleteSoon(FROM_HERE,
+                                        vpd_change_watcher_.release());
+  }
+}
 
 void StatisticsProviderImpl::StartLoadingMachineStatistics(
     bool load_oem_manifest) {
@@ -389,6 +410,10 @@ StatisticsProviderImpl::FlagValue StatisticsProviderImpl::GetMachineFlag(
 
 void StatisticsProviderImpl::Shutdown() {
   cancellation_flag_.Set();  // Cancel any pending loads
+  if (vpd_change_watcher_) {
+    vpd_change_task_runner_->DeleteSoon(FROM_HERE,
+                                        vpd_change_watcher_.release());
+  }
 }
 
 bool StatisticsProviderImpl::IsRunningOnVm() {
@@ -520,7 +545,7 @@ void StatisticsProviderImpl::LoadMachineStatistics(bool load_oem_manifest) {
     // Use the write-protect value from crossystem only if it hasn't been loaded
     // from any other source, since the result of crossystem is less reliable
     // for this key.
-    if (!base::Contains(machine_info_, kFirmwareWriteProtectCurrentKey) &&
+    if (!machine_info_.contains(kFirmwareWriteProtectCurrentKey) &&
         !crossystem_wpsw.empty()) {
       LOG(WARNING) << "wpsw_cur missing from machine_info, using value: "
                    << crossystem_wpsw;
@@ -719,7 +744,7 @@ void StatisticsProviderImpl::LoadRegionsFile(const base::FilePath& filename,
 
 std::optional<std::string_view> StatisticsProviderImpl::GetRegionalInformation(
     std::string_view name) const {
-  if (!base::Contains(machine_info_, kRegionKey)) {
+  if (!machine_info_.contains(kRegionKey)) {
     return std::nullopt;
   }
 
@@ -732,6 +757,40 @@ std::optional<std::string_view> StatisticsProviderImpl::GetRegionalInformation(
 
 bool StatisticsProviderImpl::HasLoadingStarted() const {
   return loading_state_ != LoadingState::kNotStarted;
+}
+
+void StatisticsProviderImpl::StartVpdWatcher() {
+  if (!vpd_change_watcher_->WatchWithChangeInfo(
+          sources_.vpd_cache_filepath,
+          base::FilePathWatcher::WatchOptions{
+              .type = base::FilePathWatcher::Type::kNonRecursive},
+          base::BindRepeating(&StatisticsProviderImpl::OnVpdChange,
+                              base::Unretained(this)))) {
+    LOG(ERROR) << "Failed to set up file watch for: "
+               << sources_.vpd_cache_filepath;
+  }
+  VLOG(1) << "Successfully set up file watch for: "
+          << sources_.vpd_cache_filepath;
+}
+
+void StatisticsProviderImpl::OnVpdChange(
+    const base::FilePathWatcher::ChangeInfo& change_info,
+    const base::FilePath& path,
+    bool error) {
+  if (error) {
+    LOG(ERROR) << "Error watching file: " << path.value();
+    return;
+  }
+  if (change_info.file_path_type !=
+          base::FilePathWatcher::FilePathType::kFile ||
+      change_info.change_type != base::FilePathWatcher::ChangeType::kModified) {
+    return;
+  }
+  base::ThreadPool::PostTask(
+      FROM_HERE,
+      {base::MayBlock(), base::TaskPriority::USER_BLOCKING,
+       base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN},
+      base::BindOnce(&StatisticsProviderImpl::LoadVpd, base::Unretained(this)));
 }
 
 }  // namespace ash::system

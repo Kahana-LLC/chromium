@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
-#pragma allow_unsafe_buffers
-#endif
-
 #ifdef PARTITION_ALLOC_SHIM_ALLOCATOR_SHIM_FUNCTIONS_H_
 #error This header is meant to be included only once by allocator_shim*.cc except allocator_shim_win_component.cc
 #endif
@@ -70,6 +65,12 @@ void SetCallNewHandlerOnMallocFailure(bool value) {
 void* UncheckedAlloc(size_t size) {
   const AllocatorDispatch* const chain_head = internal::GetChainHead();
   return chain_head->alloc_unchecked_function(size, nullptr);
+}
+
+void* UncheckedCalloc(size_t n, size_t size) {
+  const AllocatorDispatch* const chain_head = internal::GetChainHead();
+  return chain_head->alloc_zero_initialized_unchecked_function(n, size,
+                                                               nullptr);
 }
 
 void* UncheckedRealloc(void* ptr, size_t size) {

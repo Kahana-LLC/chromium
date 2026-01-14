@@ -7,8 +7,10 @@
 #include <memory>
 
 #include "base/files/file_path.h"
+#include "base/notreached.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
+#include "extensions/buildflags/buildflags.h"
 #include "extensions/common/constants.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_resource.h"
@@ -16,6 +18,8 @@
 #include "extensions/common/manifest_constants.h"
 #include "extensions/common/manifest_handler_helpers.h"
 #include "extensions/common/manifest_handlers/icon_variants_handler.h"
+
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
 
 namespace extensions {
 

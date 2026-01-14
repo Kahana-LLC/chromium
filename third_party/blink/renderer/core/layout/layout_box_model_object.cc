@@ -26,6 +26,7 @@
 #include "third_party/blink/renderer/core/layout/layout_box_model_object.h"
 
 #include "cc/input/main_thread_scrolling_reason.h"
+#include "third_party/blink/renderer/core/editing/editing_utilities.h"
 #include "third_party/blink/renderer/core/editing/ime/input_method_controller.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/frame/local_frame_view.h"
@@ -80,13 +81,19 @@ bool NeedsAnchorPositionScrollData(Element& element,
   if (!style.HasOutOfFlowPosition()) {
     return false;
   }
-  // There's an explicitly set default anchor.
-  if (style.PositionAnchor()) {
-    return true;
+  const StylePositionAnchor& position_anchor = style.PositionAnchor();
+  using Type = StylePositionAnchor::Type;
+  switch (position_anchor.GetType()) {
+    case Type::kNone:
+      return false;
+    case Type::kAuto:
+      // Now we have `position-anchor: auto`. We need `AnchorPositionScrollData`
+      // only if there's an implicit anchor element to track.
+      return static_cast<bool>(element.ImplicitAnchorElement());
+    case Type::kName:
+      // There's an explicitly set default anchor.
+      return true;
   }
-  // Now we have `position-anchor: auto`. We need `AnchorPositionScrollData`
-  // only if there's an implicit anchor element to track.
-  return element.ImplicitAnchorElement();
 }
 
 }  // namespace
@@ -120,8 +127,10 @@ void LayoutBoxModelObject::WillBeDestroyed() {
   DCHECK(!Layer());
 }
 
-void LayoutBoxModelObject::StyleWillChange(StyleDifference diff,
-                                           const ComputedStyle& new_style) {
+void LayoutBoxModelObject::StyleWillChange(
+    StyleDifference diff,
+    const ComputedStyle& new_style,
+    StyleChangeContext& style_change_context) {
   NOT_DESTROYED();
   // Change of stacked/stacking context status may cause change of this or
   // descendant PaintLayer's PaintingContainer, so we need to eagerly
@@ -135,12 +144,14 @@ void LayoutBoxModelObject::StyleWillChange(StyleDifference diff,
     ObjectPaintInvalidator(*this).SlowSetPaintingLayerNeedsRepaint();
   }
 
-  LayoutObject::StyleWillChange(diff, new_style);
+  LayoutObject::StyleWillChange(diff, new_style, style_change_context);
 }
 
 DISABLE_CFI_PERF
-void LayoutBoxModelObject::StyleDidChange(StyleDifference diff,
-                                          const ComputedStyle* old_style) {
+void LayoutBoxModelObject::StyleDidChange(
+    StyleDifference diff,
+    const ComputedStyle* old_style,
+    const StyleChangeContext& style_change_context) {
   NOT_DESTROYED();
   bool had_transform_related_property = HasTransformRelatedProperty();
   bool had_filter_inducing_property = HasFilterInducingProperty();
@@ -150,7 +161,7 @@ void LayoutBoxModelObject::StyleDidChange(StyleDifference diff,
   bool could_contain_fixed = CanContainFixedPositionObjects();
   bool could_contain_absolute = CanContainAbsolutePositionObjects();
 
-  LayoutObject::StyleDidChange(diff, old_style);
+  LayoutObject::StyleDidChange(diff, old_style, style_change_context);
   UpdateFromStyle();
 
   // When an out-of-flow-positioned element changes its display between block
@@ -309,6 +320,12 @@ void LayoutBoxModelObject::StyleDidChange(StyleDifference diff,
     } else {
       element->RemoveAnchorPositionScrollData();
     }
+  }
+
+  // The backdrop-filter effect is clipped by the element's border radii, so we
+  // need to update properties when the border radii change.
+  if (HasNonInitialBackdropFilter() && diff.BorderRadiusChanged()) {
+    SetNeedsPaintPropertyUpdate();
   }
 }
 
@@ -588,7 +605,8 @@ LayoutBoxModelObject::ComputeStickyPositionConstraints() const {
       sticky_box_rect = To<LayoutInline>(this)->PhysicalLinesBoundingBox();
     } else {
       const LayoutBox& box = To<LayoutBox>(*this);
-      sticky_box_rect = PhysicalRect(box.PhysicalLocation(), box.Size());
+      sticky_box_rect =
+          PhysicalRect(box.PhysicalLocation(), box.StitchedSize());
     }
 
     PhysicalRect scroll_container_relative_sticky_box_rect =
@@ -858,12 +876,17 @@ LogicalRect LayoutBoxModelObject::LocalCaretRectForEmptyElement(
     height = LayoutUnit(font_data->GetFontMetrics().Height());
   LayoutUnit vertical_space = FirstLineHeight() - height;
   LayoutUnit block_start = border_padding.block_start + (vertical_space / 2);
+  // Care-shape applies to text or elements that accept text input.
+  const Node* node = GetNode();
+  if (!node || !IsEditable(*node)) {
+    caret_shape = CaretShape::kBar;
+  }
   if (caret_shape != CaretShape::kBar && font_data) [[unlikely]] {
     if (caret_shape == CaretShape::kBlock) {
-      caret_width = LayoutUnit(font_data->AvgCharWidth());
+      caret_width = LayoutUnit(font_data->GetFontMetrics().ZeroWidth());
     } else if (caret_shape == CaretShape::kUnderscore) {
       height = caret_width;
-      caret_width = LayoutUnit(font_data->AvgCharWidth());
+      caret_width = LayoutUnit(font_data->GetFontMetrics().ZeroWidth());
       block_start =
           block_start + LayoutUnit(font_data->GetFontMetrics().Height());
     }
@@ -965,6 +988,38 @@ LayoutBox* LayoutBoxModelObject::CreateAnonymousBoxToSplit(
     const LayoutBox* box_to_split) const {
   NOT_DESTROYED();
   return box_to_split->CreateAnonymousBoxWithSameTypeAs(this);
+}
+
+void LayoutBoxModelObject::AttemptToMerge(LayoutBoxModelObject* prev,
+                                          LayoutBoxModelObject* next) {
+  if (!prev || !prev->IsAnonymous()) {
+    return;
+  }
+
+  if (!next || !next->IsAnonymous()) {
+    return;
+  }
+
+  DCHECK_EQ(prev->NextSibling(), next);
+
+  DCHECK_EQ(prev->CanMergeWith(*next), next->CanMergeWith(*prev));
+  if (!prev->CanMergeWith(*next)) {
+    return;
+  }
+
+  LayoutBoxModelObject* last_child =
+      DynamicTo<LayoutBoxModelObject>(prev->SlowLastChild());
+  LayoutBoxModelObject* first_child =
+      DynamicTo<LayoutBoxModelObject>(next->SlowFirstChild());
+
+  // Shift all the children of `next` into `prev`, and destroy the
+  // (now empty) sibling.
+  next->MoveAllChildrenTo(prev, true);
+  next->Destroy();
+
+  // We now need to recurse, as there may be multiple levels of anonymous
+  // objects which need to be stitched together.
+  AttemptToMerge(last_child, first_child);
 }
 
 bool LayoutBoxModelObject::BackgroundTransfersToView(

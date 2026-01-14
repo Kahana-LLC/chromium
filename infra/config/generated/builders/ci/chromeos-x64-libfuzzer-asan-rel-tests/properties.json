@@ -49,7 +49,7 @@
         }
       ],
       "retry_failed_shards": true,
-      "targets_spec_directory": "src/infra/config/generated/builders/ci/chromeos-x64-libfuzzer-asan-rel-tests/targets"
+      "targets_spec_directory": "infra/config/generated/builders/ci/chromeos-x64-libfuzzer-asan-rel-tests/targets"
     }
   },
   "$build/siso": {
@@ -60,7 +60,6 @@
     "enable_cloud_profiler": true,
     "enable_cloud_trace": true,
     "experiments": [],
-    "metrics_project": "chromium-reclient-metrics",
     "project": "rbe-chromium-trusted",
     "remote_jobs": 500
   },
@@ -72,5 +71,11 @@
     ]
   },
   "builder_group": "chromium.fuzz",
-  "recipe": "chromium"
+  "gardener_rotations": [
+    "chromium"
+  ],
+  "recipe": "chromium",
+  "sheriff_rotations": [
+    "chromium"
+  ]
 }

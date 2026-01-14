@@ -22,7 +22,6 @@
 
 #include "base/base64.h"
 #include "base/check.h"
-#include "base/containers/contains.h"
 #include "base/containers/flat_set.h"
 #include "base/feature_list.h"
 #include "base/functional/bind.h"
@@ -83,7 +82,6 @@
 #include "content/services/auction_worklet/public/cpp/auction_worklet_features.h"
 #include "content/services/auction_worklet/public/cpp/private_aggregation_reporting.h"
 #include "content/services/auction_worklet/public/cpp/real_time_reporting.h"
-#include "content/services/auction_worklet/public/mojom/bidder_worklet.mojom-forward.h"
 #include "content/services/auction_worklet/public/mojom/bidder_worklet.mojom.h"
 #include "content/services/auction_worklet/public/mojom/private_aggregation_request.mojom.h"
 #include "content/services/auction_worklet/public/mojom/real_time_reporting.mojom.h"
@@ -1211,7 +1209,7 @@ ConstructGhostWinnerFromGroupAndCandidate(
           return blink::HashedKAnonKeyForAdComponentBid(ad.render_url()) ==
                  component_ad_hash;
         });
-    if (component_ad_it == group.ads->end()) {
+    if (component_ad_it == group.ad_components->end()) {
       return std::nullopt;
     }
     result.ad_components.emplace_back(component_ad_it->render_url());
@@ -4195,7 +4193,7 @@ GURL InterestGroupAuction::FillPostAuctionSignals(
     return url;
   }
 
-  std::string query_string = url.query();
+  std::string query_string = url.GetQuery();
   base::ReplaceSubstringsAfterOffset(&query_string, 0, "${winningBid}",
                                      base::NumberToString(signals.winning_bid));
   base::ReplaceSubstringsAfterOffset(
@@ -5602,9 +5600,8 @@ bool InterestGroupAuction::IsBuyerOptedInToRealTimeReporting(
     const url::Origin& owner) {
   return config_->non_shared_params.per_buyer_real_time_reporting_types
              .has_value() &&
-         base::Contains(
-             *config_->non_shared_params.per_buyer_real_time_reporting_types,
-             owner);
+         config_->non_shared_params.per_buyer_real_time_reporting_types
+             ->contains(owner);
 }
 
 void InterestGroupAuction::MaybeAddScriptFailureRealTimeContribution(
@@ -6602,7 +6599,7 @@ bool InterestGroupAuction::OnParsedServerResponseImpl(
     blink::InterestGroupKey winning_group(response->interest_group_owner,
                                           response->interest_group_name);
     // Winning group must be a bidder.
-    if (!base::Contains(response->bidding_groups, winning_group)) {
+    if (!std::ranges::contains(response->bidding_groups, winning_group)) {
       errors_.push_back("runAdAuction(): Winning group must be a bidder");
       saved_response_.emplace();
       base::UmaHistogramEnumeration(

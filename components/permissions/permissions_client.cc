@@ -6,6 +6,7 @@
 
 #include "base/functional/callback.h"
 #include "build/build_config.h"
+#include "components/content_settings/core/common/content_settings.h"
 #include "components/permissions/permission_request_enums.h"
 #include "components/permissions/permission_uma_util.h"
 #include "content/public/browser/web_contents.h"
@@ -54,11 +55,12 @@ bool PermissionsClient::IsCookieDeletionDisabled(
   return false;
 }
 
-void PermissionsClient::GetUkmSourceId(ContentSettingsType permission_type,
-                                       content::BrowserContext* browser_context,
-                                       content::WebContents* web_contents,
-                                       const GURL& requesting_origin,
-                                       GetUkmSourceIdCallback callback) {
+void PermissionsClient::GetUkmSourceId(
+    ContentSettingsType permission_type,
+    content::BrowserContext* browser_context,
+    content::RenderFrameHost* render_frame_host,
+    const GURL& requesting_origin,
+    GetUkmSourceIdCallback callback) {
   std::move(callback).Run(std::nullopt);
 }
 
@@ -90,8 +92,7 @@ void PermissionsClient::TriggerPromptHatsSurveyIfEnabled(
         pepc_prompt_position,
     ContentSetting initial_permission_status,
     base::OnceCallback<void()> hats_shown_callback,
-    std::optional<PermissionHatsTriggerHelper::PreviewParametersForHats>
-        preview_parameters) {}
+    PromptOptions prompt_options) {}
 
 void PermissionsClient::OnPromptResolved(
     const PermissionRequest* request,
@@ -197,7 +198,7 @@ bool PermissionsClient::CanRequestDevicePermission(
 
 bool PermissionsClient::IsPermissionAllowedByDevicePolicy(
     content::WebContents* web_contents,
-    ContentSetting setting,
+    PermissionSetting setting,
     const content_settings::SettingInfo& info,
     ContentSettingsType type) const {
   return false;
@@ -205,7 +206,7 @@ bool PermissionsClient::IsPermissionAllowedByDevicePolicy(
 
 bool PermissionsClient::IsPermissionBlockedByDevicePolicy(
     content::WebContents* web_contents,
-    ContentSetting setting,
+    PermissionSetting setting,
     const content_settings::SettingInfo& info,
     ContentSettingsType type) const {
   return false;
@@ -217,6 +218,11 @@ bool PermissionsClient::IsSystemDenied(ContentSettingsType type) const {
 
 bool PermissionsClient::CanPromptSystemPermission(
     ContentSettingsType type) const {
+  return false;
+}
+
+bool PermissionsClient::IsActorOperatingOnWebContents(
+    content::WebContents* web_contents) const {
   return false;
 }
 

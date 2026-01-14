@@ -4,13 +4,14 @@
 
 #include "chrome/browser/password_manager/chrome_password_change_service.h"
 
+#include <utility>
+
 #include "base/command_line.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/task/single_thread_task_runner.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/optimization_guide/optimization_guide_keyed_service.h"
 #include "chrome/browser/optimization_guide/optimization_guide_keyed_service_factory.h"
-#include "chrome/browser/password_manager/password_change/model_quality_logs_uploader.h"
 #include "chrome/browser/password_manager/password_change_delegate.h"
 #include "chrome/common/chrome_switches.h"
 #include "components/affiliations/core/browser/affiliation_service.h"
@@ -23,12 +24,14 @@
 #include "components/password_manager/core/browser/features/password_features.h"
 #include "components/password_manager/core/browser/password_feature_manager.h"
 #include "components/password_manager/core/browser/password_manager_settings_service.h"
+#include "components/password_manager/core/common/password_manager_pref_names.h"
 #include "components/prefs/pref_service.h"
 #include "components/variations/service/variations_service.h"
 #include "content/public/browser/web_contents.h"
 #include "url/gurl.h"
 
 #if !BUILDFLAG(IS_ANDROID)
+#include "chrome/browser/password_manager/password_change/model_quality_logs_uploader.h"
 #include "chrome/browser/password_manager/password_change_delegate_impl.h"
 #endif  // BUILDFLAG(IS_ANDROID)
 
@@ -119,64 +122,7 @@ bool ChromePasswordChangeService::IsPasswordChangeAvailable() const {
 #if BUILDFLAG(IS_ANDROID)
   return false;
 #else
-  auto [log_manager, logger] = CreateLoggerPair(log_router_);
-
-  if (HasChangePasswordUrlOverride()) {
-    if (logger) {
-      logger->LogMessage(Logger::STRING_PASSWORD_CHANGE_OVERRIDDEN_BY_SWITCH);
-    }
-    return true;
-  }
-
-  // Password generation is disabled.
-  if (!feature_manager_->IsGenerationEnabled()) {
-    if (logger) {
-      logger->LogMessage(Logger::STRING_PASSWORD_CHANGE_GENERATION_UNAVAILABLE);
-    }
-    return false;
-  }
-
-  // User is not eligible.
-  if (!optimization_keyed_service_ ||
-      !optimization_keyed_service_->ShouldModelExecutionBeAllowedForUser()) {
-    if (logger) {
-      logger->LogMessage(
-          Logger::STRING_PASSWORD_CHANGE_MODEL_EXECUTION_NOT_ALLOWED);
-    }
-    return false;
-  }
-
-  // Chrome shouldn't offer to save password. Since during password change a
-  // password is saved, it shouldn't be offered.
-  if (!settings_service_ ||
-      !settings_service_->IsSettingEnabled(
-          password_manager::PasswordManagerSetting::kOfferToSavePasswords)) {
-    if (logger) {
-      logger->LogMessage(Logger::STRING_PASSWORD_CHANGE_SAVING_DISABLED);
-    }
-    return false;
-  }
-
-  // The feature is disabled by enterprise policy.
-  constexpr int kPolicyDisabled =
-      base::to_underlying(optimization_guide::model_execution::prefs::
-                              ModelExecutionEnterprisePolicyValue::kDisable);
-  if (pref_service_->GetInteger(
-          optimization_guide::prefs::
-              kAutomatedPasswordChangeEnterprisePolicyAllowed) ==
-      kPolicyDisabled) {
-    if (logger) {
-      logger->LogMessage(Logger::STRING_PASSWORD_CHANGE_DISABLED_BY_POLICY);
-    }
-    return false;
-  }
-
-  const bool result = base::FeatureList::IsEnabled(
-      password_manager::features::kImprovedPasswordChangeService);
-  if (logger) {
-    logger->LogBoolean(Logger::STRING_PASSWORD_CHANGE_FEATURE_ENABLED, result);
-  }
-  return result;
+  return GetGeneralAvailability() == PasswordChangeAvailability::kAvailable;
 #endif  // BUILDFLAG(IS_ANDROID)
 }
 
@@ -198,43 +144,15 @@ void ChromePasswordChangeService::RecordLoginAttemptQuality(
 bool ChromePasswordChangeService::IsPasswordChangeSupported(
     const GURL& url,
     const autofill::LanguageCode& page_language) const {
-  auto [log_manager, logger] = CreateLoggerPair(log_router_);
+#if BUILDFLAG(IS_ANDROID)
+  return false;
+#else
+  auto availability = GetPerSiteAvailability(url, page_language);
+  base::UmaHistogramEnumeration("PasswordManager.PasswordChangeAvailability",
+                                availability);
 
-  if (!IsPasswordChangeAvailable()) {
-    return false;
-  }
-
-  if (GetChangePasswordURLOverride(url).is_valid()) {
-    if (logger) {
-      logger->LogMessage(Logger::STRING_PASSWORD_CHANGE_OVERRIDDEN_BY_SWITCH);
-    }
-    return true;
-  }
-
-  if (page_language != autofill::LanguageCode("en") &&
-      page_language != autofill::LanguageCode("en-US")) {
-    if (logger) {
-      logger->LogMessage(Logger::STRING_PASSWORD_CHANGE_UNSUPPORTED_LANGUAGE);
-    }
-    return false;
-  }
-
-  const std::string country_code = GetVariationConfigCountryCode();
-  if (country_code != "us") {
-    if (logger) {
-      logger->LogMessage(Logger::STRING_PASSWORD_CHANGE_UNSUPPORTED_COUNTRY);
-    }
-    return false;
-  }
-
-  const bool has_change_url =
-      affiliation_service_->GetChangePasswordURL(url).is_valid();
-  base::UmaHistogramBoolean(kHasPasswordChangeUrlHistogram, has_change_url);
-  if (logger) {
-    logger->LogBoolean(Logger::STRING_PASSWORD_CHANGE_URL_AVAILABLE,
-                       has_change_url);
-  }
-  return has_change_url;
+  return availability == PasswordChangeAvailability::kAvailable;
+#endif  // BUILDFLAG(IS_ANDROID)
 }
 
 bool ChromePasswordChangeService::UserIsActivePasswordChangeUser() const {
@@ -254,21 +172,20 @@ bool ChromePasswordChangeService::UserIsActivePasswordChangeUser() const {
 }
 
 void ChromePasswordChangeService::OfferPasswordChangeUi(
-    const GURL& url,
-    const std::u16string& username,
-    const std::u16string& password,
+    password_manager::PasswordForm credentials,
     content::WebContents* web_contents) {
 #if !BUILDFLAG(IS_ANDROID)
-  GURL change_pwd_url = GetChangePasswordURLOverride(url);
+  GURL change_pwd_url = GetChangePasswordURLOverride(credentials.url);
   if (!change_pwd_url.is_valid()) {
-    change_pwd_url = affiliation_service_->GetChangePasswordURL(url);
+    change_pwd_url =
+        affiliation_service_->GetChangePasswordURL(credentials.url);
   }
 
   CHECK(change_pwd_url.is_valid());
 
   std::unique_ptr<PasswordChangeDelegate> delegate =
       std::make_unique<PasswordChangeDelegateImpl>(
-          std::move(change_pwd_url), username, password,
+          std::move(change_pwd_url), std::move(credentials),
           tabs::TabInterface::GetFromContents(web_contents));
   delegate->AddObserver(this);
   password_change_delegates_.push_back(std::move(delegate));
@@ -306,4 +223,132 @@ void ChromePasswordChangeService::Shutdown() {
     delegate->RemoveObserver(this);
   }
   password_change_delegates_.clear();
+}
+
+PasswordChangeAvailability ChromePasswordChangeService::GetGeneralAvailability()
+    const {
+  auto [log_manager, logger] = CreateLoggerPair(log_router_);
+
+  if (HasChangePasswordUrlOverride()) {
+    if (logger) {
+      logger->LogMessage(Logger::STRING_PASSWORD_CHANGE_OVERRIDDEN_BY_SWITCH);
+    }
+    return PasswordChangeAvailability::kAvailable;
+  }
+
+  // Password generation is disabled.
+  if (!feature_manager_->IsGenerationEnabled()) {
+    if (logger) {
+      logger->LogMessage(Logger::STRING_PASSWORD_CHANGE_GENERATION_UNAVAILABLE);
+    }
+    return PasswordChangeAvailability::kPasswordGenerationDisabled;
+  }
+
+  // User is not eligible.
+  if (!optimization_keyed_service_ ||
+      !optimization_keyed_service_->ShouldModelExecutionBeAllowedForUser()) {
+    if (logger) {
+      logger->LogMessage(
+          Logger::STRING_PASSWORD_CHANGE_MODEL_EXECUTION_NOT_ALLOWED);
+    }
+    return PasswordChangeAvailability::kModelExecutionNotAllowed;
+  }
+
+  // Chrome shouldn't offer to save password. Since during password change a
+  // password is saved, it shouldn't be offered.
+  if (!settings_service_ ||
+      !settings_service_->IsSettingEnabled(
+          password_manager::PasswordManagerSetting::kOfferToSavePasswords)) {
+    if (logger) {
+      logger->LogMessage(Logger::STRING_PASSWORD_CHANGE_SAVING_DISABLED);
+    }
+    return PasswordChangeAvailability::kPasswordSavingDisabled;
+  }
+
+  // The feature is disabled by enterprise policy.
+  constexpr int kPolicyDisabled =
+      std::to_underlying(optimization_guide::model_execution::prefs::
+                             ModelExecutionEnterprisePolicyValue::kDisable);
+  if (pref_service_->GetInteger(
+          optimization_guide::prefs::
+              kAutomatedPasswordChangeEnterprisePolicyAllowed) ==
+      kPolicyDisabled) {
+    if (logger) {
+      logger->LogMessage(Logger::STRING_PASSWORD_CHANGE_DISABLED_BY_POLICY);
+    }
+    return PasswordChangeAvailability::kDisabledByPolicy;
+  }
+
+  if (!pref_service_->GetInteger(
+          password_manager::prefs::kTotalPasswordsAvailableForAccount) &&
+      !pref_service_->GetInteger(
+          password_manager::prefs::kTotalPasswordsAvailableForProfile)) {
+    return PasswordChangeAvailability::kNoSavedPasswords;
+  }
+
+  if (base::FeatureList::IsEnabled(
+          password_manager::features::kThrottlePasswordChangeDialog) &&
+      base::Time::Now() -
+              pref_service_->GetTime(password_manager::prefs::
+                                         kLastNegativePasswordChangeTimestamp) <
+          password_manager::features::kPasswordChangeThrottleTime.Get()) {
+    return PasswordChangeAvailability::kThrottled;
+  }
+
+  const bool result = base::FeatureList::IsEnabled(
+      password_manager::features::kImprovedPasswordChangeService);
+  if (logger) {
+    logger->LogBoolean(Logger::STRING_PASSWORD_CHANGE_FEATURE_ENABLED, result);
+  }
+
+  return result ? PasswordChangeAvailability::kAvailable
+                : PasswordChangeAvailability::kFeatureDisabled;
+}
+
+PasswordChangeAvailability ChromePasswordChangeService::GetPerSiteAvailability(
+    const GURL& url,
+    const autofill::LanguageCode& page_language) const {
+  auto [log_manager, logger] = CreateLoggerPair(log_router_);
+
+  auto general_availability = GetGeneralAvailability();
+  if (general_availability != PasswordChangeAvailability::kAvailable) {
+    return general_availability;
+  }
+
+  if (GetChangePasswordURLOverride(url).is_valid()) {
+    if (logger) {
+      logger->LogMessage(Logger::STRING_PASSWORD_CHANGE_OVERRIDDEN_BY_SWITCH);
+    }
+    return PasswordChangeAvailability::kAvailable;
+  }
+
+  if (page_language != autofill::LanguageCode("en") &&
+      page_language != autofill::LanguageCode("en-US") &&
+      !base::FeatureList::IsEnabled(
+          password_manager::features::kReduceRequirementsForPasswordChange)) {
+    if (logger) {
+      logger->LogMessage(Logger::STRING_PASSWORD_CHANGE_UNSUPPORTED_LANGUAGE);
+    }
+    return PasswordChangeAvailability::kUnsupportedLanguage;
+  }
+
+  const std::string country_code = GetVariationConfigCountryCode();
+  if (country_code != "us" &&
+      !base::FeatureList::IsEnabled(
+          password_manager::features::kReduceRequirementsForPasswordChange)) {
+    if (logger) {
+      logger->LogMessage(Logger::STRING_PASSWORD_CHANGE_UNSUPPORTED_COUNTRY);
+    }
+    return PasswordChangeAvailability::kUnsupportedCountryCode;
+  }
+
+  const bool has_change_url =
+      affiliation_service_->GetChangePasswordURL(url).is_valid();
+  base::UmaHistogramBoolean(kHasPasswordChangeUrlHistogram, has_change_url);
+  if (logger) {
+    logger->LogBoolean(Logger::STRING_PASSWORD_CHANGE_URL_AVAILABLE,
+                       has_change_url);
+  }
+  return has_change_url ? PasswordChangeAvailability::kAvailable
+                        : PasswordChangeAvailability::kNotSupportedSite;
 }

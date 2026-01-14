@@ -10,15 +10,16 @@
 
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/css/css_anchor_query_enums.h"
+#include "third_party/blink/renderer/core/css/css_counter_value.h"
 #include "third_party/blink/renderer/core/css/css_custom_ident_value.h"
 #include "third_party/blink/renderer/core/css/css_identifier_value.h"
 #include "third_party/blink/renderer/core/css/css_numeric_literal_value.h"
 #include "third_party/blink/renderer/core/css/css_primitive_value.h"
 #include "third_party/blink/renderer/core/css/css_repeat_style_value.h"
 #include "third_party/blink/renderer/core/css/css_value_list.h"
+#include "third_party/blink/renderer/core/css/css_value_pair.h"
 #include "third_party/blink/renderer/core/css/parser/css_parser_token.h"
 #include "third_party/blink/renderer/core/css/parser/css_parser_token_stream.h"
-#include "third_party/blink/renderer/core/css/parser/css_property_parser.h"
 #include "third_party/blink/renderer/core/css_value_keywords.h"
 #include "third_party/blink/renderer/core/frame/web_feature_forward.h"
 #include "third_party/blink/renderer/core/style/grid_area.h"
@@ -38,6 +39,7 @@ class CSSParserTokenStream;
 class CSSPropertyValue;
 class CSSShadowValue;
 class CSSStringValue;
+class CSSURLPatternValue;
 class CSSValue;
 class CSSValueList;
 class CSSValuePair;
@@ -98,8 +100,7 @@ enum class EmptyPathStringHandling { kFailure, kTreatAsNone };
 
 using ConsumeAnimationItemValue = CSSValue* (*)(CSSPropertyID,
                                                 CSSParserTokenStream&,
-                                                const CSSParserContext&,
-                                                bool use_legacy_parsing);
+                                                const CSSParserContext&);
 using IsResetOnlyFunction = bool (*)(CSSPropertyID);
 using IsPositionKeyword = bool (*)(CSSValueID);
 
@@ -205,6 +206,8 @@ cssvalue::CSSScopedKeywordValue* ConsumeScopedKeywordValue(
 CSSStringValue* ConsumeString(CSSParserTokenStream&);
 cssvalue::CSSURIValue* ConsumeUrl(CSSParserTokenStream&,
                                   const CSSParserContext&);
+CSSURLPatternValue* ConsumeUrlPattern(CSSParserTokenStream&,
+                                      const CSSParserContext&);
 
 // Some properties accept non-standard colors, like rgb values without a
 // preceding hash, in quirks mode.
@@ -246,7 +249,7 @@ bool ConsumeOneOrTwoValuedPosition(CSSParserTokenStream&,
                                    CSSValue*& result_y);
 bool ConsumeBorderShorthand(CSSParserTokenStream&,
                             const CSSParserContext&,
-                            const CSSParserLocalContext&,
+                            CSSParserLocalContext&,
                             const CSSValue*& result_width,
                             const CSSValue*& result_style,
                             const CSSValue*& result_color);
@@ -280,6 +283,8 @@ CSSIdentifierValue* ConsumeVisualBox(CSSParserTokenStream&);
 CSSIdentifierValue* ConsumeCoordBox(CSSParserTokenStream&);
 
 CSSIdentifierValue* ConsumeGeometryBox(CSSParserTokenStream&);
+CSSIdentifierValue* ConsumeGeometryBoxForBorderShape(
+    CSSParserTokenStream& stream);
 
 enum class IsImplicitProperty { kNotImplicit, kImplicit };
 
@@ -330,7 +335,6 @@ void AddExpandedPropertyForValue(CSSPropertyID prop_id,
                                  bool,
                                  HeapVector<CSSPropertyValue, 64>& properties);
 
-CSSValue* ConsumeTransformValue(CSSParserTokenStream&, const CSSParserContext&);
 CSSValue* ConsumeTransformList(CSSParserTokenStream&, const CSSParserContext&);
 CSSValue* ConsumeFilterFunctionList(CSSParserTokenStream&,
                                     const CSSParserContext&);
@@ -342,6 +346,7 @@ bool IsContentPositionKeyword(CSSValueID);
 bool IsContentPositionOrLeftOrRightKeyword(CSSValueID);
 CORE_EXPORT bool IsCSSWideKeyword(CSSValueID);
 CORE_EXPORT bool IsCSSWideKeyword(StringView);
+bool IsInvalidFontFamily(const AtomicString&);
 bool IsRevertKeyword(StringView);
 bool IsDefaultKeyword(StringView);
 bool IsHashIdentifier(const CSSParserToken&);
@@ -376,9 +381,8 @@ CSSValue* ConsumeContentDistributionOverflowPosition(CSSParserTokenStream&,
 
 CSSValue* ConsumeAnimationIterationCount(CSSParserTokenStream&,
                                          const CSSParserContext&);
-CSSValue* ConsumeAnimationName(CSSParserTokenStream&,
-                               const CSSParserContext&,
-                               bool allow_quoted_name);
+bool IsValidIdentAnimationName(const AtomicString& name);
+CSSValue* ConsumeAnimationName(CSSParserTokenStream&, const CSSParserContext&);
 CSSValue* ConsumeAnimationTimeline(CSSParserTokenStream&,
                                    const CSSParserContext&);
 CSSValue* ConsumeAnimationTimingFunction(CSSParserTokenStream&,
@@ -401,8 +405,7 @@ bool ConsumeAnimationShorthand(
     ConsumeAnimationItemValue,
     IsResetOnlyFunction,
     CSSParserTokenStream&,
-    const CSSParserContext&,
-    bool use_legacy_parsing);
+    const CSSParserContext&);
 
 CSSValue* ConsumeSingleTimelineAxis(CSSParserTokenStream&);
 CSSValue* ConsumeSingleTimelineName(CSSParserTokenStream&,
@@ -437,20 +440,20 @@ bool ConsumeBackgroundPosition(CSSParserTokenStream&,
                                const CSSValue*& result_y);
 CSSValue* ConsumePrefixedBackgroundBox(CSSParserTokenStream&, AllowTextValue);
 CSSValue* ParseBackgroundBox(CSSParserTokenStream&,
-                             const CSSParserLocalContext&,
+                             CSSParserLocalContext&,
                              AllowTextValue alias_allow_text_value);
 CSSValue* ParseBackgroundSize(CSSParserTokenStream&,
                               const CSSParserContext&,
-                              const CSSParserLocalContext&,
+                              CSSParserLocalContext&,
                               std::optional<WebFeature> negative_size);
 CSSValue* ParseMaskSize(CSSParserTokenStream&,
                         const CSSParserContext&,
-                        const CSSParserLocalContext&,
+                        CSSParserLocalContext&,
                         std::optional<WebFeature> negative_size);
 bool ParseBackgroundOrMask(bool,
                            CSSParserTokenStream&,
                            const CSSParserContext&,
-                           const CSSParserLocalContext&,
+                           CSSParserLocalContext&,
                            HeapVector<CSSPropertyValue, 64>&);
 
 CORE_EXPORT CSSValue* ConsumeProgressType(CSSParserTokenStream&,
@@ -484,7 +487,7 @@ CSSValue* ParseBorderRadiusCorner(CSSParserTokenStream&,
                                   const CSSParserContext&);
 CSSValue* ParseBorderWidthSide(CSSParserTokenStream&,
                                const CSSParserContext&,
-                               const CSSParserLocalContext&);
+                               CSSParserLocalContext&);
 const CSSValue* ParseBorderStyleSide(CSSParserTokenStream&,
                                      const CSSParserContext&);
 
@@ -514,7 +517,14 @@ bool ConsumeColumnWidthOrCount(CSSParserTokenStream&,
                                CSSValue*&);
 CSSValue* ConsumeGapLength(CSSParserTokenStream&, const CSSParserContext&);
 
-CSSValue* ConsumeCounter(CSSParserTokenStream&, const CSSParserContext&, int);
+cssvalue::CSSCounterValue* ConsumeCounter(CSSParserTokenStream& stream,
+                                          const CSSParserContext& context,
+                                          int default_value,
+                                          bool accept_reversed_function);
+CSSValue* ConsumeCounters(CSSParserTokenStream&,
+                          const CSSParserContext&,
+                          int,
+                          bool accept_reversed_function = false);
 
 CSSValue* ConsumeFontSize(CSSParserTokenStream&,
                           const CSSParserContext&,
@@ -542,6 +552,9 @@ CSSValue* ConsumeFontFeatureSettings(CSSParserTokenStream&,
                                      const CSSParserContext&);
 CSSValue* ConsumeFontVariationSettings(CSSParserTokenStream&,
                                        const CSSParserContext&);
+CSSValue* ConsumeFontLanguageOverrideString(CSSParserTokenStream&);
+CSSValue* ConsumeFontLanguageOverride(CSSParserTokenStream&,
+                                      const CSSParserContext&);
 CSSIdentifierValue* ConsumeFontVariantCSS21(CSSParserTokenStream&);
 CSSIdentifierValue* ConsumeFontTechIdent(CSSParserTokenStream&);
 CSSIdentifierValue* ConsumeFontFormatIdent(CSSParserTokenStream&);
@@ -553,14 +566,15 @@ CSSValue* ConsumeGridLine(CSSParserTokenStream&, const CSSParserContext&);
 CSSValue* ConsumeGridTrackList(CSSParserTokenStream&,
                                const CSSParserContext&,
                                TrackListType,
-                               bool is_masonry_shorthand = false);
-bool ParseGridTemplateAreasRow(const WTF::String& grid_row_names,
+                               bool is_grid_lanes_shorthand = false);
+bool ParseGridTemplateAreasRow(const String& grid_row_names,
                                NamedGridAreaMap&,
                                const wtf_size_t row_count,
                                wtf_size_t& column_count);
-CSSValue* ConsumeGridTemplatesRowsOrColumns(CSSParserTokenStream&,
-                                            const CSSParserContext&,
-                                            bool is_masonry_shorthand = false);
+CSSValue* ConsumeGridTemplatesRowsOrColumns(
+    CSSParserTokenStream&,
+    const CSSParserContext&,
+    bool is_grid_lanes_shorthand = false);
 bool ConsumeGridItemPositionShorthand(bool important,
                                       CSSParserTokenStream&,
                                       const CSSParserContext&,
@@ -573,10 +587,29 @@ bool ConsumeGridTemplateShorthand(bool important,
                                   const CSSValue*& template_columns,
                                   const CSSValue*& template_areas);
 
-CSSValue* ParseMasonryTemplateAreasValue(const String& masonry_template_areas,
-                                         bool is_template_columns);
+CSSValue* ParseGridLanesTemplateAreasValue(
+    const String& grid_lanes_template_areas,
+    bool is_template_columns);
+
+CSSValue* ParseGridLanesDirection(CSSParserTokenStream&);
 
 CSSValue* ConsumeItemTolerance(CSSParserTokenStream&, const CSSParserContext&);
+
+bool ConsumeGapDecorationsRuleEdgeInteriorInsetShorthand(
+    bool important,
+    const CSSParserContext& context,
+    CSSParserTokenStream& stream,
+    CSSValue*& rule_edge_inset,
+    CSSValue*& rule_interior_inset);
+
+bool ConsumeGapDecorationsRuleInsetShorthand(
+    bool important,
+    const CSSParserContext& context,
+    CSSParserTokenStream& stream,
+    CSSValue*& rule_edge_start_inset,
+    CSSValue*& rule_edge_end_inset,
+    CSSValue*& rule_interior_start_inset,
+    CSSValue*& rule_interior_end_inset);
 
 bool ConsumeGapDecorationsRuleShorthand(bool important,
                                         const CSSParserContext& context,
@@ -610,7 +643,6 @@ CSSValue* ConsumeMarginOrOffset(CSSParserTokenStream&,
                                 UnitlessQuirk,
                                 CSSAnchorQueryTypes = kCSSAnchorQueryTypesNone);
 CSSValue* ConsumeScrollPadding(CSSParserTokenStream&, const CSSParserContext&);
-CSSValue* ConsumeScrollStart(CSSParserTokenStream&, const CSSParserContext&);
 CSSValue* ConsumeOffsetPath(CSSParserTokenStream&, const CSSParserContext&);
 CSSValue* ConsumePathOrNone(CSSParserTokenStream&);
 CSSValue* ConsumeOffsetRotate(CSSParserTokenStream&, const CSSParserContext&);
@@ -627,7 +659,7 @@ bool ConsumeRadii(std::array<CSSValue*, 4>& horizontal_radii,
                   std::array<CSSValue*, 4>& vertical_radii,
                   CSSParserTokenStream& stream,
                   const CSSParserContext& context,
-                  bool use_legacy_parsing);
+                  CSSParserLocalContext& local_context);
 
 CSSValue* ConsumeTextDecorationLine(CSSParserTokenStream&);
 CSSValue* ConsumeTextBoxEdge(CSSParserTokenStream&);
@@ -642,19 +674,18 @@ CSSValue* ConsumeSpacingTrim(CSSParserTokenStream&);
 
 CSSValue* ConsumeTransformValue(CSSParserTokenStream&,
                                 const CSSParserContext&,
-                                bool use_legacy_parsing);
+                                CSSParserLocalContext&);
 CSSValue* ConsumeTransformList(CSSParserTokenStream&,
                                const CSSParserContext&,
-                               const CSSParserLocalContext&);
+                               CSSParserLocalContext&);
+CSSValue* ConsumeTransitionBehavior(CSSParserTokenStream&);
 CSSValue* ConsumeTransitionProperty(CSSParserTokenStream&,
                                     const CSSParserContext&);
 bool IsValidPropertyList(const CSSValueList&);
-bool IsValidTransitionBehavior(const CSSValueID&);
-bool IsValidTransitionBehaviorList(const CSSValueList&);
 
 CSSValue* ConsumeBorderColorSide(CSSParserTokenStream&,
                                  const CSSParserContext&,
-                                 const CSSParserLocalContext&);
+                                 CSSParserLocalContext&);
 CSSValue* ConsumeBorderWidth(CSSParserTokenStream&,
                              const CSSParserContext&,
                              UnitlessQuirk);
@@ -666,7 +697,7 @@ CSSValue* ConsumeSingleContainerName(CSSParserTokenStream&,
 CSSValue* ConsumeContainerName(CSSParserTokenStream&, const CSSParserContext&);
 CSSValue* ConsumeContainerType(CSSParserTokenStream&, const CSSParserContext&);
 
-UnitlessQuirk UnitlessUnlessShorthand(const CSSParserLocalContext&);
+UnitlessQuirk UnitlessUnlessShorthand(CSSParserLocalContext&);
 
 // https://drafts.csswg.org/css-counter-styles-3/#typedef-counter-style-name
 CSSCustomIdentValue* ConsumeCounterStyleName(CSSParserTokenStream&,
@@ -682,7 +713,17 @@ bool ShouldLowerCaseCounterStyleNameOnParse(const AtomicString&,
                                             const CSSParserContext&);
 
 // https://drafts.csswg.org/css-anchor-position-1/#typedef-position-area
-CSSValue* ConsumePositionArea(CSSParserTokenStream&);
+CORE_EXPORT CSSValue* ConsumePositionArea(CSSParserTokenStream&,
+                                          bool allow_any_keyword = false);
+
+// https://drafts.csswg.org/css-anchor-position-2/#anchored
+CSSValue* ConsumeAnchoredFallbackQueryValue(CSSParserTokenStream&,
+                                            const CSSParserContext&);
+
+// https://github.com/w3c/csswg-drafts/issues/12610
+inline CSSValue* ConsumePositionAreaQueryValue(CSSParserTokenStream& stream) {
+  return ConsumePositionArea(stream, /*allow_any_keyword=*/true);
+}
 
 // position-area can take one or two keywords. If the second is omitted, either
 // the first is repeated, or the second is span-all. This method returns true if
@@ -692,6 +733,14 @@ bool IsRepeatedPositionAreaValue(CSSValueID value_id);
 // https://drafts.csswg.org/css-animations-2/#animation-trigger
 CSSValue* ConsumeSingleTimelineTriggerName(CSSParserTokenStream& stream,
                                            const CSSParserContext& context);
+
+// https://drafts.csswg.org/css-animations-2/#animation-trigger
+CSSIdentifierValue* ConsumeAnimationTriggerBehavior(
+    CSSParserTokenStream& stream,
+    const CSSParserContext& context);
+CSSValue* ConsumeSingleAnimationTriggerAttachment(
+    CSSParserTokenStream& stream,
+    const CSSParserContext& context);
 
 // Template implementations are at the bottom of the file for readability.
 
@@ -796,6 +845,28 @@ CSSValue* ConsumePositionLonghand(CSSParserTokenStream& stream,
                                 CSSPrimitiveValue::ValueRange::kAll);
 }
 
+template <CSSValueID start, CSSValueID end>
+CSSValue* ConsumeBackgroundPositionLonghand(CSSParserTokenStream& stream,
+                                            const CSSParserContext& context) {
+  if (!RuntimeEnabledFeatures::SideRelativeBackgroundPositionEnabled()) {
+    return ConsumePositionLonghand<start, end>(stream, context);
+  }
+
+  CSSIdentifierValue* origin =
+      css_parsing_utils::ConsumeIdent<start, end, CSSValueID::kCenter>(stream);
+  if (origin && origin->GetValueID() == CSSValueID::kCenter) {
+    return origin;
+  }
+  CSSValue* offset = css_parsing_utils::ConsumeLengthOrPercent(
+      stream, context, CSSPrimitiveValue::ValueRange::kAll);
+  if (origin && offset) {
+    // When both origin and offset are specified, convert to a pair.
+    return MakeGarbageCollected<CSSValuePair>(
+        origin, offset, CSSValuePair::kDropIdenticalValues);
+  }
+  return origin ? origin : offset;
+}
+
 inline bool AtIdent(const CSSParserToken& token, const char* ident) {
   return token.GetType() == kIdentToken &&
          EqualIgnoringASCIICase(token.Value(), ident);
@@ -829,6 +900,10 @@ CORE_EXPORT CSSValue* ConsumePositionTryFallbacks(CSSParserTokenStream&,
 CSSValue* ConsumeFitText(CSSParserTokenStream&, const CSSParserContext&);
 
 CSSValue* ConsumeTextOverflow(CSSParserTokenStream&);
+
+CSSValue* ConsumeNameScope(CSSParserTokenStream& stream,
+                           const CSSParserContext& context,
+                           CSSParserLocalContext&);
 
 // If the stream starts with “!important”, consumes it and returns true.
 // If the stream is at EOF, returns false.

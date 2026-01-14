@@ -4,6 +4,7 @@
 
 #include "components/autofill/core/browser/metrics/form_interactions_ukm_logger.h"
 
+#include <utility>
 #include <variant>
 
 #include "base/check_deref.h"
@@ -26,6 +27,15 @@ namespace {
 
 // Exponential bucket spacing for UKM event data.
 constexpr double kAutofillEventDataBucketSpacing = 2.0;
+
+template <typename UkmEvent>
+void MaybeSet(UkmEvent& event,
+              UkmEvent& (UkmEvent::*setter)(int64_t),
+              std::optional<int64_t> value) {
+  if (value.has_value()) {
+    std::invoke(setter, event, *value);
+  }
+}
 
 }  // namespace
 
@@ -81,8 +91,8 @@ void FormInteractionsUkmLogger::LogSuggestionsShown(
       .SetServerType(static_cast<int>(field.server_type()))
       .SetFormSignature(HashFormSignature(form.form_signature()))
       .SetFieldSignature(HashFieldSignature(field.GetFieldSignature()))
-      .SetMillisecondsSinceFormParsed(
-          MillisecondsSinceFormParsed(form_parsed_timestamp))
+      .SetMillisecondsSinceFormParsed(MillisecondsSinceFormParsed(
+          form_parsed_timestamp, base::TimeTicks::Now()))
       .Record(autofill_client_->GetUkmRecorder());
 
   base::UmaHistogramBoolean("Autofill.SuggestionShown.OffTheRecord",
@@ -100,11 +110,11 @@ void FormInteractionsUkmLogger::LogDidFillSuggestion(
 
   auto metric = ukm::builders::Autofill_SuggestionFilled(ukm_source_id);
   if (record_type) {
-    metric.SetRecordType(base::to_underlying(*record_type));
+    metric.SetRecordType(std::to_underlying(*record_type));
   }
   metric.SetIsForCreditCard(record_type.has_value())
-      .SetMillisecondsSinceFormParsed(
-          MillisecondsSinceFormParsed(form.form_parsed_timestamp()))
+      .SetMillisecondsSinceFormParsed(MillisecondsSinceFormParsed(
+          form.form_parsed_timestamp(), base::TimeTicks::Now()))
       .SetFormSignature(HashFormSignature(form.form_signature()))
       .SetFieldSignature(HashFieldSignature(field.GetFieldSignature()))
       .Record(autofill_client_->GetUkmRecorder());
@@ -119,15 +129,19 @@ void FormInteractionsUkmLogger::LogEditedAutofilledFieldAtSubmission(
   }
 
   FieldTypeSet field_types = field.Type().GetTypes();
-  auto field_type = static_cast<uint64_t>(
-      !field_types.empty() ? *field_types.begin() : NO_SERVER_DATA);
-
-  // TODO(crbug.com/432645177): Emit more than just one FieldType.
-  ukm::builders::Autofill_EditedAutofilledFieldAtSubmission(ukm_source_id)
-      .SetFieldSignature(HashFieldSignature(field.GetFieldSignature()))
-      .SetFormSignature(HashFormSignature(form.form_signature()))
-      .SetOverallType(field_type)
-      .Record(autofill_client_->GetUkmRecorder());
+  auto next_field_type = [&field_types, it = field_types.begin()]() mutable {
+    return it != field_types.end() ? std::optional<int64_t>(*it++)
+                                   : std::nullopt;
+  };
+  using UkmEvent = ukm::builders::Autofill_EditedAutofilledFieldAtSubmission;
+  UkmEvent e(ukm_source_id);
+  e.SetFieldSignature(HashFieldSignature(field.GetFieldSignature()));
+  e.SetFormSignature(HashFormSignature(form.form_signature()));
+  MaybeSet(e, &UkmEvent::SetOverallType, next_field_type());
+  MaybeSet(e, &UkmEvent::SetOverallType2, next_field_type());
+  MaybeSet(e, &UkmEvent::SetOverallType3, next_field_type());
+  MaybeSet(e, &UkmEvent::SetOverallType4, next_field_type());
+  e.Record(autofill_client_->GetUkmRecorder());
 }
 
 void FormInteractionsUkmLogger::LogTextFieldValueChanged(
@@ -139,44 +153,50 @@ void FormInteractionsUkmLogger::LogTextFieldValueChanged(
   }
 
   FieldTypeGroupSet field_type_groups = field.Type().GetGroups();
-  auto field_type_group = static_cast<uint64_t>(!field_type_groups.empty()
-                                                    ? *field_type_groups.begin()
-                                                    : FieldTypeGroup::kNoGroup);
-
-  // TODO(crbug.com/432645177): Emit more than just one FieldTypeGroup.
-  ukm::builders::Autofill_TextFieldDidChange(ukm_source_id)
-      .SetFormSignature(HashFormSignature(form.form_signature()))
-      .SetFieldSignature(HashFieldSignature(field.GetFieldSignature()))
-      .SetFieldTypeGroup(field_type_group)
-      .SetHeuristicType(static_cast<int>(field.heuristic_type()))
-      .SetServerType(static_cast<int>(field.server_type()))
-      .SetHtmlFieldType(static_cast<int>(field.html_type()))
-      .SetHtmlFieldMode(static_cast<int>(field.html_mode()))
-      .SetIsAutofilled(field.is_autofilled())
-      .SetIsEmpty(field.value().empty())
-      .SetMillisecondsSinceFormParsed(
-          MillisecondsSinceFormParsed(form.form_parsed_timestamp()))
-      .Record(autofill_client_->GetUkmRecorder());
+  auto next_field_type_group = [&field_type_groups,
+                                it = field_type_groups.begin()]() mutable {
+    return it != field_type_groups.end()
+               ? std::optional(static_cast<int64_t>(*it++))
+               : std::nullopt;
+  };
+  using UkmEvent = ukm::builders::Autofill_TextFieldDidChange;
+  UkmEvent e(ukm_source_id);
+  e.SetFormSignature(HashFormSignature(form.form_signature()));
+  e.SetFieldSignature(HashFieldSignature(field.GetFieldSignature()));
+  MaybeSet(e, &UkmEvent::SetFieldTypeGroup, next_field_type_group());
+  MaybeSet(e, &UkmEvent::SetFieldTypeGroup2, next_field_type_group());
+  MaybeSet(e, &UkmEvent::SetFieldTypeGroup3, next_field_type_group());
+  MaybeSet(e, &UkmEvent::SetFieldTypeGroup4, next_field_type_group());
+  e.SetHeuristicType(static_cast<int>(field.heuristic_type()));
+  e.SetServerType(static_cast<int>(field.server_type()));
+  e.SetHtmlFieldType(static_cast<int>(field.html_type()));
+  e.SetHtmlFieldMode(static_cast<int>(field.html_mode()));
+  e.SetIsAutofilled(field.is_autofilled());
+  e.SetIsEmpty(field.value().empty());
+  e.SetMillisecondsSinceFormParsed(MillisecondsSinceFormParsed(
+      form.form_parsed_timestamp(), base::TimeTicks::Now()));
+  e.Record(autofill_client_->GetUkmRecorder());
 }
 
 void FormInteractionsUkmLogger::LogFieldFillStatus(
     ukm::SourceId ukm_source_id,
     const FormStructure& form,
     const AutofillField& field,
-    QualityMetricType metric_type) {
+    QualityMetricType metric_type,
+    base::TimeTicks now) {
   if (!CanLog(ukm_source_id)) {
     return;
   }
 
   ukm::builders::Autofill_FieldFillStatus(ukm_source_id)
-      .SetMillisecondsSinceFormParsed(
-          MillisecondsSinceFormParsed(form.form_parsed_timestamp()))
       .SetFormSignature(HashFormSignature(form.form_signature()))
       .SetFieldSignature(HashFieldSignature(field.GetFieldSignature()))
       .SetValidationEvent(static_cast<int64_t>(metric_type))
       .SetIsAutofilled(static_cast<int64_t>(field.is_autofilled()))
       .SetWasPreviouslyAutofilled(
           static_cast<int64_t>(field.previously_autofilled()))
+      .SetMillisecondsSinceFormParsed(
+          MillisecondsSinceFormParsed(form.form_parsed_timestamp(), now))
       .Record(autofill_client_->GetUkmRecorder());
 }
 
@@ -190,14 +210,15 @@ void FormInteractionsUkmLogger::LogFieldType(
     QualityMetricPredictionSource prediction_source,
     QualityMetricType metric_type,
     FieldType predicted_type,
-    FieldType actual_type) {
+    FieldType actual_type,
+    base::TimeTicks now) {
   if (!CanLog(ukm_source_id)) {
     return;
   }
 
   ukm::builders::Autofill_FieldTypeValidation(ukm_source_id)
       .SetMillisecondsSinceFormParsed(
-          MillisecondsSinceFormParsed(form_parsed_timestamp))
+          MillisecondsSinceFormParsed(form_parsed_timestamp, now))
       .SetFormSignature(HashFormSignature(form_signature))
       .SetFieldSignature(HashFieldSignature(field_signature))
       .SetValidationEvent(static_cast<int64_t>(metric_type))
@@ -419,8 +440,8 @@ void FormInteractionsUkmLogger::LogAutofillFieldInfoAtFormRemove(
   builder.SetFormSessionIdentifier(FormGlobalIdToHash64Bit(form.global_id()))
       .SetFieldSessionIdentifier(FieldGlobalIdToHash64Bit(field.global_id()))
       .SetFieldSignature(HashFieldSignature(field.GetFieldSignature()))
-      .SetFormControlType2(base::to_underlying(field.form_control_type()))
-      .SetAutocompleteState(base::to_underlying(autocomplete_state))
+      .SetFormControlType2(std::to_underlying(field.form_control_type()))
+      .SetAutocompleteState(std::to_underlying(autocomplete_state))
       .SetFieldLogEventCount(field_log_events.size());
 
   SetStatusVector(AutofillStatus::kIsFocusable, field.IsFocusable());
@@ -490,8 +511,8 @@ void FormInteractionsUkmLogger::LogAutofillFieldInfoAtFormRemove(
   }
 
   if (had_html_type) {
-    builder.SetHtmlFieldType(base::to_underlying(html_type))
-        .SetHtmlFieldMode(base::to_underlying(html_mode));
+    builder.SetHtmlFieldType(std::to_underlying(html_type))
+        .SetHtmlFieldMode(std::to_underlying(html_mode));
   }
 
   if (had_server_type) {
@@ -595,7 +616,7 @@ void FormInteractionsUkmLogger::
 
   // Determine whether `pattern` matches `value`.
   auto matches = [](const std::u16string& value,
-                    const icu::RegexPattern& pattern) {
+                    const icu::RegexPattern* pattern) {
     return !value.empty() && MatchesRegex(value, pattern);
   };
   // Count in `num_experimental_fields[i]` if `pattern[i]` matches the label,
@@ -605,9 +626,9 @@ void FormInteractionsUkmLogger::
     bool found_experimental_fields = false;
     for (size_t i = 0; i < kRegexPatterns->size(); ++i) {
       const icu::RegexPattern* pattern = (*kRegexPatterns)[i].get();
-      if (pattern && (matches(field.label(), *pattern) ||
-                      matches(field.id_attribute(), *pattern) ||
-                      matches(field.name_attribute(), *pattern))) {
+      if (pattern && (matches(field.label(), pattern) ||
+                      matches(field.id_attribute(), pattern) ||
+                      matches(field.name_attribute(), pattern))) {
         ++num_experimental_fields[i];
         found_experimental_fields = true;
       }
@@ -852,28 +873,38 @@ void FormInteractionsUkmLogger::LogHiddenRepresentationalFieldSkipDecision(
   }
 
   FieldTypeSet field_types = field.Type().GetTypes();
-  auto field_type = static_cast<uint64_t>(
-      !field_types.empty() ? *field_types.begin() : NO_SERVER_DATA);
+  auto next_field_type = [&field_types, it = field_types.begin()]() mutable {
+    return it != field_types.end() ? std::optional(static_cast<uint64_t>(*it++))
+                                   : std::nullopt;
+  };
 
   FieldTypeGroupSet field_type_groups = field.Type().GetGroups();
-  auto field_type_group = static_cast<uint64_t>(!field_type_groups.empty()
-                                                    ? *field_type_groups.begin()
-                                                    : FieldTypeGroup::kNoGroup);
+  auto next_field_type_group = [&field_type_groups,
+                                it = field_type_groups.begin()]() mutable {
+    return it != field_type_groups.end()
+               ? std::optional(static_cast<uint64_t>(*it++))
+               : std::nullopt;
+  };
 
-  // TODO(crbug.com/432645177): Emit more than just one FieldType and
-  // FieldTypeGroup.
-  // TODO(crbug.com/432645177): Emit the AutofillField::autofilled_type()?
-  ukm::builders::Autofill_HiddenRepresentationalFieldSkipDecision(ukm_source_id)
-      .SetFormSignature(HashFormSignature(form.form_signature()))
-      .SetFieldSignature(HashFieldSignature(field.GetFieldSignature()))
-      .SetFieldTypeGroup(field_type_group)
-      .SetFieldOverallType(field_type)
-      .SetHeuristicType(static_cast<int>(field.heuristic_type()))
-      .SetServerType(static_cast<int>(field.server_type()))
-      .SetHtmlFieldType(static_cast<int>(field.html_type()))
-      .SetHtmlFieldMode(static_cast<int>(field.html_mode()))
-      .SetIsSkipped(is_skipped)
-      .Record(autofill_client_->GetUkmRecorder());
+  using UkmEvent =
+      ukm::builders::Autofill_HiddenRepresentationalFieldSkipDecision;
+  UkmEvent e(ukm_source_id);
+  e.SetFormSignature(HashFormSignature(form.form_signature()));
+  e.SetFieldSignature(HashFieldSignature(field.GetFieldSignature()));
+  MaybeSet(e, &UkmEvent::SetFieldTypeGroup, next_field_type_group());
+  MaybeSet(e, &UkmEvent::SetFieldTypeGroup2, next_field_type_group());
+  MaybeSet(e, &UkmEvent::SetFieldTypeGroup3, next_field_type_group());
+  MaybeSet(e, &UkmEvent::SetFieldTypeGroup4, next_field_type_group());
+  MaybeSet(e, &UkmEvent::SetFieldOverallType, next_field_type());
+  MaybeSet(e, &UkmEvent::SetFieldOverallType2, next_field_type());
+  MaybeSet(e, &UkmEvent::SetFieldOverallType3, next_field_type());
+  MaybeSet(e, &UkmEvent::SetFieldOverallType4, next_field_type());
+  e.SetHeuristicType(static_cast<int>(field.heuristic_type()));
+  e.SetServerType(static_cast<int>(field.server_type()));
+  e.SetHtmlFieldType(static_cast<int>(field.html_type()));
+  e.SetHtmlFieldMode(static_cast<int>(field.html_mode()));
+  e.SetIsSkipped(is_skipped);
+  e.Record(autofill_client_->GetUkmRecorder());
 }
 
 void FormInteractionsUkmLogger::LogKeyMetrics(
@@ -928,8 +959,8 @@ void FormInteractionsUkmLogger::LogFormEvent(
   ukm::builders::Autofill_FormEvent builder(ukm_source_id);
   builder.SetAutofillFormEvent(static_cast<int>(form_event))
       .SetFormTypes(AutofillMetrics::FormTypesToBitVector(form_types))
-      .SetMillisecondsSinceFormParsed(
-          MillisecondsSinceFormParsed(form_parsed_timestamp))
+      .SetMillisecondsSinceFormParsed(MillisecondsSinceFormParsed(
+          form_parsed_timestamp, base::TimeTicks::Now()))
       .Record(autofill_client_->GetUkmRecorder());
 }
 
@@ -939,26 +970,11 @@ bool FormInteractionsUkmLogger::CanLog(ukm::SourceId ukm_source_id) const {
 }
 
 int64_t FormInteractionsUkmLogger::MillisecondsSinceFormParsed(
-    base::TimeTicks form_parsed_timestamp) const {
-  DCHECK(!form_parsed_timestamp.is_null());
-  // Use the pinned timestamp as the current time if it's set.
-  base::TimeTicks now =
-      pinned_timestamp_.is_null() ? base::TimeTicks::Now() : pinned_timestamp_;
-
+    base::TimeTicks form_parsed_timestamp,
+    base::TimeTicks now) const {
   return ukm::GetExponentialBucketMin(
       (now - form_parsed_timestamp).InMilliseconds(),
       kAutofillEventDataBucketSpacing);
-}
-
-UkmTimestampPin::UkmTimestampPin(FormInteractionsUkmLogger* logger)
-    : logger_(*logger) {
-  DCHECK(!logger_->has_pinned_timestamp(/*pass_key=*/{}));
-  logger_->set_pinned_timestamp(base::TimeTicks::Now(), /*pass_key=*/{});
-}
-
-UkmTimestampPin::~UkmTimestampPin() {
-  DCHECK(logger_->has_pinned_timestamp(/*pass_key=*/{}));
-  logger_->set_pinned_timestamp(base::TimeTicks(), /*pass_key=*/{});
 }
 
 int64_t GetSemanticBucketMinForAutofillDurationTiming(int64_t sample) {

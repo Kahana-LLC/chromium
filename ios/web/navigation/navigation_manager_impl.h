@@ -10,6 +10,7 @@
 #include <memory>
 #include <vector>
 
+#include "base/feature_list.h"
 #include "base/functional/callback.h"
 #include "base/gtest_prod_util.h"
 #import "base/memory/raw_ptr.h"
@@ -35,6 +36,12 @@ class NavigationStorage;
 class BrowserState;
 class NavigationItem;
 class NavigationManagerDelegate;
+
+// Feature flag controlling whether the logic to skip automatic navigation
+// history item during "back" and "forward" navigations is enabled.
+//
+// See https://crbug.com/464261378 for details.
+BASE_DECLARE_FEATURE(kSkipAutomaticNavigationInBackForwardList);
 
 // Name of UMA histogram to log the number of items Navigation Manager was
 // requested to restore. 100 is logged when the number of navigation items is
@@ -212,12 +219,6 @@ class NavigationManagerImpl final : public NavigationManager {
   void UpdateCurrentItemForReplaceState(const GURL& url,
                                         NSString* state_object);
 
-  // Same as GoToIndex(int), but allows renderer-initiated navigations and
-  // specifying whether or not the navigation is caused by the user gesture.
-  void GoToIndex(int index,
-                 NavigationInitiationType initiation_type,
-                 bool has_user_gesture);
-
   // NavigationManager:
   BrowserState* GetBrowserState() const final;
   WebState* GetWebState() const final;
@@ -330,6 +331,16 @@ class NavigationManagerImpl final : public NavigationManager {
     kBackList,
     kForwardList,
   };
+
+  // Stores information needed by GoTo(...) method.
+  class GoToParams;
+
+  // Common implementation of GoBack(), GoForward() and GoToIndex(int).
+  void GoTo(GoToParams params);
+
+  // Returns the index for a navigation given by `params` skipping over
+  // automatic items if any are present.
+  int IndexForParams(GoToParams params);
 
   // Appends a new session blob fetcher with given source.
   void AppendSessionDataBlobFetcher(SessionDataBlobFetcher loader,

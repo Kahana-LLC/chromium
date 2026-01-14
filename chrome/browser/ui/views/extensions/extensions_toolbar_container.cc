@@ -18,13 +18,14 @@
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_element_identifiers.h"
 #include "chrome/browser/ui/browser_window/public/browser_window_features.h"
-#include "chrome/browser/ui/extensions/extension_action_view_controller.h"
+#include "chrome/browser/ui/extensions/extension_action_view_model.h"
 #include "chrome/browser/ui/layout_constants.h"
 #include "chrome/browser/ui/toolbar/toolbar_action_hover_card_types.h"
-#include "chrome/browser/ui/toolbar/toolbar_action_view_controller.h"
+#include "chrome/browser/ui/toolbar/toolbar_action_view_model.h"
 #include "chrome/browser/ui/ui_features.h"
 #include "chrome/browser/ui/view_ids.h"
 #include "chrome/browser/ui/views/extensions/browser_action_drag_data.h"
+#include "chrome/browser/ui/views/extensions/extension_action_delegate_desktop.h"
 #include "chrome/browser/ui/views/extensions/extensions_menu_coordinator.h"
 #include "chrome/browser/ui/views/extensions/extensions_menu_view.h"
 #include "chrome/browser/ui/views/extensions/extensions_request_access_button.h"
@@ -32,9 +33,9 @@
 #include "chrome/browser/ui/views/extensions/extensions_toolbar_container_view_controller.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/browser/ui/views/frame/toolbar_button_provider.h"
+#include "chrome/browser/ui/views/side_panel/extensions/extension_side_panel_coordinator.h"
 #include "chrome/browser/ui/views/side_panel/side_panel_ui.h"
 #include "chrome/browser/ui/views/toolbar/toolbar_action_hover_card_controller.h"
-#include "chrome/browser/ui/views/toolbar/toolbar_actions_bar_bubble_views.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/feature_engagement/public/event_constants.h"
@@ -44,7 +45,6 @@
 #include "extensions/common/extension_features.h"
 #include "extensions/common/extension_id.h"
 #include "ui/base/dragdrop/drag_drop_types.h"
-#include "ui/base/dragdrop/mojom/drag_drop_types.mojom-shared.h"
 #include "ui/base/dragdrop/mojom/drag_drop_types.mojom.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
@@ -101,7 +101,9 @@ ExtensionsToolbarContainer::ExtensionsToolbarContainer(Browser* browser,
                                       extensions_menu_coordinator_.get())),
       display_mode_(display_mode),
       action_hover_card_controller_(
-          std::make_unique<ToolbarActionHoverCardController>(this)) {
+          std::make_unique<ToolbarActionHoverCardController>(this)),
+      toolbar_view_model_(
+          std::make_unique<ExtensionsToolbarViewModel>(this, model_)) {
   SetProperty(views::kElementIdentifierKey,
               kToolbarExtensionsContainerElementId);
 
@@ -120,7 +122,8 @@ ExtensionsToolbarContainer::ExtensionsToolbarContainer(Browser* browser,
   if (base::FeatureList::IsEnabled(
           extensions_features::kExtensionsMenuAccessControl)) {
     auto request_access_button =
-        std::make_unique<ExtensionsRequestAccessButton>(browser_, this);
+        std::make_unique<ExtensionsRequestAccessButton>(
+            browser_, toolbar_view_model_.get(), this);
     request_access_button->SetVisible(false);
     request_access_button_ = AddChildView(std::move(request_access_button));
   }
@@ -191,7 +194,13 @@ ExtensionsToolbarContainer::ExtensionsToolbarContainer(Browser* browser,
 
   UpdateControlsVisibility();
 
-  CreateActions();
+  toolbar_view_model_observation_.Observe(toolbar_view_model_.get());
+
+  if (toolbar_view_model_->AreActionsInitialized()) {
+    // Since we added the observer in this constructor, we missed the observer
+    // call.
+    OnActionsInitialized();
+  }
 }
 
 ExtensionsToolbarContainer::~ExtensionsToolbarContainer() {
@@ -221,94 +230,6 @@ ExtensionsToolbarContainer::~ExtensionsToolbarContainer() {
   CHECK(!views::WidgetObserver::IsInObserverList());
 }
 
-void ExtensionsToolbarContainer::CreateActions() {
-  DCHECK(icons_.empty());
-  DCHECK(actions_.empty());
-
-  // If the model isn't initialized, wait for it.
-  if (!model_->actions_initialized()) {
-    return;
-  }
-
-  for (const auto& action_id : model_->action_ids()) {
-    CreateActionForId(action_id);
-  }
-
-  ReorderAllChildViews();
-  UpdateContainerVisibility();
-}
-
-void ExtensionsToolbarContainer::AddAction(
-    const ToolbarActionsModel::ActionId& action_id) {
-  CreateActionForId(action_id);
-  ReorderAllChildViews();
-
-  // Auto hide mode should not become visible due to extensions being added,
-  // only due to user interaction.
-  if (display_mode_ != DisplayMode::kAutoHide) {
-    UpdateContainerVisibility();
-  }
-
-  UpdateControlsVisibility();
-
-  drop_weak_ptr_factory_.InvalidateWeakPtrs();
-}
-
-void ExtensionsToolbarContainer::RemoveAction(
-    const ToolbarActionsModel::ActionId& action_id) {
-  // TODO(pbos): Handle extension upgrades, see ToolbarActionsBar. Arguably this
-  // could be handled inside the model and be invisible to the container when
-  // permissions are unchanged.
-
-  auto iter = std::ranges::find(actions_, action_id,
-                                &ToolbarActionViewController::GetId);
-  CHECK(iter != actions_.end());
-  // Ensure the action outlives the UI element to perform any cleanup.
-  std::unique_ptr<ToolbarActionViewController> controller = std::move(*iter);
-  actions_.erase(iter);
-
-  // Undo the popout, if necessary. Actions expect to not be popped out while
-  // destroying.
-  if (popped_out_action_ == action_id) {
-    UndoPopOut();
-  }
-
-  RemoveChildViewT(GetViewForId(action_id));
-  icons_.erase(action_id);
-
-  UpdateContainerVisibilityAfterAnimation();
-  UpdateControlsVisibility();
-
-  drop_weak_ptr_factory_.InvalidateWeakPtrs();
-}
-
-void ExtensionsToolbarContainer::UpdateAction(
-    const ToolbarActionsModel::ActionId& action_id) {
-  ToolbarActionViewController* action = GetActionForId(action_id);
-  if (action) {
-    action->UpdateState();
-    ToolbarActionView* action_view = GetViewForId(action_id);
-    // Only update hover card if it's currently showing for action, otherwise it
-    // would mistakenly show the hover card.
-    if (action_hover_card_controller_->IsHoverCardShowingForAction(
-            action_view)) {
-      action_hover_card_controller_->UpdateHoverCard(
-          action_view, ToolbarActionHoverCardUpdateType::kToolbarActionUpdated);
-    }
-  }
-
-  UpdateControlsVisibility();
-}
-
-void ExtensionsToolbarContainer::UpdatePinnedActions() {
-  for (const auto& it : icons_) {
-    UpdateIconVisibility(it.first);
-  }
-  ReorderAllChildViews();
-
-  drop_weak_ptr_factory_.InvalidateWeakPtrs();
-}
-
 void ExtensionsToolbarContainer::UpdateExtensionsButton(
     extensions::PermissionsManager::UserSiteSetting site_setting,
     content::WebContents* web_contents,
@@ -327,8 +248,7 @@ void ExtensionsToolbarContainer::UpdateExtensionsButton(
                                    kBlockAllExtensions) {
     extensions_button_state =
         ExtensionsToolbarButton::State::kAllExtensionsBlocked;
-  } else if (ExtensionActionViewController::AnyActionHasCurrentSiteAccess(
-                 actions_, web_contents)) {
+  } else if (toolbar_view_model_->AnyActionHasCurrentSiteAccess(web_contents)) {
     extensions_button_state =
         ExtensionsToolbarButton::State::kAnyExtensionHasAccess;
   }
@@ -368,15 +288,14 @@ void ExtensionsToolbarContainer::UpdateRequestAccessButton(
     auto site_permissions_helper =
         extensions::SitePermissionsHelper(browser_->profile());
 
-    for (const auto& action : actions_) {
-      std::string action_id = action->GetId();
+    for (const auto& action_id : toolbar_view_model_->GetAllActionIds()) {
       bool has_active_request =
           permissions_manager->HasActiveHostAccessRequest(tab_id, action_id);
       bool can_show_access_requests_in_toolbar =
           site_permissions_helper.ShowAccessRequestsInToolbar(action_id);
 
       if (has_active_request && can_show_access_requests_in_toolbar) {
-        extensions.push_back(action->GetId());
+        extensions.push_back(action_id);
       }
     }
   }
@@ -395,8 +314,8 @@ void ExtensionsToolbarContainer::UpdateRequestAccessButton(
 void ExtensionsToolbarContainer::UpdateAllIcons() {
   UpdateControlsVisibility();
 
-  for (const auto& action : actions_) {
-    action->UpdateState();
+  for (const auto& icon : icons_) {
+    icon.second->UpdateState();
   }
 
   if (close_side_panel_button_) {
@@ -551,40 +470,9 @@ void ExtensionsToolbarContainer::AnchorAndShowWidgetImmediately(
   widget->Show();
 }
 
-ToolbarActionViewController* ExtensionsToolbarContainer::GetActionForId(
-    const std::string& action_id) {
-  for (const auto& action : actions_) {
-    if (action->GetId() == action_id) {
-      return action.get();
-    }
-  }
-  return nullptr;
-}
-
 std::optional<extensions::ExtensionId>
 ExtensionsToolbarContainer::GetPoppedOutActionId() const {
   return popped_out_action_;
-}
-
-void ExtensionsToolbarContainer::OnContextMenuShownFromToolbar(
-    const std::string& action_id) {
-#if BUILDFLAG(IS_MAC)
-  // TODO(crbug.com/40124221): Remove hiding active popup here once this bug is
-  // fixed.
-  HideActivePopup();
-#endif
-
-  extension_with_open_context_menu_id_ = action_id;
-  UpdateIconVisibility(extension_with_open_context_menu_id_.value());
-}
-
-void ExtensionsToolbarContainer::OnContextMenuClosedFromToolbar() {
-  CHECK(extension_with_open_context_menu_id_.has_value());
-
-  extensions::ExtensionId const extension_id =
-      extension_with_open_context_menu_id_.value();
-  extension_with_open_context_menu_id_.reset();
-  UpdateIconVisibility(extension_id);
 }
 
 bool ExtensionsToolbarContainer::IsActionVisibleOnToolbar(
@@ -601,7 +489,7 @@ void ExtensionsToolbarContainer::UndoPopOut() {
 }
 
 void ExtensionsToolbarContainer::SetPopupOwner(
-    ToolbarActionViewController* popup_owner) {
+    ToolbarActionViewModel* popup_owner) {
   // We should never be setting a popup owner when one already exists, and
   // never unsetting one when one wasn't set.
   DCHECK((popup_owner_ != nullptr) ^ (popup_owner != nullptr));
@@ -617,22 +505,6 @@ void ExtensionsToolbarContainer::SetPopupOwner(
   }
 }
 
-void ExtensionsToolbarContainer::HideActivePopup() {
-  if (popup_owner_) {
-    popup_owner_->HidePopup();
-  }
-  DCHECK(!popup_owner_);
-  UpdateContainerVisibilityAfterAnimation();
-}
-
-bool ExtensionsToolbarContainer::CloseOverflowMenuIfOpen() {
-  if (IsExtensionsMenuShowing()) {
-    HideExtensionsMenu();
-    return true;
-  }
-  return false;
-}
-
 void ExtensionsToolbarContainer::PopOutAction(
     const extensions::ExtensionId& action_id,
     base::OnceClosure closure) {
@@ -644,46 +516,9 @@ void ExtensionsToolbarContainer::PopOutAction(
   UpdateContainerVisibility();
 }
 
-bool ExtensionsToolbarContainer::ShowToolbarActionPopupForAPICall(
-    const std::string& action_id,
-    ShowPopupCallback callback) {
-  // Don't override another popup, and only show in the active window.
-  if (popped_out_action_ || !browser_->window()->IsActive()) {
-    return false;
-  }
-
-  ToolbarActionViewController* action = GetActionForId(action_id);
-  DCHECK(action);
-  action->TriggerPopupForAPI(std::move(callback));
-
-  return true;
-}
-
-void ExtensionsToolbarContainer::ShowToolbarActionBubble(
-    std::unique_ptr<ToolbarActionsBarBubbleDelegate> controller) {
-  const std::string extension_id = controller->GetAnchorActionId();
-
-  views::View* const anchor_view = GetViewForId(extension_id);
-
-  views::Widget* const widget = views::BubbleDialogDelegateView::CreateBubble(
-      std::make_unique<ToolbarActionsBarBubbleViews>(
-          anchor_view ? anchor_view : GetExtensionsButton(),
-          anchor_view != nullptr, std::move(controller)));
-
-  ShowWidgetForExtension(widget, extension_id);
-}
-
-void ExtensionsToolbarContainer::ToggleExtensionsMenu() {
-  GetExtensionsButton()->ToggleExtensionsMenu();
-}
-
-bool ExtensionsToolbarContainer::HasAnyExtensions() const {
-  return !actions_.empty();
-}
-
 void ExtensionsToolbarContainer::ReorderAllChildViews() {
   // Reorder pinned action views left-to-right.
-  const auto& pinned_action_ids = model_->pinned_action_ids();
+  const auto& pinned_action_ids = toolbar_view_model_->GetPinnedActionIds();
   for (size_t i = 0; i < pinned_action_ids.size(); ++i) {
     ReorderChildView(GetViewForId(pinned_action_ids[i]), i);
   }
@@ -713,11 +548,12 @@ void ExtensionsToolbarContainer::ReorderAllChildViews() {
   }
 }
 
-void ExtensionsToolbarContainer::CreateActionForId(
+void ExtensionsToolbarContainer::CreateActionViewForId(
     const ToolbarActionsModel::ActionId& action_id) {
-  actions_.push_back(
-      ExtensionActionViewController::Create(action_id, browser_, this));
-  auto icon = std::make_unique<ToolbarActionView>(actions_.back().get(), this);
+  auto icon = std::make_unique<ToolbarActionView>(
+      toolbar_view_model_->GetActionModelForId(action_id), this);
+  CHECK(icon);
+
   // Set visibility before adding to prevent extraneous animation.
   icon->SetVisible(ToolbarActionsModel::CanShowActionsInToolbar(*browser_) &&
                    model_->IsActionPinned(action_id));
@@ -747,16 +583,35 @@ gfx::Size ExtensionsToolbarContainer::GetToolbarActionSize() {
 void ExtensionsToolbarContainer::MovePinnedActionBy(
     const std::string& action_id,
     int move_by) {
-  auto iter = std::ranges::find(model_->pinned_action_ids(), action_id);
-  CHECK(iter != model_->pinned_action_ids().cend());
-  int current_index = iter - model_->pinned_action_ids().cbegin();
-  int new_index =
-      std::clamp(current_index + move_by, 0,
-                 static_cast<int>(model_->pinned_action_ids().size()) - 1);
-  if (new_index == current_index) {
-    return;
-  }
-  model_->MovePinnedAction(action_id, new_index);
+  toolbar_view_model_->MovePinnedActionBy(action_id, move_by);
+}
+
+void ExtensionsToolbarContainer::UpdateHoverCard(
+    ToolbarActionView* action_view,
+    ToolbarActionHoverCardUpdateType update_type) {
+  action_hover_card_controller_->UpdateHoverCard(action_view, update_type);
+}
+
+void ExtensionsToolbarContainer::OnContextMenuShown(
+    const std::string& action_id) {
+#if BUILDFLAG(IS_MAC)
+  // TODO(crbug.com/40124221): Remove hiding active popup here once this bug is
+  // fixed.
+  HideActivePopup();
+#endif
+
+  extension_with_open_context_menu_id_ = action_id;
+  UpdateIconVisibility(extension_with_open_context_menu_id_.value());
+}
+
+void ExtensionsToolbarContainer::OnContextMenuClosed(
+    const std::string& action_id) {
+  CHECK(extension_with_open_context_menu_id_.has_value());
+
+  extensions::ExtensionId const extension_id =
+      extension_with_open_context_menu_id_.value();
+  extension_with_open_context_menu_id_.reset();
+  UpdateIconVisibility(extension_id);
 }
 
 void ExtensionsToolbarContainer::WriteDragDataForView(
@@ -766,9 +621,9 @@ void ExtensionsToolbarContainer::WriteDragDataForView(
   DCHECK(data);
 
   auto it = std::ranges::find(
-      model_->pinned_action_ids(), sender,
+      toolbar_view_model_->GetPinnedActionIds(), sender,
       [this](const std::string& action_id) { return GetViewForId(action_id); });
-  DCHECK(it != model_->pinned_action_ids().cend());
+  DCHECK(it != toolbar_view_model_->GetPinnedActionIds().cend());
   ToolbarActionView* extension_view = GetViewForId(*it);
 
   ui::ImageModel icon = GetExtensionIcon(extension_view);
@@ -776,9 +631,8 @@ void ExtensionsToolbarContainer::WriteDragDataForView(
                                 press_pt.OffsetFromOrigin());
 
   // Fill in the remaining info.
-  size_t index = it - model_->pinned_action_ids().cbegin();
-  BrowserActionDragData drag_data(extension_view->view_controller()->GetId(),
-                                  index);
+  size_t index = it - toolbar_view_model_->GetPinnedActionIds().cbegin();
+  BrowserActionDragData drag_data(extension_view->view_model()->GetId(), index);
   drag_data.Write(browser_->profile(), data);
 }
 
@@ -801,14 +655,121 @@ bool ExtensionsToolbarContainer::CanStartDragForView(View* sender,
 
   // Only pinned extensions should be draggable.
   auto it = std::ranges::find(
-      model_->pinned_action_ids(), sender,
+      toolbar_view_model_->GetPinnedActionIds(), sender,
       [this](const std::string& action_id) { return GetViewForId(action_id); });
-  if (it == model_->pinned_action_ids().cend()) {
+  if (it == toolbar_view_model_->GetPinnedActionIds().cend()) {
     return false;
   }
 
   // TODO(crbug.com/40808374): Force-pinned extensions are not draggable.
   return !model_->IsActionForcePinned(*it);
+}
+
+std::unique_ptr<ExtensionActionViewModel>
+ExtensionsToolbarContainer::CreateActionViewModel(
+    const ToolbarActionsModel::ActionId& action_id,
+    ExtensionsContainer* extensions_container) {
+  return ExtensionActionViewModel::Create(
+      action_id, browser_,
+      std::make_unique<ExtensionActionDelegateDesktop>(
+          browser_.get(), extensions_container, this));
+}
+
+void ExtensionsToolbarContainer::OnActionsInitialized() {
+  CHECK(icons_.empty());
+
+  for (const auto& action_id : toolbar_view_model_->GetAllActionIds()) {
+    CreateActionViewForId(action_id);
+  }
+
+  ReorderAllChildViews();
+  UpdateContainerVisibility();
+}
+
+void ExtensionsToolbarContainer::OnActionAdded(
+    const ToolbarActionsModel::ActionId& action_id) {
+  CreateActionViewForId(action_id);
+  ReorderAllChildViews();
+
+  // Auto hide mode should not become visible due to extensions being added,
+  // only due to user interaction.
+  if (display_mode_ != DisplayMode::kAutoHide) {
+    UpdateContainerVisibility();
+  }
+
+  UpdateControlsVisibility();
+
+  drop_weak_ptr_factory_.InvalidateWeakPtrs();
+}
+
+void ExtensionsToolbarContainer::OnActionRemoved(
+    const ToolbarActionsModel::ActionId& action_id) {
+  // Undo the popout, if necessary. Actions expect to not be popped out while
+  // destroying.
+  if (popped_out_action_ == action_id) {
+    UndoPopOut();
+  }
+
+  RemoveChildViewT(GetViewForId(action_id));
+  icons_.erase(action_id);
+
+  UpdateContainerVisibilityAfterAnimation();
+  UpdateControlsVisibility();
+
+  drop_weak_ptr_factory_.InvalidateWeakPtrs();
+}
+
+void ExtensionsToolbarContainer::OnActionUpdated(
+    const ToolbarActionsModel::ActionId& action_id) {
+  ToolbarActionViewModel* action =
+      toolbar_view_model_->GetActionModelForId(action_id);
+  if (action) {
+    ToolbarActionView* action_view = GetViewForId(action_id);
+    action_view->UpdateState();
+    // Only update hover card if it's currently showing for action, otherwise it
+    // would mistakenly show the hover card.
+    if (action_hover_card_controller_->IsHoverCardShowingForAction(
+            action_view)) {
+      action_hover_card_controller_->UpdateHoverCard(
+          action_view, ToolbarActionHoverCardUpdateType::kToolbarActionUpdated);
+    }
+  }
+
+  UpdateControlsVisibility();
+}
+
+void ExtensionsToolbarContainer::OnPinnedActionsChanged() {
+  for (const auto& it : icons_) {
+    UpdateIconVisibility(it.first);
+  }
+  ReorderAllChildViews();
+
+  drop_weak_ptr_factory_.InvalidateWeakPtrs();
+}
+
+void ExtensionsToolbarContainer::HideActivePopup() {
+  if (popup_owner_) {
+    popup_owner_->HidePopup();
+  }
+  DCHECK(!popup_owner_);
+  UpdateContainerVisibilityAfterAnimation();
+}
+
+bool ExtensionsToolbarContainer::CloseOverflowMenuIfOpen() {
+  if (IsExtensionsMenuShowing()) {
+    HideExtensionsMenu();
+    return true;
+  }
+  return false;
+}
+
+bool ExtensionsToolbarContainer::CanShowToolbarActionPopupForAPICall(
+    const ToolbarActionsModel::ActionId& action_id) {
+  return !popped_out_action_ && browser_->window()->IsActive();
+}
+
+void ExtensionsToolbarContainer::ToggleExtensionsMenu() {
+  GetExtensionsButton()->ToggleExtensionsMenu();
 }
 
 bool ExtensionsToolbarContainer::GetDropFormats(
@@ -839,7 +800,7 @@ int ExtensionsToolbarContainer::OnDragUpdated(
 
   // Check if there is an extension for the dragged icon (e.g. an extension can
   // be de deleted while dragging its icon).
-  if (!GetActionForId(data.id())) {
+  if (!toolbar_view_model_->GetActionModelForId(data.id())) {
     return ui::DragDropTypes::DRAG_NONE;
   }
 
@@ -854,7 +815,7 @@ int ExtensionsToolbarContainer::OnDragUpdated(
   const int offset_into_icon_area = GetMirroredXInView(event.x());
   const size_t before_icon_unclamped = WidthToIconCount(offset_into_icon_area);
 
-  const size_t visible_icons = model_->pinned_action_ids().size();
+  const size_t visible_icons = toolbar_view_model_->GetPinnedActionIds().size();
 
   // Because the user can drag outside the container bounds, we need to clamp
   // to the valid range. Note that the maximum allowable value is
@@ -914,27 +875,29 @@ void ExtensionsToolbarContainer::OnWidgetDestroying(views::Widget* widget) {
 }
 
 size_t ExtensionsToolbarContainer::WidthToIconCount(int x_offset) {
-  const int element_padding = GetLayoutConstant(TOOLBAR_ELEMENT_PADDING);
+  const int element_padding =
+      GetLayoutConstant(LayoutConstant::kToolbarElementPadding);
   size_t unclamped_count =
       std::max((x_offset + element_padding) /
                    (GetToolbarActionSize().width() + element_padding),
                0);
-  return std::min(unclamped_count, actions_.size());
+  return std::min(unclamped_count,
+                  toolbar_view_model_->GetAllActionIds().size());
 }
 
 ui::ImageModel ExtensionsToolbarContainer::GetExtensionIcon(
     ToolbarActionView* extension_view) {
-  return extension_view->view_controller()->GetIcon(GetCurrentWebContents(),
-                                                    GetToolbarActionSize());
+  return extension_view->view_model()->GetIcon(GetCurrentWebContents(),
+                                               GetToolbarActionSize());
 }
 
 void ExtensionsToolbarContainer::SetExtensionIconVisibility(
     ToolbarActionsModel::ActionId id,
     bool visible) {
   auto it = std::ranges::find(
-      model_->pinned_action_ids(), GetViewForId(id),
+      toolbar_view_model_->GetPinnedActionIds(), GetViewForId(id),
       [this](const std::string& action_id) { return GetViewForId(action_id); });
-  if (it == model_->pinned_action_ids().cend()) {
+  if (it == toolbar_view_model_->GetPinnedActionIds().cend()) {
     return;
   }
 
@@ -966,7 +929,7 @@ void ExtensionsToolbarContainer::UpdateContainerVisibility() {
 bool ExtensionsToolbarContainer::ShouldContainerBeVisible() const {
   // The container (and extensions-menu button) should not be visible if we have
   // no extensions.
-  if (!HasAnyExtensions()) {
+  if (!toolbar_view_model_->HasAnyExtensions()) {
     return false;
   }
 
@@ -1041,7 +1004,7 @@ void ExtensionsToolbarContainer::MovePinnedAction(
     const ui::DropTargetEvent& event,
     ui::mojom::DragOperation& output_drag_op,
     std::unique_ptr<ui::LayerTreeOwner> drag_image_layer_owner) {
-  model_->MovePinnedAction(action_id, index);
+  toolbar_view_model_->MovePinnedAction(action_id, index);
 
   output_drag_op = DragOperation::kMove;
   // `cleanup` will run automatically when it goes out of scope to finish
@@ -1079,13 +1042,8 @@ void ExtensionsToolbarContainer::UpdateControlsVisibility() {
 }
 
 void ExtensionsToolbarContainer::CloseSidePanelButtonPressed() {
-  browser_->GetFeatures().side_panel_ui()->Close();
-}
-
-void ExtensionsToolbarContainer::UpdateToolbarActionHoverCard(
-    ToolbarActionView* action_view,
-    ToolbarActionHoverCardUpdateType update_type) {
-  action_hover_card_controller_->UpdateHoverCard(action_view, update_type);
+  browser_->GetFeatures().side_panel_ui()->Close(
+      extensions::ExtensionSidePanelCoordinator::GetPanelType());
 }
 
 void ExtensionsToolbarContainer::CollapseConfirmation() {
@@ -1097,9 +1055,34 @@ void ExtensionsToolbarContainer::CollapseConfirmation() {
   UpdateControlsVisibility();
 }
 
+void ExtensionsToolbarContainer::ShowContextMenuAsFallback(
+    const extensions::ExtensionId& action_id) {
+  GetViewForId(action_id)->ShowContextMenuAsFallback();
+}
+
+void ExtensionsToolbarContainer::OnPopupShown(
+    const extensions::ExtensionId& action_id,
+    bool by_user) {
+  GetViewForId(action_id)->OnPopupShown(by_user);
+}
+
+void ExtensionsToolbarContainer::OnPopupClosed(
+    const extensions::ExtensionId& action_id) {
+  GetViewForId(action_id)->OnPopupClosed();
+}
+
+views::FocusManager*
+ExtensionsToolbarContainer::GetFocusManagerForAccelerator() {
+  return GetFocusManager();
+}
+
+views::BubbleAnchor ExtensionsToolbarContainer::GetReferenceButtonForPopup(
+    const extensions::ExtensionId& action_id) {
+  return GetViewForId(action_id)->GetReferenceButtonForPopup();
+}
+
 void ExtensionsToolbarContainer::OnMouseExited(const ui::MouseEvent& event) {
-  UpdateToolbarActionHoverCard(nullptr,
-                               ToolbarActionHoverCardUpdateType::kHover);
+  UpdateHoverCard(nullptr, ToolbarActionHoverCardUpdateType::kHover);
 }
 
 void ExtensionsToolbarContainer::OnMouseMoved(const ui::MouseEvent& event) {
@@ -1110,8 +1093,7 @@ void ExtensionsToolbarContainer::OnMouseMoved(const ui::MouseEvent& event) {
   // know when the mouse leaves a toolbar action view and enters a toolbar
   // control. Therefore, listening for on mouse moved in the container reflects
   // moving the mouse from toolbar action view to toolbar controls.
-  UpdateToolbarActionHoverCard(nullptr,
-                               ToolbarActionHoverCardUpdateType::kHover);
+  UpdateHoverCard(nullptr, ToolbarActionHoverCardUpdateType::kHover);
 }
 
 void ExtensionsToolbarContainer::UpdateCloseSidePanelButtonIcon() {

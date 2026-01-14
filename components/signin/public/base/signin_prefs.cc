@@ -6,7 +6,6 @@
 
 #include <string_view>
 
-#include "base/containers/contains.h"
 #include "base/json/values_util.h"
 #include "base/values.h"
 #include "components/prefs/pref_change_registrar.h"
@@ -60,19 +59,52 @@ constexpr char kChromeSigninInterceptionDismissCount[] =
 constexpr char kPasswordSignInPromoShownCount[] =
     "PasswordSignInPromoShownCount";
 
+// Pref to store the number of times the password bubble signin promo
+// has been shown per account used for SigninPromoLimitsExperiment.
+constexpr char kPasswordSignInPromoShownCountForLimitsExperiment[] =
+    "PasswordSignInPromoShownCountForLimitsExperiment";
+
 // Pref to store the number of times the address bubble signin promo
 // has been shown per account.
 constexpr char kAddressSignInPromoShownCount[] = "AddressSignInPromoShownCount";
+
+// Pref to store the number of times the address bubble signin promo
+// has been shown per account used for SigninPromoLimitsExperiment.
+constexpr char kAddressSignInPromoShownCountForLimitsExperiment[] =
+    "AddressSignInPromoShownCountForLimitsExperiment";
+
+// Pref to store the number of times the bookmark bubble signin promo
+// has been shown per account.
+constexpr char kBookmarkSignInPromoShownCount[] =
+    "BookmarkSignInPromoShownCount";
+
+// Pref to store the number of times the bookmark bubble signin promo
+// has been shown per account used for SigninPromoLimitsExperiment.
+constexpr char kBookmarkSignInPromoShownCountForLimitsExperiment[] =
+    "BookmarkSignInPromoShownCountForLimitsExperiment";
 
 // Pref to store the number of times any autofill bubble signin promo
 // has been dismissed per account.
 constexpr char kAutofillSignInPromoDismissCount[] =
     "AutofillSignInPromoDismissCount";
 
+// Pref to store the number of times the address bubble signin promo
+// has been dismissed per account.
+constexpr char kAddressSignInPromoDismissCount[] =
+    "AddressSignInPromoDismissCount";
+
+// Pref to store the number of times the bookmark bubble signin promo
+// has been dismissed per account used for SigninPromoLimitsExperiment.
+constexpr char kBookmarkSignInPromoDismissCount[] =
+    "BookmarkSignInPromoDismissCount";
+
+// Pref to store the number of times the password bubble signin promo
+// has been dismissed per account.
+constexpr char kPasswordSignInPromoDismissCount[] =
+    "PasswordSignInPromoDismissCount";
+
 // Registers that the sign in occurred with an explicit user action from the
 // bubble that appears after installing an extension. False by default.
-// Note: this pref is only set to true when
-// `switches::kEnableExtensionsExplicitBrowserSignin` is enabled.
 constexpr char kExtensionsExplicitBrowserSigninEnabled[] =
     "ExtensionsExplicitBrowserSigninEnabled";
 
@@ -81,17 +113,6 @@ constexpr char kExtensionsExplicitBrowserSigninEnabled[] =
 // when `syncer::kSyncEnableBookmarksInTransportMode` is enabled.
 constexpr char kBookmarksExplicitBrowserSigninEnabled[] =
     "BookmarksExplicitBrowserSigninEnabled";
-
-// History Sync promo on the avatar button.
-//
-// Number of times the history sync promo was shown in the identity pill (avata
-// toolbar button).
-constexpr std::string_view kHistorySyncPromoIdentityPillShownCount =
-    "ChromeSigninSyncPromoIdentityPillShownCount";
-// Number of times the history sync promo was used (clicked) in the identity
-// pill (avatar toolbar button).
-constexpr std::string_view kHistorySyncPromoIdentityPillUsedCount =
-    "ChromeSigninSyncPromoIdentityPillUsedCount";
 
 // Sync promo on the avatar button.
 //
@@ -111,6 +132,29 @@ constexpr std::string_view kBookmarkBatchUploadPromoDismissCount =
 constexpr std::string_view kBookmarkBatchUploadPromoLastDismissTime =
     "BookmarkBatchUploadPromoLastDismissTime";
 
+constexpr std::string_view kPolicyDisclaimerLastRegistrationFailureTime =
+    "PolicyDisclaimerLastRegistrationFailureTime";
+
+// Dictionary pref that contains all the values related to the avatar button
+// promo counts.
+constexpr std::string_view kAvatarButtonPromoCountDictionary =
+    "AvatarButtonPromoCountDictionary";
+
+// DEPRECATED(10/25): Check `SigninPrefs::SigninPrefs()`.
+// Testing deprecating pref:
+constexpr std::string_view kDeprecatingTestingPref = "DeprecatingTestingPref";
+//
+// History Sync promo on the avatar button.
+//
+// Number of times the history sync promo was shown in the identity pill (avata
+// toolbar button).
+constexpr std::string_view kHistorySyncPromoIdentityPillShownCount =
+    "ChromeSigninSyncPromoIdentityPillShownCount";
+// Number of times the history sync promo was used (clicked) in the identity
+// pill (avatar toolbar button).
+constexpr std::string_view kHistorySyncPromoIdentityPillUsedCount =
+    "ChromeSigninSyncPromoIdentityPillUsedCount";
+
 }  // namespace
 
 SigninPrefs::SigninPrefs(PrefService& pref_service)
@@ -122,6 +166,17 @@ void SigninPrefs::RegisterProfilePrefs(PrefRegistrySimple* registry) {
   registry->RegisterDictionaryPref(kSigninAccountPrefs);
   registry->RegisterIntegerPref(prefs::kHistorySyncSuccessiveDeclineCount, 0);
   registry->RegisterInt64Pref(prefs::kHistorySyncLastDeclinedTimestamp, 0);
+}
+
+void SigninPrefs::MigrateObsoleteSigninPrefs() {
+  ScopedDictPrefUpdate scoped_update(&pref_service_.get(), kSigninAccountPrefs);
+  // Deprecates prefs within the existing internal account dict.
+  for (auto value : scoped_update.Get()) {
+    base::DictValue& account_dict = value.second.GetDict();
+    account_dict.Remove(kDeprecatingTestingPref);
+    account_dict.Remove(kHistorySyncPromoIdentityPillShownCount);
+    account_dict.Remove(kHistorySyncPromoIdentityPillUsedCount);
+  }
 }
 
 bool SigninPrefs::HasAccountPrefs(const GaiaId& gaia_id) const {
@@ -138,7 +193,7 @@ size_t SigninPrefs::RemoveAllAccountPrefsExcept(
   for (const std::pair<const std::string&, const base::Value&> account_prefs :
        pref_service_->GetDict(kSigninAccountPrefs)) {
     GaiaId gaia_id(account_prefs.first);
-    if (!base::Contains(gaia_ids_to_keep, gaia_id)) {
+    if (!gaia_ids_to_keep.contains(gaia_id)) {
       accounts_prefs_to_remove.push_back(std::move(gaia_id));
     }
   }
@@ -245,22 +300,56 @@ int SigninPrefs::GetChromeSigninInterceptionDismissCount(
 
 void SigninPrefs::IncrementPasswordSigninPromoImpressionCount(
     const GaiaId& gaia_id) {
-  IncrementIntPrefForAccount(gaia_id, kPasswordSignInPromoShownCount);
+  IncrementIntPrefForAccount(
+      gaia_id,
+      base::FeatureList::IsEnabled(switches::kSigninPromoLimitsExperiment)
+          ? kPasswordSignInPromoShownCountForLimitsExperiment
+          : kPasswordSignInPromoShownCount);
 }
 
 int SigninPrefs::GetPasswordSigninPromoImpressionCount(
     const GaiaId& gaia_id) const {
-  return GetIntPrefForAccount(gaia_id, kPasswordSignInPromoShownCount);
+  return GetIntPrefForAccount(
+      gaia_id,
+      base::FeatureList::IsEnabled(switches::kSigninPromoLimitsExperiment)
+          ? kPasswordSignInPromoShownCountForLimitsExperiment
+          : kPasswordSignInPromoShownCount);
 }
 
 void SigninPrefs::IncrementAddressSigninPromoImpressionCount(
     const GaiaId& gaia_id) {
-  IncrementIntPrefForAccount(gaia_id, kAddressSignInPromoShownCount);
+  IncrementIntPrefForAccount(
+      gaia_id,
+      base::FeatureList::IsEnabled(switches::kSigninPromoLimitsExperiment)
+          ? kAddressSignInPromoShownCountForLimitsExperiment
+          : kAddressSignInPromoShownCount);
 }
 
 int SigninPrefs::GetAddressSigninPromoImpressionCount(
     const GaiaId& gaia_id) const {
-  return GetIntPrefForAccount(gaia_id, kAddressSignInPromoShownCount);
+  return GetIntPrefForAccount(
+      gaia_id,
+      base::FeatureList::IsEnabled(switches::kSigninPromoLimitsExperiment)
+          ? kAddressSignInPromoShownCountForLimitsExperiment
+          : kAddressSignInPromoShownCount);
+}
+
+void SigninPrefs::IncrementBookmarkSigninPromoImpressionCount(
+    const GaiaId& gaia_id) {
+  IncrementIntPrefForAccount(
+      gaia_id,
+      base::FeatureList::IsEnabled(switches::kSigninPromoLimitsExperiment)
+          ? kBookmarkSignInPromoShownCountForLimitsExperiment
+          : kBookmarkSignInPromoShownCount);
+}
+
+int SigninPrefs::GetBookmarkSigninPromoImpressionCount(
+    const GaiaId& gaia_id) const {
+  return GetIntPrefForAccount(
+      gaia_id,
+      base::FeatureList::IsEnabled(switches::kSigninPromoLimitsExperiment)
+          ? kBookmarkSignInPromoShownCountForLimitsExperiment
+          : kBookmarkSignInPromoShownCount);
 }
 
 void SigninPrefs::IncrementAutofillSigninPromoDismissCount(
@@ -273,11 +362,38 @@ int SigninPrefs::GetAutofillSigninPromoDismissCount(
   return GetIntPrefForAccount(gaia_id, kAutofillSignInPromoDismissCount);
 }
 
+void SigninPrefs::IncrementAddressSigninPromoDismissCount(
+    const GaiaId& gaia_id) {
+  IncrementIntPrefForAccount(gaia_id, kAddressSignInPromoDismissCount);
+}
+
+int SigninPrefs::GetAddressSigninPromoDismissCount(
+    const GaiaId& gaia_id) const {
+  return GetIntPrefForAccount(gaia_id, kAddressSignInPromoDismissCount);
+}
+
+void SigninPrefs::IncrementBookmarkSigninPromoDismissCount(
+    const GaiaId& gaia_id) {
+  IncrementIntPrefForAccount(gaia_id, kBookmarkSignInPromoDismissCount);
+}
+
+int SigninPrefs::GetBookmarkSigninPromoDismissCount(
+    const GaiaId& gaia_id) const {
+  return GetIntPrefForAccount(gaia_id, kBookmarkSignInPromoDismissCount);
+}
+
+void SigninPrefs::IncrementPasswordSigninPromoDismissCount(
+    const GaiaId& gaia_id) {
+  IncrementIntPrefForAccount(gaia_id, kPasswordSignInPromoDismissCount);
+}
+
+int SigninPrefs::GetPasswordSigninPromoDismissCount(
+    const GaiaId& gaia_id) const {
+  return GetIntPrefForAccount(gaia_id, kPasswordSignInPromoDismissCount);
+}
+
 void SigninPrefs::SetExtensionsExplicitBrowserSignin(const GaiaId& gaia_id,
                                                      bool enabled) {
-  // The pref can only be set to true if the
-  // `switches::kEnableExtensionsExplicitBrowserSignin` flag is enabled.
-  CHECK(!enabled || switches::IsExtensionsExplicitBrowserSigninEnabled());
   SetBooleanPrefForAccount(gaia_id, kExtensionsExplicitBrowserSigninEnabled,
                            enabled);
 }
@@ -304,24 +420,22 @@ bool SigninPrefs::GetBookmarksExplicitBrowserSignin(
                                   kBookmarksExplicitBrowserSigninEnabled);
 }
 
-void SigninPrefs::IncrementHistorySyncPromoIdentityPillShownCount(
+void SigninPrefs::SetPolicyDisclaimerLastRegistrationFailureTime(
+    const GaiaId& gaia_id,
+    base::Time last_registration_failure_time) {
+  SetTimePref(last_registration_failure_time, gaia_id,
+              kPolicyDisclaimerLastRegistrationFailureTime);
+}
+
+void SigninPrefs::ClearPolicyDisclaimerLastRegistrationFailureTime(
     const GaiaId& gaia_id) {
-  IncrementIntPrefForAccount(gaia_id, kHistorySyncPromoIdentityPillShownCount);
+  ClearPref(gaia_id, kPolicyDisclaimerLastRegistrationFailureTime);
 }
 
-int SigninPrefs::GetHistorySyncPromoIdentityPillShownCount(
+std::optional<base::Time>
+SigninPrefs::GetPolicyDisclaimerLastRegistrationFailureTime(
     const GaiaId& gaia_id) const {
-  return GetIntPrefForAccount(gaia_id, kHistorySyncPromoIdentityPillShownCount);
-}
-
-void SigninPrefs::IncrementHistorySyncPromoIdentityPillUsedCount(
-    const GaiaId& gaia_id) {
-  IncrementIntPrefForAccount(gaia_id, kHistorySyncPromoIdentityPillUsedCount);
-}
-
-int SigninPrefs::GetHistorySyncPromoIdentityPillUsedCount(
-    const GaiaId& gaia_id) const {
-  return GetIntPrefForAccount(gaia_id, kHistorySyncPromoIdentityPillUsedCount);
+  return GetTimePref(gaia_id, kPolicyDisclaimerLastRegistrationFailureTime);
 }
 
 void SigninPrefs::IncrementSyncPromoIdentityPillShownCount(
@@ -344,6 +458,44 @@ int SigninPrefs::GetSyncPromoIdentityPillUsedCount(
   return GetIntPrefForAccount(gaia_id, kSyncPromoIdentityPillUsedCount);
 }
 
+int SigninPrefs::GetHistoryPageHistorySyncPromoShownCount(
+    const GaiaId& gaia_id) const {
+  return GetIntPrefForAccount(gaia_id,
+                              prefs::kHistoryPageHistorySyncPromoShownCount);
+}
+
+void SigninPrefs::IncrementHistoryPageHistorySyncPromoShownCount(
+    const GaiaId& gaia_id) {
+  IncrementIntPrefForAccount(gaia_id,
+                             prefs::kHistoryPageHistorySyncPromoShownCount);
+}
+
+std::optional<base::Time>
+SigninPrefs::GetHistoryPageHistorySyncPromoLastDismissedTimestamp(
+    const GaiaId& gaia_id) const {
+  return GetTimePref(gaia_id,
+                     prefs::kHistoryPageHistorySyncPromoLastDismissedTimestamp);
+}
+
+void SigninPrefs::SetHistoryPageHistorySyncPromoLastDismissedTimestamp(
+    const GaiaId& gaia_id,
+    base::Time last_dismissed_timestamp) {
+  SetTimePref(last_dismissed_timestamp, gaia_id,
+              prefs::kHistoryPageHistorySyncPromoLastDismissedTimestamp);
+}
+
+bool SigninPrefs::GetHistoryPageHistorySyncPromoShownAfterDismissal(
+    const GaiaId& gaia_id) const {
+  return GetBooleanPrefForAccount(
+      gaia_id, prefs::kHistoryPageHistorySyncPromoShownAfterDismissal);
+}
+
+void SigninPrefs::SetHistoryPageHistorySyncPromoShownAfterDismissal(
+    const GaiaId& gaia_id) {
+  SetBooleanPrefForAccount(
+      gaia_id, prefs::kHistoryPageHistorySyncPromoShownAfterDismissal, true);
+}
+
 void SigninPrefs::IncrementBookmarkBatchUploadPromoDismissCountWithLastTime(
     const GaiaId& gaia_id) {
   IncrementIntPrefForAccount(gaia_id, kBookmarkBatchUploadPromoDismissCount);
@@ -356,6 +508,15 @@ SigninPrefs::GetBookmarkBatchUploadPromoDismissCountWithLastTime(
     const GaiaId& gaia_id) {
   return {GetIntPrefForAccount(gaia_id, kBookmarkBatchUploadPromoDismissCount),
           GetTimePref(gaia_id, kBookmarkBatchUploadPromoLastDismissTime)};
+}
+
+base::DictValue& SigninPrefs::GetOrCreateAvatarButtonPromoCountDictionary(
+    const GaiaId& gaia_id) {
+  CHECK(!gaia_id.empty());
+  ScopedDictPrefUpdate scoped_update(&pref_service_.get(), kSigninAccountPrefs);
+  // `EnsureDict` gets or create the dictionary.
+  return *scoped_update->EnsureDict(gaia_id.ToString())
+              ->EnsureDict(kAvatarButtonPromoCountDictionary);
 }
 
 int SigninPrefs::IncrementIntPrefForAccount(const GaiaId& gaia_id,
@@ -454,4 +615,29 @@ void SigninPrefs::ClearPref(const GaiaId& gaia_id, std::string_view pref) {
   }
 
   account_dict->Remove(pref);
+}
+
+void SigninPrefs::SetDeprecatedPrefForTesting(const GaiaId& gaia_id) {
+  CHECK(!gaia_id.empty());
+  ScopedDictPrefUpdate scoped_update(&pref_service_.get(), kSigninAccountPrefs);
+  // `EnsureDict` gets or create the dictionary.
+  base::Value::Dict* account_dict =
+      scoped_update->EnsureDict(gaia_id.ToString());
+
+  account_dict->Set(kDeprecatingTestingPref, 123);
+}
+
+std::optional<int> SigninPrefs::GetDeprecatedPrefForTesting(
+    const GaiaId& gaia_id) {
+  CHECK(!gaia_id.empty());
+  const base::Value::Dict* account_dict =
+      pref_service_->GetDict(kSigninAccountPrefs).FindDict(gaia_id.ToString());
+  if (!account_dict) {
+    return std::nullopt;
+  }
+
+  std::optional<int> pref_value =
+      account_dict->FindInt(kDeprecatingTestingPref);
+  return pref_value.has_value() ? pref_value.value()
+                                : std::optional<int>(std::nullopt);
 }

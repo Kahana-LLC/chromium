@@ -4,7 +4,8 @@
   }
 </style>
 <settings-subpage page-title="$i18n{adMeasurementPageTitle}"
-    learn-more-url="$i18n{adPrivacyLearnMoreURL}">
+    learn-more-url="$i18n{adPrivacyLearnMoreURL}"
+    route-path$="[[routePath]]">
   <settings-toggle-button
       id="adMeasurementToggle"
       pref="{{prefs.privacy_sandbox.m1.ad_measurement_enabled}}"
@@ -45,9 +46,7 @@
       </ul>
     </div>
   </div>
-  <template is="dom-if" if="[[shouldShowV2_]]">
-    <div id="disclaimer" class="cr-secondary-text hr">
-      $i18nRaw{adMeasurementPageDisclaimer}
-    </div>
-  </template>
+  <div id="disclaimer" class="cr-secondary-text hr">
+    $i18nRaw{adMeasurementPageDisclaimer}
+  </div>
 </settings-subpage>

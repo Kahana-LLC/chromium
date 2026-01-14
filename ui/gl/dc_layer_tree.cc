@@ -17,7 +17,6 @@
 #include "base/trace_event/trace_event.h"
 #include "base/types/expected.h"
 #include "base/types/expected_macros.h"
-#include "third_party/microsoft_dxheaders/src/include/composition/dcomp-preview.h"
 #include "ui/gfx/color_space_win.h"
 #include "ui/gfx/geometry/rect_conversions.h"
 #include "ui/gfx/geometry/transform_util.h"
@@ -385,7 +384,7 @@ void DCLayerTree::Initialize(
 
   hdr_metadata_helper_ = std::make_unique<HDRMetadataHelperWin>(d3d11_device_);
 
-  if (Microsoft::WRL::ComPtr<PREVIEW_IDCompositionDevice5> dcomp_device5;
+  if (Microsoft::WRL::ComPtr<IDCompositionDevice5> dcomp_device5;
       SUCCEEDED(dcomp_device_.As(&dcomp_device5))) {
     hr = dcomp_device5->CreateDynamicTexture(&primary_plane_surface_);
     if (FAILED(hr)) {
@@ -867,6 +866,10 @@ DCLayerTree::VisualTree::~VisualTree() = default;
 
 base::expected<void, CommitError> DCLayerTree::VisualTree::BuildTree(
     const std::vector<DCLayerOverlayParams>& overlays) {
+#if EXPENSIVE_DCHECKS_ARE_ON()
+  CHECK(std::ranges::is_sorted(overlays, {}, &DCLayerOverlayParams::z_order));
+#endif
+
   // Index into the subtree from the previous frame that is being reused in the
   // current frame for the given overlay index.
   // |overlay_index_to_reused_subtree| has an entry for every overlay in the
@@ -1028,6 +1031,10 @@ base::expected<void, CommitError> DCLayerTree::VisualTree::BuildTree(
 
   if (needs_commit) {
     TRACE_EVENT0("gpu", "DCLayerTree::CommitAndClearPendingOverlays::Commit");
+    base::ScopedUmaHistogramTimer scoped_timer(
+        "GPU.DirectComposition.DCompCommitDuration",
+        base::ScopedUmaHistogramTimer::ScopedHistogramTiming::
+            kMicrosecondTimes);
     HRESULT hr = dc_layer_tree_->dcomp_device_->Commit();
     if (FAILED(hr)) {
       DLOG(ERROR) << "Commit failed with error 0x" << std::hex << hr;
@@ -1240,10 +1247,6 @@ base::expected<void, CommitError> DCLayerTree::CommitAndClearPendingOverlays(
     }
   }
 
-  // Sort layers by z-order.
-  std::ranges::sort(overlays, std::ranges::less(),
-                    &DCLayerOverlayParams::z_order);
-
   // Move unused video swap chains to `unused_video_swap_chains` for potential
   // reuse (when adjacent frames have a videos that have different layer IDs
   // which can sometimes happen when a video's src changes), then cleanup.
@@ -1348,6 +1351,7 @@ base::expected<void, CommitError> DCLayerTree::CommitAndClearPendingOverlays(
         tint_overlay.transform = it->transform;
         tint_overlay.clip_rect = it->clip_rect;
         tint_overlay.rounded_corner_bounds = it->rounded_corner_bounds;
+        tint_overlay.z_order = it->z_order;
         tint_overlay.opacity = 0.25;
         tint_overlay.background_color = tint_color;
         tint_overlay.layer_id =
@@ -1385,7 +1389,11 @@ base::expected<void, CommitError> DCLayerTree::CommitAndClearPendingOverlays(
     }
   }
 
-  if (primary_plane_surface_ && !did_update_primary_plane_damage) {
+  if (primary_plane_surface_ && primary_plane_surface_serial_ &&
+      !did_update_primary_plane_damage) {
+    // We need to commit the visual tree after `SetTexture`. We expect the
+    // primary plane overlay to be removed from the visual tree this frame,
+    // which will cause commit to happen.
     DVLOG(1) << "Reset primary_plane_surface_ damage.";
     primary_plane_surface_->SetTexture(nullptr);
     primary_plane_surface_serial_ = 0;

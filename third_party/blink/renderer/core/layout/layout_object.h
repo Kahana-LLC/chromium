@@ -34,12 +34,14 @@
 #include "base/dcheck_is_on.h"
 #include "base/gtest_prod_util.h"
 #include "base/notreached.h"
+#include "base/types/strong_alias.h"
 #include "third_party/blink/public/mojom/scroll/scroll_into_view_params.mojom-blink-forward.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/display_lock/display_lock_context.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/document_lifecycle.h"
 #include "third_party/blink/renderer/core/dom/element.h"
+#include "third_party/blink/renderer/core/dom/pseudo_element.h"
 #include "third_party/blink/renderer/core/editing/forward.h"
 #include "third_party/blink/renderer/core/html_names.h"
 #include "third_party/blink/renderer/core/layout/geometry/physical_rect.h"
@@ -354,6 +356,10 @@ class CORE_EXPORT LayoutObject : public GarbageCollected<LayoutObject>,
     return parent_.Get();
   }
   bool IsDescendantOf(const LayoutObject*) const;
+
+  // Return true if the specified object is `this`, or in the containing block
+  // chain of `this` object.
+  bool IsContainedBy(const LayoutObject*) const;
 
   LayoutObject* PreviousSibling() const {
     NOT_DESTROYED();
@@ -805,7 +811,8 @@ class CORE_EXPORT LayoutObject : public GarbageCollected<LayoutObject>,
 
   bool IsPseudoElement() const {
     NOT_DESTROYED();
-    return GetNode() && GetNode()->IsPseudoElement();
+    const Node* node = GetNode();
+    return node && node->IsPseudoElement();
   }
 
   virtual bool IsBoxModelObject() const {
@@ -908,15 +915,19 @@ class CORE_EXPORT LayoutObject : public GarbageCollected<LayoutObject>,
     NOT_DESTROYED();
     return false;
   }
+  virtual bool IsLayoutGridLanes() const {
+    NOT_DESTROYED();
+    return false;
+  }
+  bool IsLayoutGridOrGridLanes() const {
+    NOT_DESTROYED();
+    return IsLayoutGrid() || IsLayoutGridLanes();
+  }
   virtual bool IsLayoutIFrame() const {
     NOT_DESTROYED();
     return false;
   }
   virtual bool IsLayoutImage() const {
-    NOT_DESTROYED();
-    return false;
-  }
-  virtual bool IsLayoutMasonry() const {
     NOT_DESTROYED();
     return false;
   }
@@ -1038,6 +1049,7 @@ class CORE_EXPORT LayoutObject : public GarbageCollected<LayoutObject>,
   inline bool IsScrollButtonOrMarkerContent() const;
   inline bool IsBeforeOrAfterContent() const;
   inline bool IsInterestHintContent() const;
+  inline bool IsPseudo(PseudoId id) const;
   static inline bool IsAfterContent(const LayoutObject* obj) {
     return obj && obj->IsAfterContent();
   }
@@ -1047,19 +1059,19 @@ class CORE_EXPORT LayoutObject : public GarbageCollected<LayoutObject>,
   // |TextFragmentType::kLayoutGenerated| for the other type of generated text.
   bool IsStyleGenerated() const;
 
-  // |PhysicalAnchorQuery| is built and propagated up in the fragment tree
-  // during the layout. This function indicates whether |this| may have an
-  // anchor query or not before the layout. When it returns false, |this| does
-  // not have an |PhysicalAnchorQuery|.
-  bool MayHaveAnchorQuery() const {
+  // `AnchorMap` objects are built and propagated up the fragment tree during
+  // layout. This function indicates whether `this` may contain an anchor or not
+  // before layout. False positives are allowed, but when it returns false,
+  // `this` does not contain any anchors, and no AnchorMap is to be created.
+  bool MayContainAnchor() const {
     NOT_DESTROYED();
-    return bitfields_.MayHaveAnchorQuery();
+    return bitfields_.MayContainAnchor();
   }
-  void SetSelfMayHaveAnchorQuery() {
+  void SetSelfMayContainAnchor() {
     NOT_DESTROYED();
-    bitfields_.SetMayHaveAnchorQuery(true);
+    bitfields_.SetMayContainAnchor(true);
   }
-  virtual void MarkMayHaveAnchorQuery();
+  virtual void MarkMayContainAnchor();
 
   void SetHasBrokenSpine() {
     NOT_DESTROYED();
@@ -1123,6 +1135,19 @@ class CORE_EXPORT LayoutObject : public GarbageCollected<LayoutObject>,
   void SetIsInsideMulticol(bool b) {
     NOT_DESTROYED();
     bitfields_.SetIsInsideMulticol(b);
+  }
+
+  // Return true if this LayoutObject is inside a ::column pseudo-element
+  // that is not the active column in a scroll-marker-group with tabs mode.
+  // This is used by accessibility code to efficiently determine which content
+  // should be hidden without having to walk the fragment tree repeatedly.
+  bool InsideInactiveColumnTab() const {
+    NOT_DESTROYED();
+    return bitfields_.InsideInactiveColumnTab();
+  }
+  void SetInsideInactiveColumnTab(bool b) {
+    NOT_DESTROYED();
+    bitfields_.SetInsideInactiveColumnTab(b);
   }
 
   // Return true if this object might be inside a fragmentation context, or
@@ -1486,6 +1511,17 @@ class CORE_EXPORT LayoutObject : public GarbageCollected<LayoutObject>,
     return bitfields_.HasNonVisibleOverflow();
   }
   bool HasClipRelatedProperty() const;
+
+  // Both scroll containers that host overscroll area parent pseudo-elements and
+  // overscroll area parent pseudo elements are overcroll containers.
+  // TODO(crbug.com/468055741): See if we can remove the overscroll-area-parent
+  // pseudo check after they can host scrollable overflow.
+  bool IsOverscrollContainer() const {
+    NOT_DESTROYED();
+    return StyleRef().IsInternalOverscrollAreaAuto() ||
+           IsPseudo(kPseudoIdOverscrollAreaParent);
+  }
+
   bool IsScrollContainer() const {
     NOT_DESTROYED();
     // Replaced elements don't support scrolling. If overflow is non visible,
@@ -1687,7 +1723,7 @@ class CORE_EXPORT LayoutObject : public GarbageCollected<LayoutObject>,
   // spanner. For one, it needs to be a block-level box that's inside a multicol
   // container, and it also needs to be in the block formatting context
   // established by the columns.
-  virtual bool IsValidColumnSpanner() const {
+  virtual bool IsValidColumnSpannerInTree() const {
     NOT_DESTROYED();
     return false;
   }
@@ -1696,7 +1732,7 @@ class CORE_EXPORT LayoutObject : public GarbageCollected<LayoutObject>,
     NOT_DESTROYED();
     // May be called before style is set.
     return Style() && Style()->GetColumnSpan() == EColumnSpan::kAll &&
-           IsValidColumnSpanner();
+           IsValidColumnSpannerInTree();
   }
 
   // We include LayoutButton in this check, because buttons are
@@ -2396,7 +2432,11 @@ class CORE_EXPORT LayoutObject : public GarbageCollected<LayoutObject>,
   // For accessibility, we want the bounding box rect of this element
   // in local coordinates, which can then be converted to coordinates relative
   // to any ancestor using, e.g., localToAncestorTransform.
-  virtual gfx::RectF LocalBoundingBoxRectForAccessibility() const = 0;
+  using IncludeDescendants =
+      base::StrongAlias<class IncludeDescendantsTag, bool>;
+  virtual gfx::RectF LocalBoundingBoxRectForAccessibility(
+      IncludeDescendants include_descendants =
+          IncludeDescendants(true)) const = 0;
 
   const ComputedStyle* Style() const {
     NOT_DESTROYED();
@@ -2464,7 +2504,8 @@ class CORE_EXPORT LayoutObject : public GarbageCollected<LayoutObject>,
   //
   // The ancestor can be nullptr which, if |this| is not the root view, will map
   // the rect to the main frame's space which includes the root view's scroll
-  // and clip. This is even true if the main frame is remote.
+  // and clip. This is even true if the main frame is remote; the GeometryMapper
+  // fast path is used when possible.
   //
   // If VisualRectFlags has the kEdgeInclusive bit set, clipping operations will
   // use PhysicalRect::InclusiveIntersect, and the return value of
@@ -2572,6 +2613,7 @@ class CORE_EXPORT LayoutObject : public GarbageCollected<LayoutObject>,
   // document is cleared. We use this as a hook to detect the case of document
   // destruction and don't waste time doing unnecessary work.
   bool DocumentBeingDestroyed() const;
+  bool DocumentBeingDestroyedActual() const;
 
   void DestroyAndCleanupAnonymousWrappers(bool performing_reattach);
 
@@ -2685,8 +2727,8 @@ class CORE_EXPORT LayoutObject : public GarbageCollected<LayoutObject>,
     // used when the outline rects are specified in a space that does not
     // include EffectiveZoom, such as SVG.
     static OutlineInfo GetUnzoomedFromStyle(const ComputedStyle& style) {
-      return {static_cast<int>(getUnzoomedWidth(style)),
-              static_cast<int>(
+      return {ClampTo<int>(getUnzoomedWidth(style)),
+              ClampTo<int>(
                   std::floor(style.OutlineOffset() / style.EffectiveZoom()))};
     }
   };
@@ -3397,12 +3439,27 @@ class CORE_EXPORT LayoutObject : public GarbageCollected<LayoutObject>,
     style_ = nullptr;
   }
 
+  // Context used by StyleWillChange() and StyleDidChange(). The former will
+  // typically set members, and the latter will check them.
+  struct StyleChangeContext {
+    // An object ceased to be floating or out-of-flow.
+    bool became_normal_flow = false;
+
+    // An object prevented descendants from becoming column spanners (before
+    // style change).
+    bool did_prevent_spanner_descendants = false;
+  };
+
   // Overrides should call the superclass at the end. style_ will be 0 the
   // first time this function will be called.
-  virtual void StyleWillChange(StyleDifference, const ComputedStyle& new_style);
+  virtual void StyleWillChange(StyleDifference,
+                               const ComputedStyle& new_style,
+                               StyleChangeContext&);
   // Overrides should call the superclass at the start. |oldStyle| will be 0 the
   // first time this function is called.
-  virtual void StyleDidChange(StyleDifference, const ComputedStyle* old_style);
+  virtual void StyleDidChange(StyleDifference,
+                              const ComputedStyle* old_style,
+                              const StyleChangeContext&);
   void PropagateStyleToAnonymousChildren();
   // Return true for objects that don't want style changes automatically
   // propagated via propagateStyleToAnonymousChildren(), but rather rely on
@@ -3422,8 +3479,10 @@ class CORE_EXPORT LayoutObject : public GarbageCollected<LayoutObject>,
   // (see documentation of return value of MapToVisualRectInAncestorSpace).
   //
   // The return value of this method is whether the fast path could be used.
+  // If ancestor_or_null is null, map the rect to the viewport space.
+  friend class VisualRectMappingTest_MapToVisualRectFastPathMapsToViewport_Test;
   bool MapToVisualRectInAncestorSpaceInternalFastPath(
-      const LayoutBoxModelObject* ancestor,
+      const LayoutBoxModelObject* ancestor_or_null_for_viewport,
       gfx::RectF&,
       VisualRectFlags,
       bool& intersects) const;
@@ -3714,6 +3773,7 @@ class CORE_EXPORT LayoutObject : public GarbageCollected<LayoutObject>,
           can_contain_fixed_position_objects_(false),
           ever_had_layout_(false),
           is_inside_multicol_(false),
+          inside_inactive_column_tab_(false),
           subtree_change_listener_registered_(false),
           notified_of_subtree_change_(false),
           consumes_subtree_change_notification_(false),
@@ -3756,7 +3816,7 @@ class CORE_EXPORT LayoutObject : public GarbageCollected<LayoutObject>,
           can_traverse_physical_fragments_(true),
           whitespace_children_may_change_(false),
           needs_devtools_info_(false),
-          may_have_anchor_query_(false),
+          may_contain_anchor_(false),
           has_broken_spine_(false),
           has_valid_cached_geometry_(false),
           may_be_non_contiguous_ifc_(false),
@@ -3901,6 +3961,12 @@ class CORE_EXPORT LayoutObject : public GarbageCollected<LayoutObject>,
     ADD_BOOLEAN_BITFIELD(ever_had_layout_, EverHadLayout);
 
     ADD_BOOLEAN_BITFIELD(is_inside_multicol_, IsInsideMulticol);
+
+    // True if this LayoutObject is inside a ::column pseudo-element that is
+    // not currently the active (selected) column in a scroll-marker-group
+    // with tabs mode. Used for accessibility to efficiently determine which
+    // content should be hidden.
+    ADD_BOOLEAN_BITFIELD(inside_inactive_column_tab_, InsideInactiveColumnTab);
 
     ADD_BOOLEAN_BITFIELD(subtree_change_listener_registered_,
                          SubtreeChangeListenerRegistered);
@@ -4091,8 +4157,8 @@ class CORE_EXPORT LayoutObject : public GarbageCollected<LayoutObject>,
 
     ADD_BOOLEAN_BITFIELD(needs_devtools_info_, NeedsDevtoolsInfo);
 
-    // See comments for |MayHaveAnchorQuery()|.
-    ADD_BOOLEAN_BITFIELD(may_have_anchor_query_, MayHaveAnchorQuery);
+    // See comments for |MayContainAnchor()|.
+    ADD_BOOLEAN_BITFIELD(may_contain_anchor_, MayContainAnchor);
 
     // Set if we stopped rebuilding the spine because this object was marked for
     // layout. We don't need to do anything if we actually end up re-laying out
@@ -4163,9 +4229,6 @@ class CORE_EXPORT LayoutObject : public GarbageCollected<LayoutObject>,
   Member<LayoutObject> next_;
   Member<FragmentDataList> fragment_;
 
-  // Store state between styleWillChange and styleDidChange
-  static bool affects_parent_block_;
-
 #if DCHECK_IS_ON()
   friend class CachedTextInputInfo;
   bool is_destroyed_ = false;
@@ -4183,6 +4246,13 @@ struct ThreadingTrait<T> {
 DEFINE_COMPARISON_OPERATORS_WITH_REFERENCES(LayoutObject)
 
 inline bool LayoutObject::DocumentBeingDestroyed() const {
+  NOT_DESTROYED();
+  if (RuntimeEnabledFeatures::DisableDocumentBeingDestroyedEnabled()) {
+    return false;
+  }
+  return GetDocument().Lifecycle().GetState() >= DocumentLifecycle::kStopping;
+}
+inline bool LayoutObject::DocumentBeingDestroyedActual() const {
   NOT_DESTROYED();
   return GetDocument().Lifecycle().GetState() >= DocumentLifecycle::kStopping;
 }
@@ -4253,6 +4323,12 @@ inline bool LayoutObject::IsInterestHintContent() const {
 inline bool LayoutObject::IsBeforeOrAfterContent() const {
   NOT_DESTROYED();
   return IsBeforeContent() || IsAfterContent();
+}
+
+inline bool LayoutObject::IsPseudo(PseudoId id) const {
+  NOT_DESTROYED();
+  PseudoElement* pseudo = DynamicTo<PseudoElement>(GetNode());
+  return pseudo && pseudo->GetPseudoId() == id;
 }
 
 inline void LayoutObject::ClearNeedsLayoutWithoutPaintInvalidation() {

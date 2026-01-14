@@ -1,12 +1,4 @@
 include_rules = [
-  # ChromeOS should not depend on //chrome. See //docs/chromeos/code.md for
-  # details.
-  "-chrome",
-
-  # This directory is in //chrome, which violates the rule above. Allow this
-  # directory to #include its own files.
-  "+chrome/browser/ash/app_list",
-
   # Existing dependencies within //chrome. There is an active effort to
   # refactor //chrome/browser/ash to break these dependencies; see b/332804822.
   # Whenever possible, avoid adding new //chrome dependencies to this list.
@@ -44,14 +36,12 @@ include_rules = [
   "+chrome/browser/extensions/extension_ui_util.h",
   "+chrome/browser/extensions/extension_util.h",
   "+chrome/browser/extensions/install_tracker_factory.h",
-  "+chrome/browser/extensions/install_tracker.h",
   "+chrome/browser/extensions/launch_util.h",
   "+chrome/browser/extensions/menu_manager_factory.h",
   "+chrome/browser/extensions/menu_manager.h",
   "+chrome/browser/favicon",
   "+chrome/browser/feature_engagement",
   "+chrome/browser/history",
-  "+chrome/browser/notifications",
   "+chrome/browser/platform_util.h",
   "+chrome/browser/policy",
   "+chrome/browser/profiles",
@@ -64,7 +54,6 @@ include_rules = [
   "+chrome/browser/ui/browser_commands.h",
   "+chrome/browser/ui/browser_finder.h",
   "+chrome/browser/ui/browser.h",
-  "+chrome/browser/ui/browser_list.h",
   "+chrome/browser/ui/browser_navigator.h",
   "+chrome/browser/ui/browser_navigator_params.h",
   "+chrome/browser/ui/browser_window.h",
@@ -130,5 +119,9 @@ specific_include_rules = {
 
   "app_list_syncable_service_unittest\\.cc": [
     "+cc/base/math_util.h",
+  ],
+
+  "app_list_client_impl_browsertest\\.cc": [
+    "+ui/message_center/test/message_center_waiter.h",
   ],
 }

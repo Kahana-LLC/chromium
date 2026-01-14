@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
-#pragma allow_unsafe_libc_calls
-#endif
-
 #include "base/process/process_metrics.h"
 
 #include <stddef.h>
@@ -20,8 +15,9 @@
 #include <utility>
 #include <vector>
 
-#include "base/byte_count.h"
+#include "base/byte_size.h"
 #include "base/command_line.h"
+#include "base/compiler_specific.h"
 #include "base/files/file.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
@@ -443,11 +439,11 @@ TEST_F(SystemMetricsTest, ParseMeminfo) {
   EXPECT_EQ(meminfo.slab.InKiB(), 54212);
 #endif
   EXPECT_EQ(355725u,
-            base::SysInfo::AmountOfAvailablePhysicalMemory(meminfo) / 1024);
+            base::SysInfo::AmountOfAvailablePhysicalMemory(meminfo).InKiB());
   // Simulate as if there is no MemAvailable.
-  meminfo.available = ByteCount(0);
+  meminfo.available = ByteSize(0);
   EXPECT_EQ(374448u,
-            base::SysInfo::AmountOfAvailablePhysicalMemory(meminfo) / 1024);
+            base::SysInfo::AmountOfAvailablePhysicalMemory(meminfo).InKiB());
   meminfo = {};
   EXPECT_TRUE(ParseProcMeminfo(valid_input2, &meminfo));
   EXPECT_EQ(meminfo.total.InKiB(), 255908);
@@ -459,7 +455,7 @@ TEST_F(SystemMetricsTest, ParseMeminfo) {
   EXPECT_EQ(meminfo.swap_free.InKiB(), 524200);
   EXPECT_EQ(meminfo.dirty.InKiB(), 4);
   EXPECT_EQ(69936u,
-            base::SysInfo::AmountOfAvailablePhysicalMemory(meminfo) / 1024);
+            base::SysInfo::AmountOfAvailablePhysicalMemory(meminfo).InKiB());
 
   // output from a system with a large page cache, to catch arithmetic errors
   // that incorrectly assume free + buffers + cached <= total. (Copied from
@@ -806,17 +802,17 @@ TEST(SystemMetrics2Test, GetSystemMemoryInfo) {
   EXPECT_TRUE(GetSystemMemoryInfo(&info));
 
   // Ensure each field received a value.
-  EXPECT_GT(info.total, ByteCount(0));
+  EXPECT_GT(info.total, ByteSize(0));
 #if BUILDFLAG(IS_WIN)
-  EXPECT_GT(info.avail_phys, ByteCount(0));
+  EXPECT_GT(info.avail_phys, ByteSize(0));
 #else
-  EXPECT_GT(info.free, ByteCount(0));
+  EXPECT_GT(info.free, ByteSize(0));
 #endif
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_ANDROID)
-  EXPECT_GT(info.buffers, ByteCount(0));
-  EXPECT_GT(info.cached, ByteCount(0));
-  EXPECT_GT(info.active_anon + info.inactive_anon, ByteCount(0));
-  EXPECT_GT(info.active_file + info.inactive_file, ByteCount(0));
+  EXPECT_GT(info.buffers, ByteSize(0));
+  EXPECT_GT(info.cached, ByteSize(0));
+  EXPECT_GT(info.active_anon + info.inactive_anon, ByteSize(0));
+  EXPECT_GT(info.active_file + info.inactive_file, ByteSize(0));
 #endif  // BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) ||
         // BUILDFLAG(IS_ANDROID)
 
@@ -836,12 +832,12 @@ TEST(SystemMetrics2Test, GetSystemMemoryInfo) {
         // BUILDFLAG(IS_ANDROID)
 
 #if BUILDFLAG(IS_APPLE)
-  EXPECT_GT(info.file_backed, ByteCount(0));
+  EXPECT_GT(info.file_backed, ByteSize(0));
 #endif
 
 #if BUILDFLAG(IS_CHROMEOS)
   // Chrome OS exposes shmem.
-  EXPECT_GT(info.shmem, ByteCount(0));
+  EXPECT_GT(info.shmem, ByteSize(0));
   EXPECT_LT(info.shmem, info.total);
 #endif
 }
@@ -1048,7 +1044,7 @@ TEST(ProcessMetricsTestLinux, GetPageFaultCounts) {
     WritableSharedMemoryMapping mapping = region.Map();
     ASSERT_TRUE(mapping.IsValid());
 
-    memset(mapping.memory(), 42, kMappedSize);
+    UNSAFE_TODO(memset(mapping.memory(), 42, kMappedSize));
   }
 
   PageFaultCounts counts_after;

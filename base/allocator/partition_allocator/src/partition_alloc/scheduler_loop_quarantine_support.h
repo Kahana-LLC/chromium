@@ -2,22 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
-#pragma allow_unsafe_buffers
-#endif
-
 #ifndef PARTITION_ALLOC_SCHEDULER_LOOP_QUARANTINE_SUPPORT_H_
 #define PARTITION_ALLOC_SCHEDULER_LOOP_QUARANTINE_SUPPORT_H_
 
-#include <map>
 #include <optional>
 #include <variant>
 
 #include "partition_alloc/build_config.h"
 #include "partition_alloc/buildflags.h"
 #include "partition_alloc/partition_alloc_base/compiler_specific.h"
-#include "partition_alloc/partition_root.h"
+#include "partition_alloc/partition_alloc_base/memory/stack_allocated.h"
 #include "partition_alloc/scheduler_loop_quarantine.h"
 #include "partition_alloc/thread_cache.h"
 
@@ -26,6 +20,8 @@
 // and "scheduler_loop_quarantine.h".
 
 namespace partition_alloc {
+
+struct PartitionRoot;
 
 // When this class is alive, Scheduler-Loop Quarantine for this thread is
 // paused and freed allocations will be freed immediately.
@@ -84,8 +80,32 @@ class PA_COMPONENT_EXPORT(PARTITION_ALLOC)
   uintptr_t tcache_address_ = 0;
 };
 
-namespace internal {
+// This is a lightweight version of `SchedulerLoopQuarantineScanPolicyUpdater`.
+// It calls `DisallowScanlessPurge` in the constructor and `AllowScanlessPurge`
+// in the destructor.
+class PA_COMPONENT_EXPORT(PARTITION_ALLOC)
+    ScopedSchedulerLoopQuarantineDisallowScanlessPurge {
+  // This is `PA_STACK_ALLOCATED()` to ensure that those two calls are made on
+  // the same thread, allowing us to omit thread-safety analysis.
+  PA_STACK_ALLOCATED();
 
+ public:
+  PA_ALWAYS_INLINE ScopedSchedulerLoopQuarantineDisallowScanlessPurge() {
+    ThreadCache* tcache = ThreadCache::EnsureAndGetForQuarantine();
+    PA_CHECK(ThreadCache::IsValid(tcache));
+
+    tcache->GetSchedulerLoopQuarantineBranch().DisallowScanlessPurge();
+  }
+
+  PA_ALWAYS_INLINE ~ScopedSchedulerLoopQuarantineDisallowScanlessPurge() {
+    ThreadCache* tcache = ThreadCache::EnsureAndGetForQuarantine();
+    PA_CHECK(ThreadCache::IsValid(tcache));
+
+    tcache->GetSchedulerLoopQuarantineBranch().AllowScanlessPurge();
+  }
+};
+
+namespace internal {
 class PA_COMPONENT_EXPORT(PARTITION_ALLOC)
     ScopedSchedulerLoopQuarantineBranchAccessorForTesting {
  public:

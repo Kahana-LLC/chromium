@@ -25,12 +25,12 @@ BackingStoreTransactionImpl::~BackingStoreTransactionImpl() {
   }
 }
 
-void BackingStoreTransactionImpl::Begin(std::vector<PartitionedLock> locks) {
+Status BackingStoreTransactionImpl::Begin(std::vector<PartitionedLock> locks) {
   locks_ = std::move(locks);
-  db_->BeginTransaction(PassKey(), *this);
+  return db_->BeginTransaction(PassKey(), *this);
 }
 
-Status BackingStoreTransactionImpl::CommitPhaseOne(
+StatusOr<bool> BackingStoreTransactionImpl::CommitPhaseOne(
     BlobWriteCallback callback,
     SerializeFsaCallback serialize_fsa) {
   return db_->CommitTransactionPhaseOne(PassKey(), *this, std::move(callback),

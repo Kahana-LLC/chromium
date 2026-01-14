@@ -10,6 +10,7 @@ if (is_android) {
 
 _proto_files = [
   "aim_eligibility_response.proto",
+  "aim_tools_and_models.proto",
   "answer_data.proto",
   "answer_type.proto",
   "chrome_aim_entry_point.proto",
@@ -18,6 +19,7 @@ _proto_files = [
   "groups.proto",
   "navigational_intent.proto",
   "ntp_composebox_config.proto",
+  "page_vertical.proto",
   "rich_answer_template.proto",
   "rich_suggest_template.proto",
   "search_context.proto",
@@ -25,10 +27,16 @@ _proto_files = [
   "types.proto",
 ]
 
+if (!is_android) {
+  _proto_files += [
+    "aim_input_type.proto",
+    "aim_models.proto",
+  ]
+}
+
 proto_library("omnibox_proto") {
   sources = _proto_files
   proto_in_dir = "."
-  generate_py_runtime = true
 }
 
 if (is_android) {

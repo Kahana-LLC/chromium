@@ -19,13 +19,13 @@
 namespace {
 
 // FirstRunRecency key, should match the one in `system_flags`.
-NSString* kFirstRunRecencyKey = @"FirstRunRecency";
+NSString* const kFirstRunRecencyKey = @"FirstRunRecency";
 
 // Constant for timeout while waiting for a gestural IPH to appear or disappear.
-const base::TimeDelta kWaitForGestureIPHTimeOut = base::Seconds(2);
+const base::TimeDelta kWaitForGestureIPHTimeOut = base::Seconds(3);
 
 // Constant for wait time for Tab Grid animation to complete.
-const base::TimeDelta kWaitForTabGridAnimationTime = base::Seconds(0.5);
+const base::TimeDelta kWaitForTabGridAnimationTime = base::Seconds(1);
 
 }  // namespace
 

@@ -41,6 +41,10 @@
 #include "components/signin/public/android/test_support_jni_headers/AccountManagerFacadeUtil_jni.h"
 #endif
 
+#if BUILDFLAG(ENABLE_DICE_SUPPORT)
+#include "components/signin/internal/identity_manager/mutable_profile_oauth2_token_service_delegate.h"
+#endif
+
 using signin::constants::kNoHostedDomainFound;
 
 namespace signin {
@@ -586,15 +590,14 @@ AccountInfo WithGeneratedUserInfo(const AccountInfo& base_account_info,
   CHECK(!given_name.empty())
       << "A given name is needed to generate the Gaia info.";
 
-  AccountInfo extended_account_info = base_account_info;
-
-  extended_account_info.given_name = given_name;
-  extended_account_info.full_name = base::StrCat({given_name, " FullName"});
-
-  extended_account_info.picture_url =
-      "https://chromium.org/examples/account_picture.jpg";
-  extended_account_info.hosted_domain = kNoHostedDomainFound;
-  extended_account_info.locale = "en";
+  AccountInfo extended_account_info =
+      AccountInfo::Builder(base_account_info)
+          .SetFullName(base::StrCat({given_name, " FullName"}))
+          .SetGivenName(given_name)
+          .SetHostedDomain(std::string())
+          .SetAvatarUrl("https://chromium.org/examples/account_picture.jpg")
+          .SetLocale("en")
+          .Build();
 
   CHECK(extended_account_info.IsValid());
 
@@ -675,8 +678,8 @@ void DisableAccessTokenFetchRetries(IdentityManager* identity_manager) {
 }
 
 #if BUILDFLAG(IS_ANDROID)
-void SetUpMockAccountManagerFacade() {
-  Java_AccountManagerFacadeUtil_setUpMockFacade(
+void SetUpFakeAccountManagerFacade() {
+  Java_AccountManagerFacadeUtil_setUpFakeFacade(
       base::android::AttachCurrentThread());
 }
 #endif
@@ -725,4 +728,15 @@ account_manager::AccountManagerFacade* GetAccountManagerFacade(
 }
 #endif
 
+void SetIgnoreNonOfficialApiKeys() {
+#if BUILDFLAG(ENABLE_DICE_SUPPORT)
+  MutableProfileOAuth2TokenServiceDelegate::
+      SetIgnoreNonOfficialApiKeysForTesting();
+#endif
+}
+
 }  // namespace signin
+
+#if BUILDFLAG(IS_ANDROID)
+DEFINE_JNI(AccountManagerFacadeUtil)
+#endif

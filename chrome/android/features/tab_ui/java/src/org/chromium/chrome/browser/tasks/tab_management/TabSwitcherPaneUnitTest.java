@@ -44,15 +44,18 @@ import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.junit.MockitoJUnit;
 import org.mockito.junit.MockitoRule;
+import org.robolectric.annotation.Config;
 import org.robolectric.shadows.ShadowLooper;
 
 import org.chromium.base.Callback;
 import org.chromium.base.CallbackUtils;
 import org.chromium.base.Token;
+import org.chromium.base.supplier.NonNullObservableSupplier;
 import org.chromium.base.supplier.ObservableSupplier;
 import org.chromium.base.supplier.ObservableSupplierImpl;
+import org.chromium.base.supplier.ObservableSuppliers;
 import org.chromium.base.supplier.OneshotSupplierImpl;
-import org.chromium.base.supplier.Supplier;
+import org.chromium.base.supplier.SettableNonNullObservableSupplier;
 import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.base.test.util.Features.DisableFeatures;
 import org.chromium.base.test.util.Features.EnableFeatures;
@@ -108,6 +111,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.function.DoubleConsumer;
+import java.util.function.Supplier;
 
 /** Unit tests for {@link TabSwitcherPane} and {@link TabSwitcherPaneBase}. */
 @RunWith(BaseRobolectricTestRunner.class)
@@ -164,7 +168,6 @@ public class TabSwitcherPaneUnitTest {
     @Mock private UserEducationHelper mUserEducationHelper;
     @Mock private View mAnchorView;
     @Mock private TabGroupSyncService mTabGroupSyncService;
-    @Mock private Runnable mRunnable;
     @Mock private Tab mTab;
     @Mock private SavedTabGroup mSavedTabGroup;
     @Mock private TabGroupCreationUiDelegate mUiFlow;
@@ -178,7 +181,6 @@ public class TabSwitcherPaneUnitTest {
     private ArgumentCaptor<OnSharedPreferenceChangeListener> mPriceAnnotationsPrefListenerCaptor;
 
     @Captor private ArgumentCaptor<Callback<Integer>> mOnTabClickedCallbackCaptor;
-    @Captor private ArgumentCaptor<Callback<Boolean>> mHairlineVisibilityCallbackCaptor;
     @Captor private ArgumentCaptor<TabGroupModelFilterObserver> mTabGroupModelFilterObserverCaptor;
 
     private final OneshotSupplierImpl<ProfileProvider> mProfileProviderSupplier =
@@ -186,10 +188,10 @@ public class TabSwitcherPaneUnitTest {
     private final Token mToken = new Token(1L, 2L);
 
     private Context mContext;
-    private final ObservableSupplierImpl<Boolean> mHandleBackPressChangeSupplier =
-            new ObservableSupplierImpl<>();
-    private final ObservableSupplierImpl<Boolean> mIsScrollingSupplier =
-            new ObservableSupplierImpl<>();
+    private final SettableNonNullObservableSupplier<Boolean> mHandleBackPressChangeSupplier =
+            ObservableSuppliers.createNonNull(false);
+    private final SettableNonNullObservableSupplier<Boolean> mIsScrollingSupplier =
+            ObservableSuppliers.createNonNull(false);
     private final OneshotSupplierImpl<ObservableSupplier<Boolean>> mIsScrollingSupplierSupplier =
             new OneshotSupplierImpl<>();
     private final ObservableSupplierImpl<EdgeToEdgeController> mEdgeToEdgeSupplier =
@@ -253,8 +255,8 @@ public class TabSwitcherPaneUnitTest {
                         any(),
                         mIsAnimatingSupplierCaptor.capture(),
                         mOnTabClickedCallbackCaptor.capture(),
-                        mHairlineVisibilityCallbackCaptor.capture(),
                         anyBoolean(),
+                        any(),
                         any(),
                         any(),
                         any());
@@ -368,6 +370,8 @@ public class TabSwitcherPaneUnitTest {
         verify(coordinator).hardCleanup();
     }
 
+    // TODO(crbug.com/450954710): This test fails on SDK 36.
+    @Config(sdk = 29)
     @Test
     public void testLoadHintColdHotWarm() {
         mTabModel.setActive(true);
@@ -394,6 +398,8 @@ public class TabSwitcherPaneUnitTest {
         verify(coordinator, never()).hardCleanup();
     }
 
+    // TODO(crbug.com/450954710): This test fails on SDK 36.
+    @Config(sdk = 29)
     @Test
     public void testLoadHintColdHot_TabStateNotInitialized() {
         mTabModel.setActive(true);
@@ -420,6 +426,8 @@ public class TabSwitcherPaneUnitTest {
         watcher.assertExpected();
     }
 
+    // TODO(crbug.com/450954710): This test fails on SDK 36.
+    @Config(sdk = 29)
     @Test
     public void testLoadHintColdWarmHotCold() {
         mTabModel.setActive(true);
@@ -457,6 +465,8 @@ public class TabSwitcherPaneUnitTest {
         assertNotNull(mTabSwitcherPane.getRootView());
     }
 
+    // TODO(crbug.com/450954710): This test fails on SDK 36.
+    @Config(sdk = 29)
     @Test
     public void testNewTabButton() {
         FullButtonData buttonData = mTabSwitcherPane.getActionButtonDataSupplier().get();
@@ -512,9 +522,9 @@ public class TabSwitcherPaneUnitTest {
 
     @Test
     public void testBackPress() {
-        ObservableSupplier<Boolean> handlesBackPressSupplier =
+        NonNullObservableSupplier<Boolean> handlesBackPressSupplier =
                 mTabSwitcherPane.getHandleBackPressChangedSupplier();
-        assertNull(handlesBackPressSupplier.get());
+        assertFalse(handlesBackPressSupplier.get());
         assertEquals(BackPressResult.FAILURE, mTabSwitcherPane.handleBackPress());
 
         mTabSwitcherPane.initWithNative();
@@ -683,6 +693,8 @@ public class TabSwitcherPaneUnitTest {
         verify(mTabSwitcherPaneCoordinator).setTabSwitcherRecyclerViewPosition(position);
     }
 
+    // TODO(crbug.com/450954710): This test fails on SDK 36.
+    @Config(sdk = 29)
     @Test
     public void testResetWithTabList() {
         mTabSwitcherPane.resetWithListOfTabs(null);
@@ -719,21 +731,6 @@ public class TabSwitcherPaneUnitTest {
 
         mOnTabClickedCallbackCaptor.getValue().onResult(tabId);
         verify(mPaneHubController).selectTabAndHideHub(tabId);
-    }
-
-    @Test
-    public void testHairlineVisibilitySupplier() {
-        mTabSwitcherPane.initWithNative();
-        mTabSwitcherPane.createTabSwitcherPaneCoordinator();
-
-        var hairlineVisibilitySupplier = mTabSwitcherPane.getHairlineVisibilitySupplier();
-        assertNull(hairlineVisibilitySupplier.get());
-
-        mHairlineVisibilityCallbackCaptor.getValue().onResult(true);
-        assertTrue(hairlineVisibilitySupplier.get());
-
-        mHairlineVisibilityCallbackCaptor.getValue().onResult(false);
-        assertFalse(hairlineVisibilitySupplier.get());
     }
 
     @Test
@@ -1295,7 +1292,6 @@ public class TabSwitcherPaneUnitTest {
 
     /** Tests that the AutoDeleteDecisionPromo is shown when all conditions are met */
     @Test
-    @EnableFeatures(ChromeFeatureList.ANDROID_TAB_DECLUTTER_AUTO_DELETE)
     public void testTryToShowPromo_ConditionsMet_ShowsPromo() {
         setupPromoEligibilityConditions(
                 /* promoChoiceMade= */ false,
@@ -1310,46 +1306,8 @@ public class TabSwitcherPaneUnitTest {
                 .requestShowContent(any(ArchivedTabsAutoDeletePromoSheetContent.class), eq(true));
     }
 
-    /** Tests that the AutoDeleteDecisionPromo is not shown when the promo flag is off */
-    @Test
-    @DisableFeatures(ChromeFeatureList.ANDROID_TAB_DECLUTTER_AUTO_DELETE)
-    public void testTryToShowPromo_FlagSetToFalse_DoesNotShow() {
-        setupPromoEligibilityConditions(
-                /* promoChoiceMade= */ false,
-                /* autoDeleteEnabled= */ false,
-                /* archivingFeatureEnabled= */ true,
-                /* archivedTabCount= */ 1);
-
-        mTabSwitcherPane.notifyLoadHint(LoadHint.HOT);
-        ShadowLooper.runUiThreadTasksIncludingDelayedTasks();
-
-        verify(mMockBottomSheetController, never())
-                .requestShowContent(
-                        any(ArchivedTabsAutoDeletePromoSheetContent.class), anyBoolean());
-    }
-
-    /** Tests that the AutoDeleteDecisionPromo is not shown when the promo kill switch is off */
-    @Test
-    @EnableFeatures(ChromeFeatureList.ANDROID_TAB_DECLUTTER_AUTO_DELETE)
-    @DisableFeatures(ChromeFeatureList.ANDROID_TAB_DECLUTTER_AUTO_DELETE_KILL_SWITCH)
-    public void testTryToShowPromo_KillSwitchSetToFalse_DoesNotShow() {
-        setupPromoEligibilityConditions(
-                /* promoChoiceMade= */ false,
-                /* autoDeleteEnabled= */ false,
-                /* archivingFeatureEnabled= */ true,
-                /* archivedTabCount= */ 1);
-
-        mTabSwitcherPane.notifyLoadHint(LoadHint.HOT);
-        ShadowLooper.runUiThreadTasksIncludingDelayedTasks();
-
-        verify(mMockBottomSheetController, never())
-                .requestShowContent(
-                        any(ArchivedTabsAutoDeletePromoSheetContent.class), anyBoolean());
-    }
-
     /** Tests that the promo is NOT shown if the user has already made a choice. */
     @Test
-    @EnableFeatures(ChromeFeatureList.ANDROID_TAB_DECLUTTER_AUTO_DELETE)
     public void testTryToShowPromo_DecisionAlreadyMade_DoesNotShow() {
         setupPromoEligibilityConditions(
                 /* promoChoiceMade= */ true,
@@ -1367,7 +1325,6 @@ public class TabSwitcherPaneUnitTest {
 
     /** Tests that the promo is NOT shown if auto-delete is already effectively enabled. */
     @Test
-    @EnableFeatures(ChromeFeatureList.ANDROID_TAB_DECLUTTER_AUTO_DELETE)
     public void testTryToShowPromo_AutoDeleteAlreadyEnabled_DoesNotShow() {
         setupPromoEligibilityConditions(
                 /* promoChoiceMade= */ false,
@@ -1385,7 +1342,6 @@ public class TabSwitcherPaneUnitTest {
 
     /** Tests that the promo is NOT shown if the main archiving feature is disabled. */
     @Test
-    @EnableFeatures(ChromeFeatureList.ANDROID_TAB_DECLUTTER_AUTO_DELETE)
     public void testTryToShowPromo_ArchivingFeatureDisabled_DoesNotShow() {
         setupPromoEligibilityConditions(
                 /* promoChoiceMade= */ false,
@@ -1403,7 +1359,6 @@ public class TabSwitcherPaneUnitTest {
 
     /** Tests that the promo is NOT shown if there are no archived tabs. */
     @Test
-    @EnableFeatures(ChromeFeatureList.ANDROID_TAB_DECLUTTER_AUTO_DELETE)
     public void testTryToShowPromo_NoArchivedTabs_DoesNotShow() {
         setupPromoEligibilityConditions(
                 /* promoChoiceMade= */ false,

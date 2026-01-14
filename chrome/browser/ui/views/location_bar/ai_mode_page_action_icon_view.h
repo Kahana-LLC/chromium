@@ -11,7 +11,6 @@
 #include "ui/base/metadata/metadata_header_macros.h"
 
 class BrowserWindowInterface;
-class OmniboxView;
 
 namespace gfx {
 struct VectorIcon;
@@ -43,7 +42,6 @@ class AiModePageActionIconView : public PageActionIconView {
 
   // views::View:
   bool OnKeyPressed(const ui::KeyEvent& event) override;
-  bool SkipDefaultKeyEventProcessing(const ui::KeyEvent& event) override;
 
   void ExecuteWithKeyboardSourceForTesting();
 
@@ -52,10 +50,8 @@ class AiModePageActionIconView : public PageActionIconView {
   void UpdateImpl() override;
 
  private:
-  bool ShouldShow();
-  OmniboxView* GetOmniboxView();
-
   const raw_ptr<BrowserWindowInterface> browser_;
+
 };
 
 #endif  // CHROME_BROWSER_UI_VIEWS_LOCATION_BAR_AI_MODE_PAGE_ACTION_ICON_VIEW_H_

@@ -62,20 +62,20 @@ String SelectivePermissionInterventionMessage(
   }
   DCHECK(!feature_name.empty());
 
-  return "Blocked call to " + feature_name +
-         " because ad-script was in the JavaScript stack at the time of the "
-         "call. See http://crbug.com/435223477 for more information about this "
-         "intervention.";
+  return StrCat({"Blocked call to ", feature_name,
+                 " because ad-script was in the JavaScript stack at the time "
+                 "of the call. See http://crbug.com/435223477 for more "
+                 "information about this intervention."});
 }
 
 }  // namespace
 
 // static
-WTF::Vector<unsigned> SecurityContext::SerializeInsecureNavigationSet(
+Vector<unsigned> SecurityContext::SerializeInsecureNavigationSet(
     const InsecureNavigationsSet& set) {
   // The set is serialized as a sorted array. Sorting it makes it easy to know
   // if two serialized sets are equal.
-  WTF::Vector<unsigned> serialized;
+  Vector<unsigned> serialized;
   serialized.reserve(set.size());
   for (unsigned host : set)
     serialized.emplace_back(host);
@@ -213,8 +213,10 @@ SecurityContext::FeatureStatus SecurityContext::IsFeatureEnabled(
         AdTracker* ad_tracker = frame->GetAdTracker();
 
         if (ad_tracker &&
-            ad_tracker->IsAdScriptInStack(AdTracker::StackType::kBottomAndTop,
-                                          &ad_ancestry)) {
+            ad_tracker->IsAdScriptInStack(
+                AdTracker::StackType::kTopOnly,
+                /*ignore_monkey_patch=*/AdTracker::MonkeyPatchableApi::kNone,
+                &ad_ancestry)) {
           window->CountPermissionsPolicyUsage(
               feature, UseCounterImpl::PermissionsPolicyUsageType::
                            kEnabledPrivacySensitive);
@@ -228,7 +230,7 @@ SecurityContext::FeatureStatus SecurityContext::IsFeatureEnabled(
             // Add debugging cross-site data to the devtools console that
             // shouldn't be in the intervention report.
             String console_message =
-                intervention_message + " " + ad_ancestry.ToString();
+                StrCat({intervention_message, " ", ad_ancestry.ToString()});
             Intervention::GenerateReport(frame, "SelectivePermissions",
                                          intervention_message, console_message);
           }

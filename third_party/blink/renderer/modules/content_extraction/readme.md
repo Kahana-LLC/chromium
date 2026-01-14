@@ -132,3 +132,58 @@ protection and access control rules.
 * **Guidelines for Storing APC Data:** Due to the potential for private
 information, APC data or its derivatives should not be persisted beyond the
 scope of a user's immediate task without explicit user consent.
+
+## 6. Testing
+
+### Unit Tests
+
+To run the unit tests for content extraction, use the following command:
+
+```bash
+autoninja -C out/Default blink_unittests && out/Default/blink_unittests --gtest_filter=AIPageContentAgentTest.*
+```
+
+### Web Tests
+
+The web tests for content extraction are located in
+`third_party/blink/web_tests/content_extraction/`.
+
+To run the web tests:
+
+```bash
+third_party/blink/tools/run_web_tests.py -C out/Default content_extraction
+```
+
+To update the web test expectations:
+
+```bash
+third_party/blink/tools/run_web_tests.py -C out/Default content_extraction --reset-results
+```
+
+### Feature Flags and APC-on-load
+
+Two Blink runtime flags control the experimental geometry and automatic build
+behaviour:
+
+* `AIPageContentOuterBoxMapToAncestorSpace` reuses the GeometryMapper mapping
+  for both the `outer_bounding_box` and `visible_bounding_box`. Enable it to
+  exercise the new geometry pipeline.
+* `AIPageContentBuildOnLoadForTesting` forces every local root frame to build APC (in
+  actionable mode) immediately after load. This mirrors the behaviour used by
+  the AnnotatedPageContentExtraction Finch trial.
+
+For example, to launch content_shell with both Blink flags:
+
+```bash
+out/Default/content_shell \
+  --enable-blink-features=AIPageContentBuildOnLoadForTesting,AIPageContentOuterBoxMapToAncestorSpace
+```
+
+A dedicated virtual test suite (`content-extraction`) exercises existing
+layout tests with these flags enabled:
+
+```bash
+third_party/blink/tools/run_web_tests.py \
+    -C out/Default \
+    --virtual-test-suite content-extraction
+```

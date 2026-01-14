@@ -33,6 +33,7 @@ class SaveAndFillDialog : public views::DialogDelegateView,
   // DialogDelegateView:
   void AddedToWidget() override;
   void RemovedFromWidget() override;
+  void OnWidgetInitialized() override;
 
   std::u16string GetWindowTitle() const override;
 
@@ -43,6 +44,16 @@ class SaveAndFillDialog : public views::DialogDelegateView,
   // views::FocusChangeListener
   void OnDidChangeFocus(views::View* before, views::View* now) override;
 
+  // A pending throbber is shown while the preflight call is executed. This
+  // function is called once a response from the preflight server call is
+  // received. It then checks the status of that response to determine which UI
+  // to display. If the call was successful, it updates the view to the
+  // upload dialog. If the call failed, it updates the view to show the
+  // local save dialog as a fallback.
+  void DismissThrobberAndUpdateMainView();
+
+  base::WeakPtr<SaveAndFillDialog> GetWeakPtr();
+
  private:
   // Initialize the dialog's contents.
   void InitViews();
@@ -50,8 +61,10 @@ class SaveAndFillDialog : public views::DialogDelegateView,
   // dialog.
   payments::PaymentsAutofillClient::UserProvidedCardSaveAndFillDetails
   GetUserProvidedDataFromInput() const;
-  // Callback that is triggered when the dialog is accepted or canceled.
+  // Callback that is triggered when the dialog is canceled.
   void OnDialogClosed(views::Widget::ClosedReason reason);
+  // Callback for when the accept button is clicked.
+  bool OnAccepted();
   // Create a view with a legal message.
   std::unique_ptr<views::View> CreateLegalMessageView();
 
@@ -72,9 +85,13 @@ class SaveAndFillDialog : public views::DialogDelegateView,
   LabeledTextfieldWithErrorMessage name_on_card_data_;
 
   raw_ptr<views::View> container_view_ = nullptr;
+  raw_ptr<views::View> legal_message_view_ = nullptr;
+  raw_ptr<views::Label> explanatory_message_label_ = nullptr;
   raw_ptr<views::BoxLayoutView> main_view_ = nullptr;
   raw_ptr<views::BoxLayoutView> pending_view_ = nullptr;
   raw_ptr<views::Throbber> throbber_ = nullptr;
+
+  base::WeakPtrFactory<SaveAndFillDialog> weak_ptr_factory_{this};
 };
 
 }  // namespace autofill

@@ -125,7 +125,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionCSPBypassTest, LoadWebAccessibleScript) {
 
   // chrome-extension:-URLs can always bypass CSP in normal pages.
   GURL non_webui_url(embedded_test_server()->GetURL("/empty.html"));
-  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), non_webui_url));
+  ASSERT_TRUE(NavigateToURL(GetActiveWebContents(), non_webui_url));
 
   EXPECT_TRUE(CanLoadScript(component_ext_with_permission));
   EXPECT_TRUE(CanLoadScript(component_ext_without_permission));
@@ -155,7 +155,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionCSPBypassTest, InjectIframe) {
   // "cross-origin.com" to make clear they are cross-origin.
   GURL test_url = embedded_test_server()->GetURL(
       "same-origin.com", "/extensions/csp/page_with_frame_csp.html");
-  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), test_url));
+  ASSERT_TRUE(NavigateToURL(GetActiveWebContents(), test_url));
 
   // First, verify that adding an iframe to the page from the main world will
   // fail. Add the frame. Its onload event fires even if it's blocked
@@ -215,8 +215,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionCSPBypassTest, FrameAncestors) {
   ASSERT_TRUE(extension);
 
   content::WebContentsConsoleObserver console_observer(GetActiveWebContents());
-  console_observer.SetPattern(
-      "Refused to frame * because an ancestor violates *");
+  console_observer.SetPattern("Framing '*' violates the following*");
 
   GURL popup_url = extension->GetResourceURL("popup.html");
   ASSERT_TRUE(content::NavigateToURL(GetActiveWebContents(), popup_url));

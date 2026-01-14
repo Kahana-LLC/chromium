@@ -26,19 +26,21 @@ void OnDeviceModelBridgeNativeUnitTestHelper::SetMockAiCoreFactory() {
 }
 
 void OnDeviceModelBridgeNativeUnitTestHelper::VerifySessionParams(
+    int index,
     optimization_guide::proto::ModelExecutionFeature feature,
     int top_k,
     float temperature) {
   JNIEnv* env = base::android::AttachCurrentThread();
   Java_OnDeviceModelBridgeNativeUnitTestHelper_verifySessionParams(
-      env, java_helper_, static_cast<int>(feature), top_k, temperature);
+      env, java_helper_, index, static_cast<int>(feature), top_k, temperature);
 }
 
 void OnDeviceModelBridgeNativeUnitTestHelper::VerifyGenerateOptions(
+    int index,
     int max_output_tokens) {
   JNIEnv* env = base::android::AttachCurrentThread();
   Java_OnDeviceModelBridgeNativeUnitTestHelper_verifyGenerateOptions(
-      env, java_helper_, max_output_tokens);
+      env, java_helper_, index, max_output_tokens);
 }
 
 void OnDeviceModelBridgeNativeUnitTestHelper::SetGenerateResult(
@@ -54,10 +56,31 @@ void OnDeviceModelBridgeNativeUnitTestHelper::SetCompleteAsync() {
                                                                 java_helper_);
 }
 
+void OnDeviceModelBridgeNativeUnitTestHelper::SetCallbackOnDifferentThread() {
+  JNIEnv* env = base::android::AttachCurrentThread();
+  Java_OnDeviceModelBridgeNativeUnitTestHelper_setCallbackOnDifferentThread(
+      env, java_helper_);
+}
+
 void OnDeviceModelBridgeNativeUnitTestHelper::ResumeOnCompleteCallback() {
   JNIEnv* env = base::android::AttachCurrentThread();
   Java_OnDeviceModelBridgeNativeUnitTestHelper_resumeOnCompleteCallback(
       env, java_helper_);
+}
+
+void OnDeviceModelBridgeNativeUnitTestHelper::
+    SetDownloaderCallbackOnDifferentThread() {
+  JNIEnv* env = base::android::AttachCurrentThread();
+  Java_OnDeviceModelBridgeNativeUnitTestHelper_setDownloaderCallbackOnDifferentThread(
+      env, java_helper_);
+}
+
+void OnDeviceModelBridgeNativeUnitTestHelper::VerifyDownloaderParams(
+    optimization_guide::proto::ModelExecutionFeature feature,
+    bool require_persistent_mode) {
+  JNIEnv* env = base::android::AttachCurrentThread();
+  Java_OnDeviceModelBridgeNativeUnitTestHelper_verifyDownloaderParams(
+      env, java_helper_, static_cast<int>(feature), require_persistent_mode);
 }
 
 void OnDeviceModelBridgeNativeUnitTestHelper::TriggerDownloaderOnUnavailable(
@@ -80,3 +103,5 @@ void OnDeviceModelBridgeNativeUnitTestHelper::TriggerDownloaderOnAvailable(
 }
 
 }  // namespace on_device_model
+
+DEFINE_JNI(OnDeviceModelBridgeNativeUnitTestHelper)

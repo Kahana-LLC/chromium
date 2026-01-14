@@ -28,25 +28,38 @@ class GlicActorTaskIcon : public TabStripNudgeButton {
   // TabStripNudgeButton:
   void SetIsShowingNudge(bool is_showing) override;
 
-  // Set the default tooltip text on the task icon.
-  void SetDefaultTooltipText();
-
   // Sets the task icon back to its default colors.
   void SetDefaultColors();
 
   // Sets the task icon to its highlighted state.
   void HighlightTaskIcon();
 
-  // Sets the task icon to the task needs assistance state.
-  void ShowCheckTasksLabel();
+  // Sets the task icon's color to its pressed state color if `is_pressed` is
+  // true, or to its default color otherwise.
+  void SetPressedColor(bool is_pressed);
 
-  // Sets the task icon to the task complete state.
-  void ShowCompleteTasksLabel();
+  // Show the task nudge with the given text.
+  void ShowNudgeLabel(const std::u16string nudge_label);
 
   // Sets the task icon to its default colors, label, and tooltip text.
   void SetTaskIconToDefault();
 
+  // Updates the background painter to match the current border insets.
+  void RefreshBackground();
+
+  // Defines how the button calculates its width during animation.
+  enum class AnimationMode {
+    kEntry,  // Animating from 0 width -> icon width
+    kNudge   // Animating from icon width -> full nudge width
+  };
+
+  void SetAnimationMode(AnimationMode mode);
+  AnimationMode GetAnimationMode() const { return animation_mode_; }
+
  private:
+  void NotifyClick(const ui::Event& event) override;
+
+  AnimationMode animation_mode_ = AnimationMode::kEntry;
   // Tab strip that contains this button.
   raw_ptr<TabStripController> tab_strip_controller_;
 };

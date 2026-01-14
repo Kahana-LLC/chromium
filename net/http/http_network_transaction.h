@@ -17,6 +17,7 @@
 #include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/time/time.h"
+#include "base/trace_event/trace_event.h"
 #include "build/buildflag.h"
 #include "net/base/completion_once_callback.h"
 #include "net/base/completion_repeating_callback.h"
@@ -100,7 +101,6 @@ class NET_EXPORT_PRIVATE HttpNetworkTransaction
   void SetIsSharedDictionaryReadAllowedCallback(
       base::RepeatingCallback<bool()> callback) override;
   void CloseConnectionOnDestruction() override;
-  bool IsMdlMatchForMetrics() const override;
 
   // HttpStreamRequest::Delegate methods:
   void OnStreamReady(const ProxyInfo& used_proxy_info,
@@ -345,6 +345,10 @@ class NET_EXPORT_PRIVATE HttpNetworkTransaction
 
   void RecordStreamRequestResult(int result);
 
+  // Called from DoCreateStreamComplete() to add trace event parameters.
+  void AddTraceParamsForStreamRequestResult(perfetto::EventContext ctx,
+                                            int result);
+
   void ProcessAltSvcHeader();
 
   // These values are persisted to logs. Entries should not be renumbered and
@@ -394,6 +398,8 @@ class NET_EXPORT_PRIVATE HttpNetworkTransaction
   ProxyInfo proxy_info_;
 
   std::unique_ptr<HttpStreamRequest> stream_request_;
+  std::optional<HttpStreamRequest::CompletionDetails>
+      stream_request_completion_details_;
   std::unique_ptr<HttpStream> stream_;
 
   // True if we've validated the headers that the stream parser has returned.
@@ -524,8 +530,6 @@ class NET_EXPORT_PRIVATE HttpNetworkTransaction
   base::TimeTicks initialize_stream_end_time_;
 
   base::TimeTicks blocked_initialize_stream_start_time_;
-  base::TimeTicks blocked_generate_proxy_auth_token_start_time_;
-  base::TimeTicks blocked_generate_server_auth_token_start_time_;
 
   // Timing information for the connected callback.
   base::TimeTicks connected_callback_start_time_;

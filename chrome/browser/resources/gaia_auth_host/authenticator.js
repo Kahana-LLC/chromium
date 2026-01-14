@@ -555,6 +555,7 @@ export class Authenticator extends EventTarget {
     this.trusted_ = true;
     this.authFlow = AuthFlow.DEFAULT;
     this.samlHandler_.reset();
+    this.samlRedirectionInProgress = false;
     this.videoEnabled = false;
     this.services_ = null;
     this.servicesProvided_ = false;
@@ -1018,8 +1019,8 @@ export class Authenticator extends EventTarget {
       if (headerName === SIGN_IN_HEADER) {
         if (this.samlRedirectionInProgress) {
           console.warn(
-              `Authenticator: sign-in header received during ongoing SAML ' +
-              'redirection, it will be ignored`)
+              'Authenticator: sign-in header received during ongoing SAML ' +
+              'redirection, it will be ignored')
           return;
         }
         // See go/gaia-response-headers#google-accounts-signin for the expected
@@ -1576,8 +1577,6 @@ export class Authenticator extends EventTarget {
   recordAccountCreated_() {
     // Record true account is created during the first sign in event
     // and false if another account existed.
-    // TODO (b/307591058): add metric to track if account is created
-    // during login or not.
     chrome.send('metricsHandler:recordBooleanHistogram',[
       GAIA_CREATE_ACCOUNT_FIRST_USER,
       this.isFirstUser_

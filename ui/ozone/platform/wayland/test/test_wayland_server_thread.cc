@@ -11,10 +11,8 @@
 #include <memory>
 #include <utility>
 
-#include "base/files/file_util.h"
 #include "base/files/scoped_file.h"
 #include "base/functional/bind.h"
-#include "base/functional/callback_forward.h"
 #include "base/functional/callback_helpers.h"
 #include "base/notreached.h"
 #include "base/run_loop.h"
@@ -154,9 +152,6 @@ bool TestWaylandServerThread::Start() {
     return false;
   if (!wp_pointer_gestures_.Initialize(display_.get()))
     return false;
-  if (!zcr_color_manager_v1_.Initialize(display_.get())) {
-    return false;
-  }
   if (!xdg_activation_v1_.Initialize(display_.get())) {
     return false;
   }

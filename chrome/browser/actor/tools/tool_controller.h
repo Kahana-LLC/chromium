@@ -6,17 +6,17 @@
 #define CHROME_BROWSER_ACTOR_TOOLS_TOOL_CONTROLLER_H_
 
 #include <memory>
+#include <optional>
 
 #include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/raw_ref.h"
 #include "base/memory/weak_ptr.h"
 #include "chrome/browser/actor/aggregated_journal.h"
-#include "chrome/browser/actor/task_id.h"
 #include "chrome/browser/actor/tools/observation_delay_controller.h"
 #include "chrome/browser/actor/tools/tool_delegate.h"
 #include "chrome/common/actor.mojom-forward.h"
-#include "components/optimization_guide/proto/features/common_quality_data.pb.h"
+#include "chrome/common/actor/task_id.h"
 #include "content/public/browser/weak_document_ptr.h"
 
 namespace actor {
@@ -56,6 +56,7 @@ class ToolController {
       const ToolRequest& request,
       ResultCallback callback);
   void Invoke(ResultCallback result_callback);
+  void Cancel();
 
   static std::string StateToString(State state);
 
@@ -72,6 +73,10 @@ class ToolController {
   void PostValidate(mojom::ActionResultPtr result);
   void PostUpdateTask(mojom::ActionResultPtr result);
   void PostInvokeTool(mojom::ActionResultPtr result);
+  void WaitForObservation(mojom::ActionResultPtr action_result);
+  void ObservationDelayComplete(
+      mojom::ActionResultPtr action_result,
+      ObservationDelayController::Result observation_result);
 
   AggregatedJournal& journal() { return tool_delegate_->GetJournal(); }
 
@@ -97,6 +102,9 @@ class ToolController {
     std::unique_ptr<AggregatedJournal::PendingAsyncEntry> journal_entry;
   };
   std::optional<ActiveState> active_state_;
+
+  ObservationDelayController::PageStabilityConfig
+      observation_page_stability_config_;
 
   // Set while a tool invocation is in progress, delays invocation of the
   // completion_callback until the page is ready for observation.

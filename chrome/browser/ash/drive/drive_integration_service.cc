@@ -18,7 +18,6 @@
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/functional/bind.h"
-#include "base/functional/callback_forward.h"
 #include "base/functional/callback_helpers.h"
 #include "base/logging.h"
 #include "base/memory/raw_ptr.h"
@@ -47,9 +46,7 @@
 #include "chromeos/ash/components/drivefs/drivefs_bootstrap.h"
 #include "chromeos/ash/components/drivefs/drivefs_pinning_manager.h"
 #include "chromeos/ash/components/drivefs/drivefs_search_query.h"
-#include "chromeos/ash/components/drivefs/mojom/drivefs.mojom-shared.h"
 #include "chromeos/ash/components/drivefs/mojom/drivefs.mojom.h"
-#include "chromeos/ash/components/drivefs/mojom/notifications.mojom-forward.h"
 #include "chromeos/ash/components/drivefs/mojom/notifications.mojom.h"
 #include "chromeos/constants/chromeos_features.h"
 #include "components/drive/drive_api_util.h"
@@ -524,7 +521,7 @@ class DriveIntegrationService::DriveFsHolder
     hasher.Update(GetProfileSalt());
     hasher.Update("-");
     hasher.Update(GetAccountId().GetAccountIdKey());
-    return base::ToLowerASCII(base::HexEncode(hasher.Finish()));
+    return base::HexEncodeLower(hasher.Finish());
   }
 
   bool IsMetricsCollectionEnabled() override {
@@ -1703,10 +1700,9 @@ void DriveIntegrationService::GetReadOnlyAuthenticationToken(
     const CoreAccountId& account_id =
         identity_manager->GetPrimaryAccountId(signin::ConsentLevel::kSignin);
 
-    std::vector<std::string> scopes = {
-        GaiaConstants::kDriveReadOnlyOAuth2Scope};
     auth_service_ = std::make_unique<google_apis::AuthService>(
-        identity_manager, account_id, profile_->GetURLLoaderFactory(), scopes);
+        identity_manager, account_id, profile_->GetURLLoaderFactory(),
+        signin::OAuthConsumerId::kAshDriveIntegration);
   }
 
   auth_service_->StartAuthentication(std::move(callback));

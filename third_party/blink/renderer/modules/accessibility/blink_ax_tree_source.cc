@@ -6,7 +6,6 @@
 
 #include <stddef.h>
 
-#include "base/containers/contains.h"
 #include "base/memory/ptr_util.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/html/html_head_element.h"
@@ -173,7 +172,10 @@ bool BlinkAXTreeSource::GetTreeData(ui::AXTreeData* tree_data) const {
                << elem->Attributes().at(i).Value() << "\"";
         }
         html << ">" << elem->GetInnerHTMLString() << "</" << tag << ">";
-        tree_data->metadata.push_back(html.ReleaseString().Utf8());
+        if (!tree_data->metadata.has_value()) {
+          tree_data->metadata.emplace();
+        }
+        tree_data->metadata->push_back(html.ReleaseString().Utf8());
       }
     }
   }

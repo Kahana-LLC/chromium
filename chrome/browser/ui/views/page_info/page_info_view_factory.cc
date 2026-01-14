@@ -49,6 +49,7 @@
 #include "ui/views/controls/separator.h"
 #include "ui/views/layout/box_layout.h"
 #include "ui/views/layout/flex_layout.h"
+#include "ui/views/metadata/view_factory.h"
 #include "ui/views/vector_icons.h"
 
 constexpr int PageInfoViewFactory::kMinBubbleWidth;
@@ -83,7 +84,7 @@ class PageInfoSubpageView : public views::View {
 };
 
 int GetIconSize() {
-  return GetLayoutConstant(PAGE_INFO_ICON_SIZE);
+  return GetLayoutConstant(LayoutConstant::kPageInfoIconSize);
 }
 
 }  // namespace
@@ -178,17 +179,6 @@ std::unique_ptr<views::View> PageInfoViewFactory::CreateCookiesPageView() {
   return std::make_unique<PageInfoSubpageView>(
       CreateSubpageHeader(
           l10n_util::GetStringUTF16(IDS_PAGE_INFO_COOKIES_HEADER),
-          presenter_->GetSubjectNameForDisplay()),
-      std::make_unique<PageInfoCookiesContentView>(presenter_));
-}
-
-std::unique_ptr<views::View>
-PageInfoViewFactory::CreatePrivacyAndSiteDataPageView() {
-  // Reuse `PageInfoCookiesContentView` for the "Privacy and site data" page
-  // as it has a similar UI to "Cookies and site data".
-  return std::make_unique<PageInfoSubpageView>(
-      CreateSubpageHeader(
-          l10n_util::GetStringUTF16(IDS_PAGE_INFO_PRIVACY_SITE_DATA_HEADER),
           presenter_->GetSubjectNameForDisplay()),
       std::make_unique<PageInfoCookiesContentView>(presenter_));
 }
@@ -358,7 +348,7 @@ const ui::ImageModel PageInfoViewFactory::GetPermissionIcon(
       break;
 #if BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_WIN)
     case ContentSettingsType::PROTECTED_MEDIA_IDENTIFIER:
-      icon = show_blocked_badge ? &vector_icons::kWebAssetOffIcon
+      icon = show_blocked_badge ? &vector_icons::kSyncSavedLocallyOffIcon
                                 : &vector_icons::kSyncSavedLocallyIcon;
       break;
 #endif
@@ -459,9 +449,16 @@ const ui::ImageModel PageInfoViewFactory::GetPermissionIcon(
                                 : &vector_icons::kInstallDesktopIcon;
       break;
     case ContentSettingsType::LOCAL_NETWORK_ACCESS:
-      // TODO(crbug.com/400455013): Replace with final icons.
       icon = show_blocked_badge ? &vector_icons::kRouterOffIcon
                                 : &vector_icons::kRouterIcon;
+      break;
+    case ContentSettingsType::LOCAL_NETWORK:
+      icon = show_blocked_badge ? &vector_icons::kRouterOffIcon
+                                : &vector_icons::kRouterIcon;
+      break;
+    case ContentSettingsType::LOOPBACK_NETWORK:
+      icon = show_blocked_badge ? &vector_icons::kDesktopAccessDisabledIcon
+                                : &vector_icons::kDesktopWindowsIcon;
       break;
     default:
       break;

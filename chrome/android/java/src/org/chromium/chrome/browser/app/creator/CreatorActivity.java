@@ -4,6 +4,7 @@
 
 package org.chromium.chrome.browser.app.creator;
 
+import static org.chromium.build.NullUtil.assertNonNull;
 import static org.chromium.build.NullUtil.assumeNonNull;
 import static org.chromium.chrome.browser.tab.Tab.INVALID_TAB_ID;
 
@@ -14,8 +15,8 @@ import android.view.MenuItem;
 import androidx.appcompat.widget.Toolbar;
 
 import org.chromium.base.supplier.ObservableSupplierImpl;
-import org.chromium.base.supplier.Supplier;
-import org.chromium.base.supplier.UnownedUserDataSupplier;
+import org.chromium.base.supplier.ObservableSuppliers;
+import org.chromium.base.supplier.SettableObservableSupplier;
 import org.chromium.build.annotations.Initializer;
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
@@ -30,7 +31,6 @@ import org.chromium.chrome.browser.init.ActivityLifecycleDispatcherImpl;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.share.ShareDelegate;
 import org.chromium.chrome.browser.share.ShareDelegateImpl;
-import org.chromium.chrome.browser.share.ShareDelegateSupplier;
 import org.chromium.chrome.browser.tab.TabLaunchType;
 import org.chromium.chrome.browser.tabmodel.document.ChromeAsyncTabLauncher;
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetController;
@@ -40,6 +40,8 @@ import org.chromium.content_public.browser.WebContents;
 import org.chromium.ui.base.ActivityWindowAndroid;
 import org.chromium.ui.base.IntentRequestTracker;
 
+import java.util.function.Supplier;
+
 // import org.chromium.components.feed.proto.wire.FeedEntryPointSource;
 
 /** Activity for the Creator Page. */
@@ -48,10 +50,13 @@ public class CreatorActivity extends SnackbarActivity {
     private @Nullable ActivityWindowAndroid mWindowAndroid;
     private @Nullable BottomSheetController mBottomSheetController;
     private @Nullable CreatorActionDelegateImpl mCreatorActionDelegate;
-    private ActivityTabProvider mActivityTabProvider;
-    private ActivityLifecycleDispatcherImpl mLifecycleDispatcher;
-    private UnownedUserDataSupplier<ShareDelegate> mShareDelegateSupplier;
-    private UnownedUserDataSupplier<ShareDelegate> mTabShareDelegateSupplier;
+    private final ActivityTabProvider mActivityTabProvider = new ActivityTabProvider();
+    private final ActivityLifecycleDispatcherImpl mLifecycleDispatcher =
+            new ActivityLifecycleDispatcherImpl(this);
+    private final SettableObservableSupplier<ShareDelegate> mShareDelegateSupplier =
+            ObservableSuppliers.createMonotonic();
+    private final SettableObservableSupplier<ShareDelegate> mTabShareDelegateSupplier =
+            ObservableSuppliers.createMonotonic();
 
     private static class TabShareDelegateImpl extends ShareDelegateImpl {
         public TabShareDelegateImpl(
@@ -83,11 +88,7 @@ public class CreatorActivity extends SnackbarActivity {
 
     @Initializer
     @Override
-    protected void onCreateInternal(Bundle savedInstanceState) {
-        mActivityTabProvider = new ActivityTabProvider();
-        mLifecycleDispatcher = new ActivityLifecycleDispatcherImpl(this);
-        mShareDelegateSupplier = new ShareDelegateSupplier();
-        mTabShareDelegateSupplier = new ShareDelegateSupplier();
+    protected void onCreateInternal(@Nullable Bundle savedInstanceState) {
 
         super.onCreateInternal(savedInstanceState);
     }
@@ -105,7 +106,7 @@ public class CreatorActivity extends SnackbarActivity {
                         .getIntExtra(
                                 CreatorIntentConstants.CREATOR_ENTRY_POINT,
                                 SingleWebFeedEntryPoint.OTHER);
-        int mParentTabId =
+        int parentTabId =
                 getIntent().getIntExtra(CreatorIntentConstants.CREATOR_TAB_ID, INVALID_TAB_ID);
 
         IntentRequestTracker intentRequestTracker = IntentRequestTracker.createFromActivity(this);
@@ -166,7 +167,7 @@ public class CreatorActivity extends SnackbarActivity {
                         profile,
                         getSnackbarManager(),
                         coordinator,
-                        mParentTabId,
+                        parentTabId,
                         mBottomSheetController);
 
         coordinator.queryFeedStream(mCreatorActionDelegate, mShareDelegateSupplier);
@@ -195,30 +196,28 @@ public class CreatorActivity extends SnackbarActivity {
     @SuppressWarnings("NullAway")
     @Override
     protected void onDestroy() {
-        if (mLifecycleDispatcher != null) {
-            mLifecycleDispatcher.onDestroyStarted();
-        }
+        // Dispatch onDestroy() for objects created for the activity.
+        mLifecycleDispatcher.dispatchOnDestroy();
+        mTabShareDelegateSupplier.destroy();
+        mShareDelegateSupplier.destroy();
+
+        // Destroy ActivityWindowAndroid if it exists. This must be after
+        // mLifecycleDispatcher.dispatchOnDestroy() because objects subscribing to
+        // mLifecycleDispatcher's onDestroy events may have references to ActivityWindowAndroid.
         if (mWindowAndroid != null) {
             mWindowAndroid.destroy();
             mWindowAndroid = null;
         }
-        if (mTabShareDelegateSupplier != null) {
-            mTabShareDelegateSupplier.destroy();
-            mTabShareDelegateSupplier = null;
-        }
-        if (mShareDelegateSupplier != null) {
-            mShareDelegateSupplier.destroy();
-            mShareDelegateSupplier = null;
-        }
+
+        // Finally, destroy the activity. This must be after destroying ActivityWindowAndroid
+        // because it has a reference to the Activity.
         super.onDestroy();
-        if (mLifecycleDispatcher != null) {
-            mLifecycleDispatcher.dispatchOnDestroy();
-        }
     }
 
     // This implements the CreatorWebContents interface.
     public WebContents createWebContents() {
-        return WebContentsFactory.createWebContents(getProfileSupplier().get(), true, false);
+        return WebContentsFactory.createWebContents(
+                assertNonNull(getProfileSupplier().get()), true, false);
     }
 
     // This implements the CreatorOpenTab interface.

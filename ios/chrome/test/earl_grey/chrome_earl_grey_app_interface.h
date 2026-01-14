@@ -260,6 +260,12 @@ enum class TipsNotificationType;
 // Returns a key window from the connected scenes.
 + (UIWindow*)keyWindow;
 
+// Opens the settings menu directly (not via the UI) in the window with the
+// given number. EarlGrey + Multiwindow + SwiftUI (the tools menu) do not play
+// well together, so EG often fails to interact with the tools menu in secondary
+// windows.
++ (void)openSettingsInWindowWithNumber:(int)windowNumber;
+
 #pragma mark - WebState Utilities (EG2)
 
 // Attempts to tap the element with `element_id` within window.frames[0] of the
@@ -532,6 +538,9 @@ enum class TipsNotificationType;
 // Returns YES if DemographicMetricsReporting feature is enabled.
 + (BOOL)isDemographicMetricsReportingEnabled [[nodiscard]];
 
+// Returns YES if AskGeminiChip is enabled.
++ (BOOL)isAskGeminiChipEnabled [[nodiscard]];
+
 // Returns YES if the `launchSwitch` is found in host app launch switches.
 + (BOOL)appHasLaunchSwitch:(NSString*)launchSwitch;
 
@@ -547,17 +556,17 @@ enum class TipsNotificationType;
 // can, open multiple windows.
 + (BOOL)areMultipleWindowsSupported;
 
-// Returns whether the NewOverflowMenu feature is enabled.
-+ (BOOL)isNewOverflowMenuEnabled;
-
 // Returns whether the UseLensToSearchForImage feature is enabled.
 + (BOOL)isUseLensToSearchForImageEnabled;
 
 // Returns whether the current layout is showing the bottom omnibox.
 + (BOOL)isCurrentLayoutBottomOmnibox;
 
-// Returns whether the Enhanced Safe Browsing Infobar Promo feature is enabled.
-+ (BOOL)isEnhancedSafeBrowsingInfobarEnabled;
+// Returns whether the ComposeboxIOS feature is enabled.
++ (BOOL)isComposeboxIOSEnabled;
+
+// Returns the interface orientation of the scene.
++ (UIInterfaceOrientation)interfaceOrientation;
 
 #pragma mark - ContentSettings
 
@@ -587,6 +596,14 @@ enum class TipsNotificationType;
 
 // Returns the value for provided key from NSUserDefaults.
 + (id)userDefaultsObjectForKey:(NSString*)key;
+
+// Creates a `AppGroupCommand` based on the provided text and writes it the
+// shared NSUserDefaults.
++ (void)setAppGroupCommandToSearchText:(NSString*)text;
+
+// Creates an incognito `AppGroupCommand` based on the provided text and writes
+// it the shared NSUserDefaults.
++ (void)setAppGroupCommandToIncognitoSearchText:(NSString*)text;
 
 #pragma mark - Pref Utilities (EG2)
 

@@ -626,14 +626,6 @@ bool IsAccessibilityFlashNotificationFeatureEnabled() {
   return ::features::IsAccessibilityFlashScreenFeatureEnabled();
 }
 
-bool IsAccessibilityBounceKeysEnabled() {
-  return ::features::IsAccessibilityBounceKeysEnabled();
-}
-
-bool IsAccessibilitySlowKeysEnabled() {
-  return ::features::IsAccessibilitySlowKeysEnabled();
-}
-
 }  // namespace
 
 AccessibilitySection::AccessibilitySection(
@@ -754,6 +746,8 @@ void AccessibilitySection::AddLoadTimeData(
        IDS_OS_SETTINGS_ACCESSIBILITY_BOUNCE_KEYS_DELAY_SLIDER_SHORT},
       {"bounceKeysDelaySliderLong",
        IDS_OS_SETTINGS_ACCESSIBILITY_BOUNCE_KEYS_DELAY_SLIDER_LONG},
+      {"disabilitySupportTitle",
+       IDS_SETTINGS_ACCESSIBILITY_DISABILITY_SUPPORT_TITLE},
       {"mouseKeysLabel", IDS_OS_SETTINGS_ACCESSIBILITY_MOUSE_KEYS_LABEL},
       {"mouseKeysDescription",
        IDS_OS_SETTINGS_ACCESSIBILITY_MOUSE_KEYS_DESCRIPTION},
@@ -1612,14 +1606,10 @@ void AccessibilitySection::AddLoadTimeData(
   html_source->AddBoolean("isAccessibilityFlashNotificationFeatureEnabled",
                           IsAccessibilityFlashNotificationFeatureEnabled());
 
-  html_source->AddBoolean("isAccessibilityBounceKeysEnabled",
-                          IsAccessibilityBounceKeysEnabled());
   html_source->AddInteger(
       "defaultBounceKeysDelayMillis",
       kDefaultAccessibilityBounceKeysDelay.InMilliseconds());
 
-  html_source->AddBoolean("isAccessibilitySlowKeysEnabled",
-                          IsAccessibilitySlowKeysEnabled());
   html_source->AddInteger("defaultSlowKeysDelayMillis",
                           kDefaultAccessibilitySlowKeysDelay.InMilliseconds());
 
@@ -2075,13 +2065,8 @@ void AccessibilitySection::UpdateSearchTags() {
 
   updater.AddSearchTags(GetA11yFaceGazeSearchConcepts());
 
-  if (IsAccessibilityBounceKeysEnabled()) {
-    updater.AddSearchTags(GetA11yBounceKeysSearchConcepts());
-  }
-
-  if (IsAccessibilitySlowKeysEnabled()) {
-    updater.AddSearchTags(GetA11ySlowKeysSearchConcepts());
-  }
+  updater.AddSearchTags(GetA11yBounceKeysSearchConcepts());
+  updater.AddSearchTags(GetA11ySlowKeysSearchConcepts());
 
   if (IsAccessibilityMouseKeysEnabled()) {
     updater.AddSearchTags(GetA11yMouseKeysSearchConcepts());

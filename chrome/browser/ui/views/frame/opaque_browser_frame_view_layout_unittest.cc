@@ -25,6 +25,7 @@
 #include "ui/views/controls/button/image_button.h"
 #include "ui/views/controls/button/menu_button.h"
 #include "ui/views/controls/label.h"
+#include "ui/views/metadata/view_factory.h"
 #include "ui/views/test/views_test_utils.h"
 
 namespace {
@@ -75,7 +76,9 @@ class TestLayoutDelegate : public OpaqueBrowserFrameViewLayoutDelegate {
   bool IsTabStripVisible() const override { return window_title_.empty(); }
   bool GetBorderlessModeEnabled() const override { return false; }
   int GetTabStripHeight() const override {
-    return IsTabStripVisible() ? GetLayoutConstant(TAB_STRIP_HEIGHT) : 0;
+    return IsTabStripVisible()
+               ? GetLayoutConstant(LayoutConstant::kTabStripHeight)
+               : 0;
   }
   bool IsToolbarVisible() const override { return true; }
   gfx::Size GetTabstripMinimumSize() const override {
@@ -86,7 +89,6 @@ class TestLayoutDelegate : public OpaqueBrowserFrameViewLayoutDelegate {
   bool IsFrameCondensed() const override {
     return !show_caption_buttons_ || maximized_;
   }
-  bool EverHasVisibleBackgroundTabShapes() const override { return false; }
   void UpdateWindowControlsOverlay(const gfx::Rect& bounding_rect) override {}
   bool ShouldDrawRestoredFrameShadow() const override { return true; }
 #if BUILDFLAG(IS_LINUX)

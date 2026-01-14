@@ -35,14 +35,13 @@ class TestLayoutDelegate : public OpaqueBrowserFrameViewLayoutDelegate {
   bool IsTabStripVisible() const override { return true; }
   bool GetBorderlessModeEnabled() const override { return false; }
   int GetTabStripHeight() const override {
-    return GetLayoutConstant(TAB_HEIGHT);
+    return GetLayoutConstant(LayoutConstant::kTabHeight);
   }
   bool IsToolbarVisible() const override { return true; }
   gfx::Size GetTabstripMinimumSize() const override { return {78, 29}; }
   int GetTopAreaHeight() const override { return 0; }
   bool UseCustomFrame() const override { return true; }
   bool IsFrameCondensed() const override { return false; }
-  bool EverHasVisibleBackgroundTabShapes() const override { return false; }
   void UpdateWindowControlsOverlay(const gfx::Rect& bounding_rect) override {}
   bool ShouldDrawRestoredFrameShadow() const override { return true; }
 #if BUILDFLAG(IS_LINUX)

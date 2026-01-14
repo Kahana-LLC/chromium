@@ -4,6 +4,7 @@
 
 package org.chromium.chrome.browser.segmentation_platform;
 
+import static org.chromium.build.NullUtil.assertNonNull;
 import static org.chromium.build.NullUtil.assumeNonNull;
 
 import android.os.Handler;
@@ -16,10 +17,10 @@ import org.jni_zero.NativeMethods;
 
 import org.chromium.base.Callback;
 import org.chromium.base.lifetime.Destroyable;
+import org.chromium.base.supplier.NullableObservableSupplier;
 import org.chromium.base.supplier.ObservableSupplier;
 import org.chromium.base.supplier.OneshotSupplier;
 import org.chromium.base.supplier.OneshotSupplierImpl;
-import org.chromium.base.supplier.Supplier;
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.bookmarks.BookmarkModel;
@@ -38,6 +39,7 @@ import org.chromium.components.segmentation_platform.InputContext;
 import org.chromium.components.segmentation_platform.ProcessedValue;
 
 import java.util.HashMap;
+import java.util.function.Supplier;
 
 /**
  * Central class for contextual page actions bridging between UI and backend. Registers itself with
@@ -73,7 +75,7 @@ public class ContextualPageActionController {
     }
 
     private final ObservableSupplier<Profile> mProfileSupplier;
-    private final ObservableSupplier<@Nullable Tab> mTabSupplier;
+    private final NullableObservableSupplier<Tab> mTabSupplier;
     private final AdaptiveToolbarButtonController mAdaptiveToolbarButtonController;
     private @Nullable CurrentTabObserver mCurrentTabObserver;
     private @Nullable SignalAccumulator mSignalAccumulator;
@@ -92,7 +94,7 @@ public class ContextualPageActionController {
      */
     public ContextualPageActionController(
             ObservableSupplier<Profile> profileSupplier,
-            ObservableSupplier<@Nullable Tab> tabSupplier,
+            NullableObservableSupplier<Tab> tabSupplier,
             AdaptiveToolbarButtonController adaptiveToolbarButtonController,
             Supplier<ShoppingService> shoppingServiceSupplier,
             Supplier<BookmarkModel> bookmarkModelSupplier) {
@@ -157,32 +159,38 @@ public class ContextualPageActionController {
         mActionProviders.put(
                 AdaptiveToolbarButtonVariant.PRICE_INSIGHTS,
                 new PriceInsightsActionProvider(shoppingServiceSupplier));
-        if (AdaptiveToolbarFeatures.isDiscountsPageActionEnabled()) {
-            mActionProviders.put(
-                    AdaptiveToolbarButtonVariant.DISCOUNTS,
-                    new DiscountsActionProvider(shoppingServiceSupplier));
-        }
+        mActionProviders.put(
+                AdaptiveToolbarButtonVariant.DISCOUNTS,
+                new DiscountsActionProvider(shoppingServiceSupplier));
+
         if (AdaptiveToolbarFeatures.isTabGroupingPageActionEnabled()) {
             Supplier<@Nullable GroupSuggestionsButtonController>
                     groupSuggestionButtonControllerSupplier =
-                            () -> {
-                                if (!mProfileSupplier.hasValue()
-                                        || mProfileSupplier.get().isOffTheRecord()) {
-                                    return null;
-                                }
-                                return GroupSuggestionsButtonControllerFactory.getForProfile(
-                                        mProfileSupplier.get());
-                            };
+                            this::getGroupSuggestionsButtonController;
             mActionProviders.put(
                     AdaptiveToolbarButtonVariant.TAB_GROUPING,
                     new TabGroupingActionProvider(groupSuggestionButtonControllerSupplier));
         }
     }
 
+    @Nullable
+    private GroupSuggestionsButtonController getGroupSuggestionsButtonController() {
+        Profile profile = mProfileSupplier.get();
+        if (profile == null || profile.isOffTheRecord()) {
+            return null;
+        }
+        return GroupSuggestionsButtonControllerFactory.getForProfile(profile);
+    }
+
     /** Called on destroy. */
     public void destroy() {
         if (mCurrentTabObserver != null) {
             mCurrentTabObserver.destroy();
+        }
+        GroupSuggestionsButtonController groupSuggestionsButtonController =
+                getGroupSuggestionsButtonController();
+        if (groupSuggestionsButtonController != null) {
+            groupSuggestionsButtonController.destroy();
         }
         removeProviders();
     }
@@ -196,6 +204,12 @@ public class ContextualPageActionController {
         return mSignalAccumulator == null
                 ? false
                 : mSignalAccumulator.getSignal(AdaptiveToolbarButtonVariant.PRICE_INSIGHTS);
+    }
+
+    public boolean hasReaderMode() {
+        return mSignalAccumulator == null
+                ? false
+                : mSignalAccumulator.getSignal(AdaptiveToolbarButtonVariant.READER_MODE);
     }
 
     private void removeProviders() {
@@ -269,7 +283,7 @@ public class ContextualPageActionController {
 
         ContextualPageActionControllerJni.get()
                 .computeContextualPageAction(
-                        mProfileSupplier.get(),
+                        assertNonNull(mProfileSupplier.get()),
                         inputContext,
                         result -> {
                             if (tab.isDestroyed()) return;
@@ -292,9 +306,14 @@ public class ContextualPageActionController {
         mAdaptiveToolbarButtonController.showDynamicAction(action);
     }
 
-    /** @return The active regular tab. Null for incognito. */
+    /**
+     * @return The active regular tab. Null for incognito.
+     */
     private @Nullable Tab getValidActiveTab() {
-        if (mProfileSupplier == null || mProfileSupplier.get().isOffTheRecord()) return null;
+        Profile profile = mProfileSupplier.get();
+        if (profile == null || profile.isOffTheRecord()) {
+            return null;
+        }
         Tab tab = mTabSupplier.get();
         if (tab == null || tab.isIncognito() || tab.isDestroyed()) return null;
         return tab;

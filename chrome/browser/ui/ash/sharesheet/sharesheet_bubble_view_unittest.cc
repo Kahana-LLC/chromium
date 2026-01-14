@@ -7,7 +7,7 @@
 #include <algorithm>
 #include <memory>
 
-#include "ash/frame/non_client_frame_view_ash.h"
+#include "ash/frame/frame_view_ash.h"
 #include "ash/public/cpp/test/test_new_window_delegate.h"
 #include "ash/wm/window_util.h"
 #include "base/memory/raw_ptr.h"
@@ -34,8 +34,8 @@
 #include "ui/base/clipboard/test/test_clipboard.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/mojom/window_show_state.mojom.h"
-#include "ui/compositor/scoped_animation_duration_scale_mode.h"
 #include "ui/events/base_event_utils.h"
+#include "ui/gfx/scoped_animation_duration_scale_mode.h"
 #include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/controls/native/native_view_host.h"
 #include "ui/views/test/test_widget_builder.h"
@@ -90,9 +90,9 @@ class TestWidgetDelegate : public views::WidgetDelegateView {
   // views::WidgetDelegateView:
   bool CanActivate() const override { return true; }
 
-  std::unique_ptr<views::NonClientFrameView> CreateNonClientFrameView(
+  std::unique_ptr<views::FrameView> CreateFrameView(
       views::Widget* widget) override {
-    return std::make_unique<NonClientFrameViewAsh>(widget);
+    return std::make_unique<FrameViewAsh>(widget);
   }
 };
 
@@ -316,8 +316,8 @@ TEST_F(SharesheetBubbleViewTest, ClickAndKeyPressCopyToClipboardTogether) {
       SharesheetViewID::TARGETS_DEFAULT_VIEW_ID);
   ASSERT_EQ(targets_view->children().size(), 1u);
 
-  ui::ScopedAnimationDurationScaleMode normal_animation_duration(
-      ui::ScopedAnimationDurationScaleMode::SLOW_DURATION);
+  gfx::ScopedAnimationDurationScaleMode normal_animation_duration(
+      gfx::ScopedAnimationDurationScaleMode::SLOW_DURATION);
   GetEventGenerator()->PressAndReleaseKey(ui::VKEY_TAB);
   ASSERT_TRUE(targets_view->children()[0]->HasFocus());
 

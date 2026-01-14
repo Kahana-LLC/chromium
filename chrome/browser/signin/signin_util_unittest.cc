@@ -23,7 +23,6 @@
 #include "components/signin/public/base/signin_pref_names.h"
 #include "components/signin/public/base/signin_switches.h"
 #include "components/signin/public/identity_manager/identity_test_environment.h"
-#include "components/signin/public/identity_manager/signin_constants.h"
 #include "components/sync/base/user_selectable_type.h"
 #include "components/sync/service/sync_prefs.h"
 #include "components/sync/test/test_sync_service.h"
@@ -392,9 +391,10 @@ class SigninUtilHistorySyncOptinTest : public SigninUtilTest {
             .WithGaiaId(kSignedInGaiaId)
             .Build(managed_account ? "test@managed.com" : "test@gmail.com"));
 
-    account_info.hosted_domain = managed_account
-                                     ? "managed.com"
-                                     : signin::constants::kNoHostedDomainFound;
+    account_info =
+        AccountInfo::Builder(account_info)
+            .SetHostedDomain(managed_account ? "managed.com" : std::string())
+            .Build();
     signin::UpdateAccountInfoForAccount(identity_manager, account_info);
   }
 
@@ -435,7 +435,55 @@ class SigninUtilHistorySyncOptinTest : public SigninUtilTest {
       switches::kAvatarButtonSyncPromoForTesting};
 };
 
+TEST_F(SigninUtilHistorySyncOptinTest, HistorySyncOptinDisallowedByPolicy) {
+  SignInAndSetUpSyncService();
+
+  syncer::UserSelectableTypeSet types({syncer::UserSelectableType::kTabs,
+                                       syncer::UserSelectableType::kHistory});
+
+  DisableAllSyncedDataTypes();
+  ASSERT_TRUE(signin_util::IsSyncingUserSelectableTypesAllowedByPolicy(
+      test_sync_service(), types));
+
+  test_sync_service()->SetAllowedByEnterprisePolicy(false);
+  EXPECT_FALSE(signin_util::IsSyncingUserSelectableTypesAllowedByPolicy(
+      test_sync_service(), types));
+}
+
+TEST_F(SigninUtilHistorySyncOptinTest,
+       HistorySyncOptinDisallowedByPolicyPerType) {
+  SignInAndSetUpSyncService();
+
+  syncer::UserSelectableTypeSet types({syncer::UserSelectableType::kTabs,
+                                       syncer::UserSelectableType::kHistory});
+
+  DisableAllSyncedDataTypes();
+  ASSERT_TRUE(signin_util::IsSyncingUserSelectableTypesAllowedByPolicy(
+      test_sync_service(), types));
+
+  test_sync_service()->GetUserSettings()->SetTypeIsManagedByPolicy(
+      syncer::UserSelectableType::kHistory, /*managed=*/true);
+
+  EXPECT_FALSE(signin_util::IsSyncingUserSelectableTypesAllowedByPolicy(
+      test_sync_service(), types));
+  EXPECT_FALSE(signin_util::IsSyncingUserSelectableTypesAllowedByPolicy(
+      test_sync_service(), {syncer::UserSelectableType::kHistory}));
+  EXPECT_TRUE(signin_util::IsSyncingUserSelectableTypesAllowedByPolicy(
+      test_sync_service(), {syncer::UserSelectableType::kTabs}));
+}
+
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
+TEST_F(SigninUtilHistorySyncOptinTest, HasExplicitlyDisabledHistorySync) {
+  SignInAndSetUpSyncService();
+  EXPECT_FALSE(signin_util::HasExplicitlyDisabledHistorySync(
+      test_sync_service(), IdentityManagerFactory::GetForProfile(profile())));
+
+  test_sync_service()->GetUserSettings()->SetDisabledType(
+      syncer::UserSelectableType::kHistory);
+  EXPECT_TRUE(signin_util::HasExplicitlyDisabledHistorySync(
+      test_sync_service(), IdentityManagerFactory::GetForProfile(profile())));
+}
+
 TEST_F(SigninUtilHistorySyncOptinTest,
        ShouldNotShowHistorySyncOptinScreenIfNoPrimaryAccount) {
   ASSERT_TRUE(profile());
@@ -444,7 +492,10 @@ TEST_F(SigninUtilHistorySyncOptinTest,
   ASSERT_TRUE(identity_manager);
   ASSERT_FALSE(
       identity_manager->HasPrimaryAccount(signin::ConsentLevel::kSignin));
-  EXPECT_FALSE(signin_util::ShouldShowHistorySyncOptinScreen(*profile()));
+
+  EXPECT_EQ(
+      signin_util::ShouldShowHistorySyncOptinScreen(*profile()),
+      signin_util::ShouldShowHistorySyncOptinResult::kSkipUserNotSignedIn);
   EXPECT_FALSE(signin_util::ShouldShowAvatarSyncPromo(profile()));
 }
 
@@ -452,7 +503,8 @@ TEST_F(SigninUtilHistorySyncOptinTest,
        ShouldNotShowHistorySyncOptinScreenIfNoSyncService) {
   Signin();
   ASSERT_FALSE(test_sync_service());
-  EXPECT_FALSE(signin_util::ShouldShowHistorySyncOptinScreen(*profile()));
+  EXPECT_EQ(signin_util::ShouldShowHistorySyncOptinScreen(*profile()),
+            signin_util::ShouldShowHistorySyncOptinResult::kSkipSyncForbidden);
   EXPECT_FALSE(signin_util::ShouldShowAvatarSyncPromo(profile()));
 }
 
@@ -461,18 +513,24 @@ TEST_F(SigninUtilHistorySyncOptinTest,
   SignInAndSetUpSyncService();
 
   DisableAllSyncedDataTypes();
-  ASSERT_TRUE(signin_util::ShouldShowHistorySyncOptinScreen(*profile()));
+
+  ASSERT_EQ(signin_util::ShouldShowHistorySyncOptinScreen(*profile()),
+            signin_util::ShouldShowHistorySyncOptinResult::kShow);
 
   test_sync_service()->SetAllowedByEnterprisePolicy(false);
-  EXPECT_FALSE(signin_util::ShouldShowHistorySyncOptinScreen(*profile()));
+  EXPECT_EQ(signin_util::ShouldShowHistorySyncOptinScreen(*profile()),
+            signin_util::ShouldShowHistorySyncOptinResult::kSkipSyncForbidden);
   EXPECT_FALSE(signin_util::ShouldShowAvatarSyncPromo(profile()));
 }
+
 TEST_F(SigninUtilHistorySyncOptinTest,
        ShouldNotShowHistorySyncOptinScreenIfUserIsAlreadyOptedIn) {
   SignInAndSetUpSyncService();
 
   DisableAllSyncedDataTypes();
-  ASSERT_TRUE(signin_util::ShouldShowHistorySyncOptinScreen(*profile()));
+
+  ASSERT_EQ(signin_util::ShouldShowHistorySyncOptinScreen(*profile()),
+            signin_util::ShouldShowHistorySyncOptinResult::kShow);
 
   test_sync_service()->GetUserSettings()->SetSelectedType(
       syncer::UserSelectableType::kHistory, true);
@@ -481,14 +539,19 @@ TEST_F(SigninUtilHistorySyncOptinTest,
   test_sync_service()->GetUserSettings()->SetSelectedType(
       syncer::UserSelectableType::kSavedTabGroups, true);
 
-  EXPECT_FALSE(signin_util::ShouldShowHistorySyncOptinScreen(*profile()));
+  EXPECT_EQ(
+      signin_util::ShouldShowHistorySyncOptinScreen(*profile()),
+      signin_util::ShouldShowHistorySyncOptinResult::kSkipUserAlreadyOptedIn);
   EXPECT_FALSE(signin_util::ShouldShowAvatarSyncPromo(profile()));
 }
 
 TEST_F(SigninUtilHistorySyncOptinTest,
        ShowHistorySyncOptinScreenIfUserNotOptedInHistory) {
   SignInAndSetUpSyncService();
-  ASSERT_FALSE(signin_util::ShouldShowHistorySyncOptinScreen(*profile()));
+
+  ASSERT_EQ(
+      signin_util::ShouldShowHistorySyncOptinScreen(*profile()),
+      signin_util::ShouldShowHistorySyncOptinResult::kSkipUserAlreadyOptedIn);
 
   // History off.
   test_sync_service()->GetUserSettings()->SetSelectedType(
@@ -497,13 +560,17 @@ TEST_F(SigninUtilHistorySyncOptinTest,
       syncer::UserSelectableType::kTabs, true);
   test_sync_service()->GetUserSettings()->SetSelectedType(
       syncer::UserSelectableType::kSavedTabGroups, true);
-  EXPECT_TRUE(signin_util::ShouldShowHistorySyncOptinScreen(*profile()));
+  EXPECT_EQ(signin_util::ShouldShowHistorySyncOptinScreen(*profile()),
+            signin_util::ShouldShowHistorySyncOptinResult::kShow);
 }
 
 TEST_F(SigninUtilHistorySyncOptinTest,
        ShowHistorySyncOptinScreenIfUserNotOptedInTabs) {
   SignInAndSetUpSyncService();
-  ASSERT_FALSE(signin_util::ShouldShowHistorySyncOptinScreen(*profile()));
+
+  ASSERT_EQ(
+      signin_util::ShouldShowHistorySyncOptinScreen(*profile()),
+      signin_util::ShouldShowHistorySyncOptinResult::kSkipUserAlreadyOptedIn);
 
   // Tabs off.
   test_sync_service()->GetUserSettings()->SetSelectedType(
@@ -512,13 +579,17 @@ TEST_F(SigninUtilHistorySyncOptinTest,
       syncer::UserSelectableType::kTabs, false);
   test_sync_service()->GetUserSettings()->SetSelectedType(
       syncer::UserSelectableType::kSavedTabGroups, true);
-  EXPECT_TRUE(signin_util::ShouldShowHistorySyncOptinScreen(*profile()));
+  EXPECT_EQ(signin_util::ShouldShowHistorySyncOptinScreen(*profile()),
+            signin_util::ShouldShowHistorySyncOptinResult::kShow);
 }
 
 TEST_F(SigninUtilHistorySyncOptinTest,
        ShowHistorySyncOptinScreenIfUserNotOptedInTabGroups) {
   SignInAndSetUpSyncService();
-  ASSERT_FALSE(signin_util::ShouldShowHistorySyncOptinScreen(*profile()));
+
+  ASSERT_EQ(
+      signin_util::ShouldShowHistorySyncOptinScreen(*profile()),
+      signin_util::ShouldShowHistorySyncOptinResult::kSkipUserAlreadyOptedIn);
 
   // Tab groups off.
   test_sync_service()->GetUserSettings()->SetSelectedType(
@@ -528,7 +599,22 @@ TEST_F(SigninUtilHistorySyncOptinTest,
   test_sync_service()->GetUserSettings()->SetSelectedType(
       syncer::UserSelectableType::kSavedTabGroups, false);
 
-  EXPECT_TRUE(signin_util::ShouldShowHistorySyncOptinScreen(*profile()));
+  EXPECT_EQ(signin_util::ShouldShowHistorySyncOptinScreen(*profile()),
+            signin_util::ShouldShowHistorySyncOptinResult::kShow);
+}
+
+TEST_F(SigninUtilHistorySyncOptinTest, EnableHistorySync) {
+  SignInAndSetUpSyncService();
+  DisableAllSyncedDataTypes();
+
+  signin_util::EnableHistorySync(test_sync_service());
+
+  EXPECT_TRUE(test_sync_service()->GetUserSettings()->GetSelectedTypes().Has(
+      syncer::UserSelectableType::kHistory));
+  EXPECT_TRUE(test_sync_service()->GetUserSettings()->GetSelectedTypes().Has(
+      syncer::UserSelectableType::kTabs));
+  EXPECT_TRUE(test_sync_service()->GetUserSettings()->GetSelectedTypes().Has(
+      syncer::UserSelectableType::kSavedTabGroups));
 }
 
 TEST_F(SigninUtilHistorySyncOptinTest, ShouldShowAvatarSyncPromo) {
@@ -594,12 +680,14 @@ TEST_P(SigninUtilHistorySyncOptinForManagedSettingsTest,
   SignInAndSetUpSyncService();
 
   DisableAllSyncedDataTypes();
-  ASSERT_TRUE(signin_util::ShouldShowHistorySyncOptinScreen(*profile()));
+  ASSERT_EQ(signin_util::ShouldShowHistorySyncOptinScreen(*profile()),
+            signin_util::ShouldShowHistorySyncOptinResult::kShow);
 
   test_sync_service()->GetUserSettings()->SetTypeIsManagedByPolicy(
       GetParam(), /*managed=*/true);
 
-  EXPECT_FALSE(signin_util::ShouldShowHistorySyncOptinScreen(*profile()));
+  EXPECT_EQ(signin_util::ShouldShowHistorySyncOptinScreen(*profile()),
+            signin_util::ShouldShowHistorySyncOptinResult::kSkipSyncForbidden);
 }
 
 TEST_P(SigninUtilHistorySyncOptinForManagedSettingsTest,
@@ -607,12 +695,15 @@ TEST_P(SigninUtilHistorySyncOptinForManagedSettingsTest,
   SignInAndSetUpSyncService();
 
   DisableAllSyncedDataTypes();
-  ASSERT_TRUE(signin_util::ShouldShowHistorySyncOptinScreen(*profile()));
+
+  ASSERT_EQ(signin_util::ShouldShowHistorySyncOptinScreen(*profile()),
+            signin_util::ShouldShowHistorySyncOptinResult::kShow);
 
   test_sync_service()->GetUserSettings()->SetTypeIsManagedByCustodian(
       GetParam(), /*managed=*/true);
 
-  EXPECT_FALSE(signin_util::ShouldShowHistorySyncOptinScreen(*profile()));
+  EXPECT_EQ(signin_util::ShouldShowHistorySyncOptinScreen(*profile()),
+            signin_util::ShouldShowHistorySyncOptinResult::kSkipSyncForbidden);
 }
 
 INSTANTIATE_TEST_SUITE_P(

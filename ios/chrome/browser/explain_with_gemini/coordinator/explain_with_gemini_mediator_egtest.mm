@@ -12,9 +12,9 @@
 #import "base/strings/sys_string_conversions.h"
 #import "base/test/ios/wait_util.h"
 #import "components/signin/internal/identity_manager/account_capabilities_constants.h"
-#import "ios/chrome/browser/authentication/ui_bundled/signin_earl_grey.h"
-#import "ios/chrome/browser/browser_container/ui_bundled/edit_menu_app_interface.h"
-#import "ios/chrome/browser/browser_container/ui_bundled/edit_menu_matchers.h"
+#import "ios/chrome/browser/authentication/test/signin_earl_grey.h"
+#import "ios/chrome/browser/browser_content/ui_bundled/edit_menu_app_interface.h"
+#import "ios/chrome/browser/browser_content/ui_bundled/edit_menu_matchers.h"
 #import "ios/chrome/browser/explain_with_gemini/coordinator/explain_with_gemini_constants.h"
 #import "ios/chrome/browser/intelligence/features/features.h"
 #import "ios/chrome/browser/reader_mode/model/features.h"
@@ -84,7 +84,7 @@ std::unique_ptr<net::test_server::HttpResponse> StandardResponse(
   http_response->set_code(net::HTTP_OK);
   GURL request_url = request.GetURL();
 
-  if (request_url.path_piece() == kBasicSelectionUrl) {
+  if (request_url.path() == kBasicSelectionUrl) {
     http_response->set_content(kBasicSelectionHtmlTemplate);
     return std::move(http_response);
   }
@@ -100,24 +100,15 @@ std::unique_ptr<net::test_server::HttpResponse> StandardResponse(
 
 @implementation ExplainWithGeminiMediatorTestCase
 
-// TODO(crbug.com/429537743): The test fails on device.
-#if TARGET_OS_SIMULATOR
-#define MAYBE_testExplainWithGeminiInReadingMode \
-  testExplainWithGeminiInReadingMode
-#else
-#define MAYBE_testExplainWithGeminiInReadingMode \
-  DISABLED_testExplainWithGeminiInReadingMode
-#endif
-
 - (AppLaunchConfiguration)appConfigurationForTestCase {
   AppLaunchConfiguration config;
   config.features_enabled_and_params.push_back(
       {kExplainGeminiEditMenu, {{{kExplainGeminiEditMenuParams, "2"}}}});
   config.features_enabled_and_params.push_back(
       {kBWGPromoConsent, {{{kBWGPromoConsentParams, "3"}}}});
-  if ([self
-          isRunningTest:@selector(MAYBE_testExplainWithGeminiInReadingMode)]) {
+  if ([self isRunningTest:@selector(testExplainWithGeminiInReadingMode)]) {
     config.features_enabled_and_params.push_back({kEnableReaderMode, {}});
+    config.features_enabled_and_params.push_back({kEnableReaderModeInUS, {}});
   }
   return config;
 }
@@ -171,8 +162,6 @@ std::unique_ptr<net::test_server::HttpResponse> StandardResponse(
     GREYAssert(WaitUntilConditionOrTimeout(kWaitForUIElementTimeout, condition),
                @"Does not redirect to Gemini URL");
 
-    // TODO(crbug.com/409525576): Add waitForWebStateContainingText for `Explain
-    // this to me` once rollout is done by Gemini team.
     GREYAssertEqual(2UL, [ChromeEarlGrey mainTabCount],
                     @"Search Should be in new tab");
     [ChromeEarlGrey closeCurrentTab];
@@ -243,18 +232,18 @@ std::unique_ptr<net::test_server::HttpResponse> StandardResponse(
 }
 
 // Checks if Explain With Gemini button is present in Reading Mode.
-- (void)MAYBE_testExplainWithGeminiInReadingMode {
+- (void)testExplainWithGeminiInReadingMode {
   [self loadPage];
 
   // Open Reader Mode UI.
-  [ChromeEarlGrey showReaderMode];
-  GREYAssertTrue([ChromeEarlGrey waitUntilReaderModeWebStateIsReady],
-                 @"Reader mode content could not be loaded.");
+  GREYAssertTrue(
+      [ChromeEarlGrey showReaderModeAndWaitUntilReaderModeWebStateIsReady],
+      @"Reader mode content could not be loaded.");
   [ChromeEarlGrey
-      waitForSufficientlyVisibleElementWithMatcher:
+      waitForUIElementToAppearWithMatcher:
           grey_accessibilityID(kReaderModeViewAccessibilityIdentifier)];
   [ChromeEarlGrey
-      waitForSufficientlyVisibleElementWithMatcher:
+      waitForUIElementToAppearWithMatcher:
           grey_accessibilityID(kReaderModeChipViewAccessibilityIdentifier)];
 
   [ChromeEarlGreyUI triggerEditMenu:ElementToLongPressSelector()];

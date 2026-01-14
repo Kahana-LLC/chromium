@@ -10,7 +10,6 @@
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/search/ntp_test_utils.h"
 #include "chrome/common/url_constants.h"
-#include "chrome/test/base/ui_test_utils.h"
 #include "components/crx_file/id_util.h"
 #include "content/public/test/browser_test.h"
 #include "extensions/browser/extension_registry.h"
@@ -60,7 +59,7 @@ class AllUrlsApiTest : public ExtensionApiTest {
     ExtensionTestMessageListener listener_a("content script: " + expected_url);
     ExtensionTestMessageListener listener_b("execute: " + expected_url);
 
-    ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), GURL(url)));
+    ASSERT_TRUE(NavigateToURL(GetActiveWebContents(), GURL(url)));
     ASSERT_TRUE(listener_a.WaitUntilSatisfied());
     ASSERT_TRUE(listener_b.WaitUntilSatisfied());
   }
@@ -79,6 +78,8 @@ class AllUrlsApiTest : public ExtensionApiTest {
   scoped_refptr<const Extension> execute_script_;
 };
 
+// TODO(crbug.com/371432155): Port to desktop Android once chrome.tabs is more
+// fully supported.
 IN_PROC_BROWSER_TEST_F(AllUrlsApiTest, AllowlistedExtension) {
   AllowlistExtensions();
 
@@ -100,6 +101,8 @@ IN_PROC_BROWSER_TEST_F(AllUrlsApiTest, AllowlistedExtension) {
 
 // Test that an extension NOT allowlisted for scripting can ask for <all_urls>
 // and run scripts on non-restricted all pages.
+// TODO(crbug.com/371432155): Port to desktop Android once chrome.tabs is more
+// fully supported.
 IN_PROC_BROWSER_TEST_F(AllUrlsApiTest, RegularExtensions) {
   // Now verify we can script a regular http page.
   ASSERT_TRUE(StartEmbeddedTestServer());

@@ -9,7 +9,6 @@
 #include <vector>
 
 #include "base/check_op.h"
-#include "base/containers/contains.h"
 #include "base/memory/ptr_util.h"
 #include "base/notreached.h"
 #include "components/android_autofill/browser/android_form_event_logger.h"
@@ -143,11 +142,9 @@ void AndroidAutofillManager::OnFocusOnNonFormFieldImpl() {
     provider->OnFocusOnNonFormField(this);
 }
 
-void AndroidAutofillManager::OnDidFillAutofillFormDataImpl(
-    const FormData& form,
-    const base::TimeTicks timestamp) {
+void AndroidAutofillManager::OnDidAutofillFormImpl(const FormData& form) {
   if (auto* provider = GetAutofillProvider())
-    provider->OnDidFillAutofillFormData(this, form, timestamp);
+    provider->OnDidAutofillForm(this, form);
 }
 
 void AndroidAutofillManager::OnHidePopupImpl() {
@@ -212,16 +209,27 @@ AutofillProvider* AndroidAutofillManager::GetAutofillProvider() {
   return nullptr;
 }
 
+CreditCardAccessManager* AndroidAutofillManager::GetCreditCardAccessManager() {
+  return nullptr;
+}
+
+const CreditCardAccessManager*
+AndroidAutofillManager::GetCreditCardAccessManager() const {
+  return nullptr;
+}
+
 FieldTypeGroup AndroidAutofillManager::ComputeFieldTypeGroupForField(
     const FormGlobalId& form_id,
     const FieldGlobalId& field_id) {
-  FormStructure* form_structure = nullptr;
-  AutofillField* autofill_field = nullptr;
-  if (!GetCachedFormAndField(form_id, field_id, &form_structure,
-                             &autofill_field)) {
+  const FormStructure* form = FindCachedFormById(form_id);
+  if (!form) {
     return FieldTypeGroup::kNoGroup;
   }
-  return GroupTypeOfFieldType(GetMostRelevantFieldType(autofill_field->Type()));
+  const AutofillField* field = form->GetFieldById(field_id);
+  if (!field) {
+    return FieldTypeGroup::kNoGroup;
+  }
+  return GroupTypeOfFieldType(GetMostRelevantFieldType(field->Type()));
 }
 
 void AndroidAutofillManager::FillOrPreviewForm(
@@ -239,7 +247,9 @@ void AndroidAutofillManager::FillOrPreviewForm(
   });
 
   driver().ApplyFormAction(mojom::FormActionType::kFill, action_persistence,
-                           fields, triggered_origin, /*field_type_map=*/{},
+                           fields, FillId::Create(),
+                           /*supports_refill=*/false, triggered_origin,
+                           /*field_type_map=*/{},
                            /*section_for_clear_form_on_ios=*/Section());
   // We do not call OnAutofillProfileOrCreditCardFormFilled() because WebView
   // doesn't have AutofillProfile or CreditCard.
@@ -279,6 +289,8 @@ AndroidFormEventLogger* AndroidAutofillManager::GetEventFormLogger(
       return payments_logger_.get();
     case FormType::kPasswordForm:
       return password_logger_.get();
+    // TODO(crbug.com/443693025): Add event logger for OTP fields
+    case FormType::kOneTimePasswordForm:
     case FormType::kUnknownFormType:
       return nullptr;
   }

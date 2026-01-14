@@ -58,12 +58,14 @@ class GraphBuilderOrt {
   // Factory method that creates a `GraphBuilderOrt`, builds the graph and
   // returns `ModelEditor::ModelInfo` which contains the model itself and the
   // external data (weights).
-  static std::unique_ptr<ModelEditor::ModelInfo> CreateAndBuild(
+  static base::expected<std::unique_ptr<ModelEditor::ModelInfo>,
+                        mojom::ErrorPtr>
+  CreateAndBuild(
       const mojom::GraphInfo& graph_info,
       ContextProperties context_properties,
       base::flat_map<OperandId, std::unique_ptr<WebNNConstantOperand>>
           constant_operands,
-      bool is_external_data_supported);
+      std::optional<uint32_t> batched_matmul_k_dimension_limit);
 
   GraphBuilderOrt(const GraphBuilderOrt&) = delete;
   GraphBuilderOrt& operator=(const GraphBuilderOrt&) = delete;
@@ -76,7 +78,7 @@ class GraphBuilderOrt {
       ContextProperties context_properties,
       base::flat_map<OperandId, std::unique_ptr<WebNNConstantOperand>>
           constant_operands,
-      bool is_external_data_supported);
+      std::optional<uint32_t> batched_matmul_k_dimension_limit);
 
   const mojom::Operand& GetOperand(OperandId operand_id) const;
 
@@ -247,7 +249,8 @@ class GraphBuilderOrt {
   void AddEluOperation(const mojom::Elu& elu);
   void AddLogicalBinaryOperation(const mojom::ElementWiseBinary& logical_binary,
                                  base::cstring_view op_type);
-  void AddLogicalNotOperation(const mojom::ElementWiseUnary& logical_not);
+  void AddLogicalUnaryOperation(const mojom::ElementWiseUnary& logical_unary,
+                                base::cstring_view op_type);
   void AddLogicalNotEqualOperation(const mojom::ElementWiseBinary& not_equal);
   void AddElementWiseBinaryOperation(
       const mojom::ElementWiseBinary& element_wise_binary);
@@ -271,7 +274,8 @@ class GraphBuilderOrt {
     requires(std::is_same_v<LstmType, mojom::Lstm> ||
              std::is_same_v<LstmType, mojom::LstmCell>)
   void AddLstmOperation(const LstmType& lstm);
-  void AddMatMulOperation(const mojom::Matmul& matmul);
+  base::expected<void, mojom::ErrorPtr> AddMatMulOperation(
+      const mojom::Matmul& matmul);
   void AddPadOperation(const mojom::Pad& pad);
   void AddPool2dOperation(const mojom::Pool2d& pool2d);
   void AddPreluOperation(const mojom::Prelu& prelu);
@@ -290,7 +294,8 @@ class GraphBuilderOrt {
   void AddTriangularOperation(const mojom::Triangular& triangular);
   void AddWhereOperation(const mojom::Where& where);
 
-  std::unique_ptr<ModelEditor::ModelInfo> BuildModel();
+  base::expected<std::unique_ptr<ModelEditor::ModelInfo>, mojom::ErrorPtr>
+  BuildModel();
 
   // An increasing id starting from 0, used for generating unique names for each
   // operand.
@@ -309,6 +314,8 @@ class GraphBuilderOrt {
       constant_operands_;
 
   const ContextProperties context_properties_;
+
+  std::optional<uint32_t> batched_matmul_k_dimension_limit_;
 
   ModelEditor model_editor_;
 };

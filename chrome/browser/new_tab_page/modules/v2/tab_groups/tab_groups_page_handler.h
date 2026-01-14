@@ -17,6 +17,12 @@ namespace content {
 class WebContents;
 }  // namespace content
 
+namespace tab_groups {
+class SavedTabGroup;
+class TabGroupId;
+class TabGroupSyncService;
+}  // namespace tab_groups
+
 class TabGroupsPageHandler : public ntp::tab_groups::mojom::PageHandler {
  public:
   explicit TabGroupsPageHandler(
@@ -31,14 +37,29 @@ class TabGroupsPageHandler : public ntp::tab_groups::mojom::PageHandler {
   static void RegisterProfilePrefs(PrefRegistrySimple* registry);
 
   // ntp::tab_groups::mojom::PageHandler:
+  void CreateNewTabGroup() override;
   void GetTabGroups(GetTabGroupsCallback callback) override;
+  void OpenTabGroup(const std::string& id) override;
   void DismissModule() override;
   void RestoreModule() override;
 
  private:
+  bool ShouldShowZeroState();
+  std::vector<const tab_groups::SavedTabGroup*> FilterActiveGroup(
+      std::vector<const tab_groups::SavedTabGroup*> groups);
+  std::vector<const tab_groups::SavedTabGroup*> GetMostRecentTabGroups(
+      std::vector<const tab_groups::SavedTabGroup*> groups,
+      size_t count);
+  std::optional<std::string> GetDeviceName(
+      const std::optional<std::string>& cache_guid);
+  std::vector<ntp::tab_groups::mojom::TabGroupPtr> GetSavedTabGroups();
+  void GetLastInteractedTimeForGroup(
+      const std::optional<tab_groups::TabGroupId> group_id);
+
+  raw_ptr<content::WebContents> web_contents_;
   raw_ptr<Profile> profile_;
   raw_ptr<PrefService> pref_service_;
-
+  raw_ptr<tab_groups::TabGroupSyncService> tab_group_service_;
   mojo::Receiver<ntp::tab_groups::mojom::PageHandler> page_handler_;
 
   base::WeakPtrFactory<TabGroupsPageHandler> weak_ptr_factory_{this};

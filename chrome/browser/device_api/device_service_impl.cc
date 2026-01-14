@@ -9,7 +9,6 @@
 
 #include "base/check_deref.h"
 #include "base/check_is_test.h"
-#include "base/containers/contains.h"
 #include "base/feature_list.h"
 #include "base/functional/bind.h"
 #include "base/types/expected_macros.h"
@@ -40,29 +39,17 @@
 #include "url/origin.h"
 
 #if BUILDFLAG(IS_CHROMEOS)
-#include "ash/constants/ash_features.h"
 #include "chrome/browser/ash/app_mode/isolated_web_app/kiosk_iwa_data.h"
 #include "chrome/browser/ash/app_mode/isolated_web_app/kiosk_iwa_manager.h"
 #include "chrome/browser/ash/app_mode/web_app/kiosk_web_app_data.h"
 #include "chrome/browser/ash/app_mode/web_app/kiosk_web_app_manager.h"
 #include "chrome/common/url_constants.h"
+#include "chromeos/components/kiosk/kiosk_utils.h"
 #include "components/user_manager/user_manager.h"
 #endif  // BUILDFLAG(IS_CHROMEOS)
 
 namespace {
 #if BUILDFLAG(IS_CHROMEOS)
-// Checks that current user is a web kiosk.
-bool IsWebKiosk() {
-  return user_manager::UserManager::IsInitialized() &&
-         user_manager::UserManager::Get()->IsLoggedInAsKioskWebApp();
-}
-
-// Checks that current user is an IWA kiosk.
-bool IsIwaKiosk() {
-  return ash::features::IsIsolatedWebAppKioskEnabled() &&
-         user_manager::UserManager::IsInitialized() &&
-         user_manager::UserManager::Get()->IsLoggedInAsKioskIWA();
-}
 
 // Returns an origin of the current kiosk web app.
 // Should only be called when the current user is a web kiosk.
@@ -86,10 +73,10 @@ url::Origin GetIwaKioskOrigin() {
 }
 
 std::optional<url::Origin> MaybeGetCurrentKioskOrigin() {
-  if (IsWebKiosk()) {
+  if (chromeos::IsWebKioskSession()) {
     return GetWebKioskOrigin();
   }
-  if (IsIwaKiosk()) {
+  if (chromeos::IsIwaKioskSession()) {
     return GetIwaKioskOrigin();
   }
   return std::nullopt;
@@ -136,7 +123,8 @@ bool IsForceInstalledIwaOrigin(content::RenderFrameHost& host,
                    GetRegistrar(host, origin), [] { return false; });
   ASSIGN_OR_RETURN(webapps::AppId app_id, GetAppId(registrar, origin),
                    [] { return false; });
-  return registrar.IsInstalledByPolicy(app_id) && registrar.IsIsolated(app_id);
+  return registrar.AppMatches(
+      app_id, web_app::WebAppFilter::PolicyInstalledIsolatedWebApp());
 }
 
 // Check whether an app with the target origin is in the WebAppRegistrar.

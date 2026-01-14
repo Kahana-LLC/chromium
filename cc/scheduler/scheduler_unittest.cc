@@ -6,14 +6,16 @@
 
 #include <stddef.h>
 
+#include <cstdint>
 #include <memory>
 #include <string>
+#include <string_view>
+#include <tuple>
 #include <utility>
 #include <vector>
 
 #include "base/auto_reset.h"
 #include "base/check_op.h"
-#include "base/compiler_specific.h"
 #include "base/feature_list.h"
 #include "base/functional/bind.h"
 #include "base/memory/ptr_util.h"
@@ -55,6 +57,9 @@
 namespace cc {
 namespace {
 
+using testing::Bool;
+using testing::Combine;
+
 base::TimeDelta kSlowDuration = base::Seconds(1);
 base::TimeDelta kFastDuration = base::Milliseconds(1);
 
@@ -81,24 +86,24 @@ class FakeSchedulerClient : public SchedulerClient,
   bool needs_begin_frames() { return scheduler_->begin_frames_expected(); }
   int num_draws() const { return num_draws_; }
   bool invalidate_needs_redraw() const { return invalidate_needs_redraw_; }
-  const std::vector<std::string> Actions() const {
-    return std::vector<std::string>(actions_.begin(), actions_.end());
-  }
+  const std::vector<std::string>& Actions() const { return actions_; }
   base::TimeTicks posted_begin_impl_frame_deadline() const {
     return posted_begin_impl_frame_deadline_;
   }
 
   base::TimeDelta frame_interval() const { return frame_interval_; }
 
-  int ActionIndex(const char* action) const {
+  int ActionIndex(std::string_view action) const {
     for (size_t i = 0; i < actions_.size(); i++)
-      if (!UNSAFE_TODO(strcmp(actions_[i], action))) {
+      if (actions_[i] == action) {
         return base::checked_cast<int>(i);
       }
     return -1;
   }
 
-  bool HasAction(const char* action) const { return ActionIndex(action) >= 0; }
+  bool HasAction(std::string_view action) const {
+    return ActionIndex(action) >= 0;
+  }
 
   void SetWillBeginImplFrameRequestsOneBeginImplFrame(bool request) {
     will_begin_impl_frame_requests_one_begin_impl_frame_ = request;
@@ -163,6 +168,7 @@ class FakeSchedulerClient : public SchedulerClient,
   }
 
   void OnBeginImplFrameDeadline() override {}
+  void DidChangeBeginFrameSourcePaused(bool paused) override {}
 
   const viz::BeginFrameArgs& last_begin_main_frame_args() {
     return last_begin_main_frame_args_;
@@ -272,8 +278,8 @@ class FakeSchedulerClient : public SchedulerClient,
                                scheduler_->current_frame_number());
   }
 
-  void PushAction(const char* description) {
-    actions_.push_back(description);
+  void PushAction(std::string_view description) {
+    actions_.emplace_back(description);
   }
 
   // FakeExternalBeginFrameSource::Client implementation.
@@ -302,7 +308,7 @@ class FakeSchedulerClient : public SchedulerClient,
   viz::BeginFrameArgs last_begin_main_frame_args_;
   viz::BeginFrameAck last_begin_frame_ack_;
   base::TimeTicks posted_begin_impl_frame_deadline_;
-  std::vector<const char*> actions_;
+  std::vector<std::string> actions_;
   raw_ptr<TestScheduler> scheduler_ = nullptr;
   base::TimeDelta frame_interval_;
   std::optional<FrameSkippedReason> last_frame_skipped_reason_;
@@ -373,20 +379,37 @@ class SchedulerTestTaskRunner : public base::TestMockTimeTaskRunner {
   base::circular_deque<base::TestPendingTask> tasks_to_requeue_;
 };
 
-class SchedulerTest : public testing::Test,
-                      public testing::WithParamInterface<bool> {
+class SchedulerTest
+    : public testing::Test,
+      public testing::WithParamInterface<std::tuple<bool, bool>> {
  public:
   SchedulerTest()
       : task_runner_(base::MakeRefCounted<SchedulerTestTaskRunner>()),
         fake_external_begin_frame_source_(nullptr),
         tracker_collection_(false) {
-    if (GetParam()) {
-      scoped_feature_list_.InitAndEnableFeature(
-          features::kNoCompositorFrameAcks);
+    std::vector<base::test::FeatureRef> enabled;
+    std::vector<base::test::FeatureRef> disabled;
+    if (std::get<0>(GetParam())) {
+      enabled.push_back(features::kNoCompositorFrameAcks);
     } else {
-      scoped_feature_list_.InitAndDisableFeature(
-          features::kNoCompositorFrameAcks);
+      disabled.push_back(features::kNoCompositorFrameAcks);
     }
+
+    if (std::get<1>(GetParam())) {
+      enabled.push_back(features::kThrottleMainFrameTo60Hz);
+    } else {
+      disabled.push_back(features::kThrottleMainFrameTo60Hz);
+    }
+
+    scoped_feature_list_.InitWithFeatures(enabled, disabled);
+  }
+
+  static std::string GetTestName(
+      testing::TestParamInfo<std::tuple<bool, bool>> info) {
+    std::string first =
+        std::get<0>(info.param) ? "NoCompositorFrameAck" : "CompositorFrameAck";
+    std::string second = std::get<1>(info.param) ? "Throttled" : "NotThrottled";
+    return first + "_" + second;
   }
 
   ~SchedulerTest() override { client_->set_scheduler(nullptr); }
@@ -4186,11 +4209,14 @@ TEST_P(SchedulerTest, ProactiveThrottling) {
 
   // No throttling by default.
   base::TimeDelta interval = base::Hertz(120);
-  EXPECT_TRUE(
-      scheduler_->state_machine().MainFrameThrottledInterval().is_zero());
   SendTestBeginFrameAfterInterval(interval, kSourceId, sequence_number++);
-  EXPECT_TRUE(
-      scheduler_->state_machine().MainFrameThrottledInterval().is_zero());
+  if (base::FeatureList::IsEnabled(features::kThrottleMainFrameTo60Hz)) {
+    EXPECT_GT(scheduler_->state_machine().MainFrameThrottledInterval(),
+              base::Hertz(120));
+  } else {
+    EXPECT_TRUE(
+        scheduler_->state_machine().MainFrameThrottledInterval().is_zero());
+  }
 
   scheduler_->SetShouldThrottleFrameRate(true);
 
@@ -4227,9 +4253,40 @@ TEST_P(SchedulerTest, SetShouldWarmUpWillStartLayerTreeFrameSinkCreation) {
   EXPECT_NO_ACTION();
 }
 
-INSTANTIATE_TEST_SUITE_P(, SchedulerTest, testing::Bool(), [](auto& info) {
-  return info.param ? "NoCompositorFrameAck" : "CompositorFrameAck";
-});
+class SchedulerClientTracksBeginFramePaused : public FakeSchedulerClient {
+ public:
+  // SchedulerClientTracksBeginFramePaused() : FakeSchedulerClient() {}
+  void DidChangeBeginFrameSourcePaused(bool paused) override {
+    num_time_changed_++;
+    is_paused_ = paused;
+  }
+
+  bool is_paused() { return is_paused_; }
+  int num_time_changed() { return num_time_changed_; }
+
+ protected:
+  int num_time_changed_ = 0;
+  bool is_paused_ = false;
+};
+
+TEST_P(SchedulerTest, SchedulerClientShouldSendBeginMainFrameSourcePaused) {
+  SchedulerClientTracksBeginFramePaused* client =
+      new SchedulerClientTracksBeginFramePaused;
+  SetUpScheduler(EXTERNAL_BFS, base::WrapUnique(client));
+
+  scheduler_->OnBeginFrameSourcePausedChanged(true);
+  // Expect client to pick up this change.
+  EXPECT_TRUE(client->is_paused());
+
+  scheduler_->OnBeginFrameSourcePausedChanged(false);
+  EXPECT_FALSE(client->is_paused());
+  EXPECT_EQ(client->num_time_changed(), 2);
+}
+
+INSTANTIATE_TEST_SUITE_P(,
+                         SchedulerTest,
+                         Combine(Bool(), Bool()),
+                         &SchedulerTest::GetTestName);
 
 }  // namespace
 }  // namespace cc

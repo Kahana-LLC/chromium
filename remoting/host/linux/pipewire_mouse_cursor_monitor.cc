@@ -8,6 +8,7 @@
 #include <optional>
 
 #include "base/containers/flat_map.h"
+#include "base/task/sequenced_task_runner.h"
 #include "remoting/host/linux/pipewire_capture_stream.h"
 #include "third_party/webrtc/modules/desktop_capture/desktop_geometry.h"
 #include "third_party/webrtc/modules/desktop_capture/mouse_cursor.h"
@@ -16,45 +17,56 @@
 namespace remoting {
 
 PipewireMouseCursorMonitor::PipewireMouseCursorMonitor(
-    base::WeakPtr<const PipewireCaptureStreamManager> stream_manager)
-    : stream_manager_(std::move(stream_manager)) {}
+    base::WeakPtr<PipewireMouseCursorCapturer> capturer)
+    : capturer_(capturer) {}
 
 PipewireMouseCursorMonitor::~PipewireMouseCursorMonitor() = default;
 
-void PipewireMouseCursorMonitor::Init(Callback* callback, Mode mode) {
+void PipewireMouseCursorMonitor::Init(Callback* callback) {
+  if (!capturer_) {
+    return;
+  }
   callback_ = callback;
-  report_position_ = mode == SHAPE_AND_POSITION;
+  subscription_ = capturer_->AddObserver(this);
+  base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
+      FROM_HERE,
+      base::BindOnce(&PipewireMouseCursorMonitor::ReportInitialCursorInfo,
+                     weak_ptr_factory_.GetWeakPtr()));
 }
 
-void PipewireMouseCursorMonitor::Capture() {
-  if (!stream_manager_) {
+void PipewireMouseCursorMonitor::SetPreferredCaptureInterval(
+    base::TimeDelta interval) {
+  // No-op since callback will be run once cursor is changed.
+}
+
+void PipewireMouseCursorMonitor::OnCursorShapeChanged(
+    PipewireMouseCursorCapturer* capturer) {
+  if (!callback_) {
     return;
   }
+  auto cursor = capturer->GetLatestCursor();
+  if (cursor) {
+    callback_->OnMouseCursor(std::move(cursor));
+  }
+}
 
-  auto active_stream = stream_manager_->GetActiveStreams();
-  auto first = active_stream.begin();
-  if (first == active_stream.end()) {
-    callback_->OnMouseCursor(nullptr);
+void PipewireMouseCursorMonitor::OnCursorPositionChanged(
+    PipewireMouseCursorCapturer* capturer) {
+  if (!callback_) {
     return;
   }
-  base::WeakPtr<PipewireCaptureStream> stream = first->second;
-  std::optional<webrtc::DesktopVector> mouse_cursor_position =
-      stream->CaptureCursorPosition();
-  // Invalid cursor or position
-  if (!mouse_cursor_position.has_value()) {
-    callback_->OnMouseCursor(nullptr);
+  auto position = capturer->GetLatestFractionalCursorPosition();
+  if (position) {
+    callback_->OnMouseCursorFractionalPosition(*position);
+  }
+}
+
+void PipewireMouseCursorMonitor::ReportInitialCursorInfo() {
+  if (!capturer_) {
     return;
   }
-
-  std::unique_ptr<webrtc::MouseCursor> mouse_cursor = stream->CaptureCursor();
-
-  if (mouse_cursor && mouse_cursor->image()->data()) {
-    callback_->OnMouseCursor(mouse_cursor.release());
-  }
-
-  if (report_position_) {
-    callback_->OnMouseCursorPosition(*mouse_cursor_position);
-  }
+  OnCursorShapeChanged(capturer_.get());
+  OnCursorPositionChanged(capturer_.get());
 }
 
 }  // namespace remoting

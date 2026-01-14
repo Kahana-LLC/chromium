@@ -4,11 +4,12 @@
 
 package org.chromium.chrome.browser.tasks.tab_management;
 
+import static org.chromium.build.NullUtil.assertNonNull;
+import static org.chromium.build.NullUtil.assumeNonNull;
 import static org.chromium.chrome.browser.tabwindow.TabWindowManager.INVALID_WINDOW_ID;
 
 import android.app.Activity;
 import android.content.ClipDescription;
-import android.content.Context;
 import android.view.DragEvent;
 import android.view.View;
 import android.view.View.DragShadowBuilder;
@@ -18,11 +19,11 @@ import org.chromium.base.Log;
 import org.chromium.base.ResettersForTesting;
 import org.chromium.base.Token;
 import org.chromium.base.lifetime.Destroyable;
+import org.chromium.base.supplier.NonNullObservableSupplier;
 import org.chromium.base.supplier.ObservableSupplier;
-import org.chromium.base.supplier.Supplier;
+import org.chromium.base.supplier.ObservableSupplierImpl;
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
-import org.chromium.chrome.R;
 import org.chromium.chrome.browser.app.tabwindow.TabWindowManagerSingleton;
 import org.chromium.chrome.browser.dragdrop.ChromeDragDropUtils;
 import org.chromium.chrome.browser.dragdrop.ChromeDropDataAndroid;
@@ -30,26 +31,31 @@ import org.chromium.chrome.browser.dragdrop.ChromeMultiTabDropDataAndroid;
 import org.chromium.chrome.browser.dragdrop.ChromeTabDropDataAndroid;
 import org.chromium.chrome.browser.dragdrop.ChromeTabGroupDropDataAndroid;
 import org.chromium.chrome.browser.multiwindow.MultiInstanceManager;
+import org.chromium.chrome.browser.multiwindow.MultiInstanceManager.PersistedInstanceType;
 import org.chromium.chrome.browser.multiwindow.MultiWindowUtils;
 import org.chromium.chrome.browser.tab.Tab;
+import org.chromium.chrome.browser.tab.TabDragStateData;
 import org.chromium.chrome.browser.tabmodel.TabGroupMetadata;
 import org.chromium.chrome.browser.tabmodel.TabGroupMetadataExtractor;
 import org.chromium.chrome.browser.tabmodel.TabGroupModelFilter;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
+import org.chromium.components.browser_ui.widget.gesture.BackPressHandler;
+import org.chromium.components.messages.MessageDispatcherProvider;
 import org.chromium.ui.base.MimeTypeUtils;
 import org.chromium.ui.dragdrop.DragAndDropDelegate;
 import org.chromium.ui.dragdrop.DragDropGlobalState;
 import org.chromium.ui.dragdrop.DragDropGlobalState.TrackerToken;
 import org.chromium.ui.dragdrop.DragDropMetricUtils;
 import org.chromium.ui.dragdrop.DragDropMetricUtils.DragDropResult;
-import org.chromium.ui.widget.Toast;
 
 import java.util.Collections;
 import java.util.List;
+import java.util.function.Supplier;
 
 /** A helper class that provides access to common logic involved in tab dragging. */
 @NullMarked
-public abstract class TabDragHandlerBase implements View.OnDragListener, Destroyable {
+public abstract class TabDragHandlerBase
+        implements View.OnDragListener, Destroyable, BackPressHandler {
     private static final String TAG = "TabDragHandlerBase";
     private static @Nullable TrackerToken sDragTrackerToken;
 
@@ -63,6 +69,9 @@ public abstract class TabDragHandlerBase implements View.OnDragListener, Destroy
     private @Nullable TabModelSelector mTabModelSelector;
     private @Nullable ObservableSupplier<@Nullable TabGroupModelFilter>
             mCurrentTabGroupModelFilterSupplier;
+    private @Nullable View mDragSourceView;
+    private final ObservableSupplierImpl<Boolean> mDragInProgressSupplier =
+            new ObservableSupplierImpl<>(/* initialValue= */ false);
 
     /**
      * Prepares the tab container view to listen to the drag events and data drop after the drag is
@@ -89,9 +98,7 @@ public abstract class TabDragHandlerBase implements View.OnDragListener, Destroy
     public void setTabModelSelector(TabModelSelector tabModelSelector) {
         mTabModelSelector = tabModelSelector;
         mCurrentTabGroupModelFilterSupplier =
-                mTabModelSelector
-                        .getTabGroupModelFilterProvider()
-                        .getCurrentTabGroupModelFilterSupplier();
+                mTabModelSelector.getCurrentTabGroupModelFilterSupplier();
     }
 
     /** Whether a view drag and drop has started. */
@@ -236,9 +243,15 @@ public abstract class TabDragHandlerBase implements View.OnDragListener, Destroy
     }
 
     protected boolean isTabGroupDrop() {
-        return ChromeDragDropUtils.getTabGroupMetadataFromGlobalState(
-                        getDragDropGlobalState(/* dragEvent= */ null))
-                != null;
+        DragDropGlobalState globalState = getDragDropGlobalState(/* dragEvent= */ null);
+        assertNonNull(globalState);
+        return ChromeDragDropUtils.getTabGroupMetadataFromGlobalState(globalState) != null;
+    }
+
+    protected boolean isMultiTabDrop() {
+        DragDropGlobalState globalState = getDragDropGlobalState(/* dragEvent= */ null);
+        assertNonNull(globalState);
+        return ChromeDragDropUtils.getTabsFromGlobalState(globalState) != null;
     }
 
     protected boolean doesBelongToCurrentModel(boolean draggedIncognito) {
@@ -251,7 +264,8 @@ public abstract class TabDragHandlerBase implements View.OnDragListener, Destroy
         boolean allowDragToCreateInstance =
                 shouldAllowTabDragToCreateInstance()
                         && (TabUiFeatureUtilities.doesOemSupportDragToCreateInstance()
-                                || MultiWindowUtils.getInstanceCount()
+                                || MultiWindowUtils.getInstanceCountWithFallback(
+                                                PersistedInstanceType.ACTIVE)
                                         < MultiWindowUtils.getMaxInstances());
 
         return new ChromeTabDropDataAndroid.Builder()
@@ -262,12 +276,13 @@ public abstract class TabDragHandlerBase implements View.OnDragListener, Destroy
                 .build();
     }
 
-    protected ChromeDropDataAndroid prepareMultiTabDropData(List<Tab> tabs) {
+    protected ChromeDropDataAndroid prepareMultiTabDropData(List<Tab> tabs, Tab primaryTab) {
         int windowId = TabWindowManagerSingleton.getInstance().getIdForWindow(getActivity());
         boolean allowDragToCreateInstance =
                 shouldAllowMultiTabDragToCreateInstance()
                         && (TabUiFeatureUtilities.doesOemSupportDragToCreateInstance()
-                                || MultiWindowUtils.getInstanceCount()
+                                || MultiWindowUtils.getInstanceCountWithFallback(
+                                                PersistedInstanceType.ACTIVE)
                                         < MultiWindowUtils.getMaxInstances());
 
         ChromeMultiTabDropDataAndroid.Builder builder = new ChromeMultiTabDropDataAndroid.Builder();
@@ -275,7 +290,7 @@ public abstract class TabDragHandlerBase implements View.OnDragListener, Destroy
         builder.withWindowId(windowId);
         // Reverse the order to preserve the order in the destination strip.
         Collections.reverse(tabs);
-        builder.withTabs(tabs);
+        builder.withTabs(tabs).withPrimaryTab(primaryTab);
         return builder.build();
     }
 
@@ -292,7 +307,8 @@ public abstract class TabDragHandlerBase implements View.OnDragListener, Destroy
                         isGroupShared);
         boolean allowDragToCreateInstance =
                 shouldAllowGroupDragToCreateInstance(tabGroupId)
-                        && (MultiWindowUtils.getInstanceCount()
+                        && (MultiWindowUtils.getInstanceCountWithFallback(
+                                        PersistedInstanceType.ACTIVE)
                                 < MultiWindowUtils.getMaxInstances());
 
         ChromeTabGroupDropDataAndroid.Builder builder = new ChromeTabGroupDropDataAndroid.Builder();
@@ -302,7 +318,7 @@ public abstract class TabDragHandlerBase implements View.OnDragListener, Destroy
             builder.withTabGroupMetadata(metadata);
         }
 
-        return builder.build();
+        return builder.withTabs(groupedTabs).build();
     }
 
     /**
@@ -312,15 +328,22 @@ public abstract class TabDragHandlerBase implements View.OnDragListener, Destroy
      * @param builder {@link DragShadowBuilder} to build a drag shadow.
      * @param dropData A {@link ChromeDropDataAndroid} object pointing to the data to be transferred
      *     by the drag and drop operation.
+     * @return whether the drag started.
      */
     protected boolean startDrag(
             View dragSourceView, DragShadowBuilder builder, ChromeDropDataAndroid dropData) {
+        mDragSourceView = dragSourceView;
         sDragTrackerToken =
                 DragDropGlobalState.store(
                         mMultiInstanceManager.getCurrentInstanceId(), dropData, builder);
         boolean res = mDragAndDropDelegate.startDragAndDrop(dragSourceView, builder, dropData);
         if (!res) {
+            // The drag failed to start reset the token.
             clearDragDropGlobalState();
+        } else {
+            // The drag succeed we can begin the drag.
+            setTabDraggingState(dropData, true);
+            mDragInProgressSupplier.set(true);
         }
         return res;
     }
@@ -333,13 +356,19 @@ public abstract class TabDragHandlerBase implements View.OnDragListener, Destroy
     protected void finishDrag(boolean dropHandled) {
         // Get the drag source Chrome instance id before it is cleared as it may be closed.
         @Nullable DragDropGlobalState dragDropGlobalState = getDragDropGlobalState(null);
+        if (dragDropGlobalState != null && dragDropGlobalState.getData() != null) {
+            setTabDraggingState((ChromeDropDataAndroid) dragDropGlobalState.getData(), false);
+        }
         int sourceInstanceId =
                 dragDropGlobalState != null
                         ? dragDropGlobalState.getDragSourceInstance()
                         : INVALID_WINDOW_ID;
         boolean isTabGroupDrop = isTabGroupDrop();
+        boolean isMultiTabDrop = isMultiTabDrop();
 
         clearDragDropGlobalState();
+        mDragInProgressSupplier.set(false);
+        mDragSourceView = null;
 
         // Close the source instance window if it has no tabs.
         boolean didCloseWindow = mMultiInstanceManager.closeChromeWindowIfEmpty(sourceInstanceId);
@@ -347,23 +376,25 @@ public abstract class TabDragHandlerBase implements View.OnDragListener, Destroy
         // Only record for source strip to avoid duplicate.
         if (dropHandled) {
             DragDropMetricUtils.recordDragDropResult(
-                    DragDropResult.SUCCESS, mIsAppInDesktopWindowSupplier.get(), isTabGroupDrop);
-            DragDropMetricUtils.recordDragDropClosedWindow(didCloseWindow, isTabGroupDrop);
-        } else if (MultiWindowUtils.getInstanceCount() >= MultiWindowUtils.getMaxInstances()) {
-            Context context = getActivity().getWindow().getContext();
-            Toast.makeText(
-                            context,
-                            context.getResources()
-                                    .getString(
-                                            R.string.max_number_of_windows,
-                                            MultiWindowUtils.getMaxInstances()),
-                            Toast.LENGTH_LONG)
-                    .show();
+                    DragDropResult.SUCCESS,
+                    mIsAppInDesktopWindowSupplier.get(),
+                    isTabGroupDrop,
+                    isMultiTabDrop);
+            DragDropMetricUtils.recordDragDropClosedWindow(
+                    didCloseWindow, isTabGroupDrop, isMultiTabDrop);
+        } else if (MultiWindowUtils.getInstanceCountWithFallback(PersistedInstanceType.ACTIVE)
+                >= MultiWindowUtils.getMaxInstances()) {
+            assumeNonNull(mTabModelSelector);
+            assumeNonNull(mTabModelSelector.getCurrentTab());
+            var windowAndroid = mTabModelSelector.getCurrentTab().getWindowAndroid();
+            mMultiInstanceManager.showInstanceCreationLimitMessage(
+                    MessageDispatcherProvider.from(windowAndroid));
             ChromeDragDropUtils.recordTabOrGroupDragToCreateInstanceFailureCount();
             DragDropMetricUtils.recordDragDropResult(
                     DragDropResult.IGNORED_MAX_INSTANCES,
                     mIsAppInDesktopWindowSupplier.get(),
-                    isTabGroupDrop);
+                    isTabGroupDrop,
+                    isMultiTabDrop);
         }
     }
 
@@ -394,8 +425,53 @@ public abstract class TabDragHandlerBase implements View.OnDragListener, Destroy
         return null;
     }
 
+    /** Currently, don't do anything during Backpress key while tabs being dragged. */
+    @Override
+    public boolean invokeBackActionOnEscape() {
+        return false;
+    }
+
+    @Override
+    public @Nullable Boolean handleEscPress() {
+        return cancelDrag() == BackPressResult.SUCCESS;
+    }
+
+    /** This handler is only active when the tabs are being dragged. */
+    @Override
+    public NonNullObservableSupplier<Boolean> getHandleBackPressChangedSupplier() {
+        return mDragInProgressSupplier;
+    }
+
+    private @BackPressResult int cancelDrag() {
+        if (mDragSourceView != null) {
+            mDragSourceView.cancelDragAndDrop();
+            return BackPressResult.SUCCESS;
+        }
+        return BackPressResult.FAILURE;
+    }
+
     public static void setDragTrackerTokenForTesting(TrackerToken token) {
         sDragTrackerToken = token;
         ResettersForTesting.register(() -> sDragTrackerToken = null);
+    }
+
+    private void setTabDraggingState(ChromeDropDataAndroid dropData, boolean isDragging) {
+        final List<Tab> tabs;
+        if (dropData instanceof ChromeTabDropDataAndroid tabDropData) {
+            tabs = Collections.singletonList(tabDropData.tab);
+        } else if (dropData instanceof ChromeMultiTabDropDataAndroid tabsDropData) {
+            tabs = tabsDropData.tabs;
+        } else if (dropData instanceof ChromeTabGroupDropDataAndroid groupDropData) {
+            tabs = groupDropData.tabs;
+        } else {
+            assert false : "Unsupported drop data type: " + dropData.getClass().getName();
+            return;
+        }
+
+        if (tabs != null) {
+            for (Tab tab : tabs) {
+                TabDragStateData.getOrCreateForTab(tab).setIsDragging(isDragging);
+            }
+        }
     }
 }

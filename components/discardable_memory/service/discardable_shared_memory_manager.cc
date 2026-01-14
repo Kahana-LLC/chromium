@@ -184,7 +184,7 @@ uint64_t GetDefaultMemoryLimit() {
   base::FilePath shmem_dir;
   if (base::GetShmemTempDir(false, &shmem_dir)) {
     int64_t shmem_dir_amount_of_free_space =
-        base::SysInfo::AmountOfFreeDiskSpace(shmem_dir);
+        base::SysInfo::AmountOfFreeDiskSpace(shmem_dir).value_or(-1);
     DCHECK_GT(shmem_dir_amount_of_free_space, 0);
     int64_t shmem_dir_amount_of_free_space_mb =
         shmem_dir_amount_of_free_space / kMegabyte;
@@ -203,8 +203,9 @@ uint64_t GetDefaultMemoryLimit() {
 #endif
 
   // Allow 25% of physical memory to be used for discardable memory.
-  return std::min(max_default_memory_limit,
-                  base::SysInfo::AmountOfPhysicalMemory() / 4);
+  return std::min(
+      max_default_memory_limit,
+      base::SysInfo::AmountOfPhysicalMemory().InBytesUnsigned() / 4);
 }
 
 const int kEnforceMemoryPolicyDelayMs = 1000;
@@ -232,10 +233,10 @@ DiscardableSharedMemoryManager::DiscardableSharedMemoryManager()
           base::SingleThreadTaskRunner::GetCurrentDefault()),
       enforce_memory_policy_pending_(false),
       mojo_thread_message_loop_(base::CurrentThread::GetNull()),
-      memory_pressure_listener_(
+      memory_pressure_listener_registration_(
           FROM_HERE,
-          base::BindRepeating(&DiscardableSharedMemoryManager::OnMemoryPressure,
-                              base::Unretained(this))),
+          base::MemoryPressureListenerTag::kDiscardableSharedMemoryManager,
+          this),
       memory_pressure_task_runner_(base::ThreadPool::CreateSequencedTaskRunner(
           {base::WithBaseSyncPrimitives()})) {
   DCHECK(!g_instance)
@@ -646,12 +647,15 @@ void DiscardableSharedMemoryManager::InvalidateMojoThreadWeakPtrs(
 }
 
 void DiscardableSharedMemoryManager::OnMemoryPressure(
-    base::MemoryPressureListener::MemoryPressureLevel memory_pressure_level) {
+    base::MemoryPressureLevel memory_pressure_level) {
+  if (memory_pressure_level == base::MEMORY_PRESSURE_LEVEL_NONE) {
+    return;
+  }
+
   memory_pressure_task_runner_->PostTask(
       FROM_HERE,
       base::BindOnce(
-          [](base::MemoryPressureListener::MemoryPressureLevel
-                 memory_pressure_level) {
+          [](base::MemoryPressureLevel memory_pressure_level) {
             // It is safe to access the global instance because memory pressure
             // worker thread will be flushed in destructor if the thread is
             // still running.
@@ -664,19 +668,19 @@ void DiscardableSharedMemoryManager::OnMemoryPressure(
 }
 
 void DiscardableSharedMemoryManager::HandleMemoryPressureOnSequence(
-    base::MemoryPressureListener::MemoryPressureLevel memory_pressure_level) {
+    base::MemoryPressureLevel memory_pressure_level) {
   DCHECK(memory_pressure_task_runner_->RunsTasksInCurrentSequence());
 
   base::AutoLock lock(lock_);
 
   switch (memory_pressure_level) {
-    case base::MemoryPressureListener::MEMORY_PRESSURE_LEVEL_NONE:
+    case base::MEMORY_PRESSURE_LEVEL_NONE:
       break;
-    case base::MemoryPressureListener::MEMORY_PRESSURE_LEVEL_MODERATE:
+    case base::MEMORY_PRESSURE_LEVEL_MODERATE:
       // Purge memory until usage is within half of |memory_limit_|.
       ReduceMemoryUsageUntilWithinLimit(memory_limit_ / 2);
       break;
-    case base::MemoryPressureListener::MEMORY_PRESSURE_LEVEL_CRITICAL:
+    case base::MEMORY_PRESSURE_LEVEL_CRITICAL:
       // Purge everything possible when pressure is critical.
       ReduceMemoryUsageUntilWithinLimit(0);
       break;

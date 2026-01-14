@@ -13,8 +13,13 @@
 #import "services/network/public/cpp/resource_request.h"
 
 class AuthenticationService;
-@class BWGConfiguration;
+@class GeminiConfiguration;
+@class GeminiPageContext;
+@class GeminiSettingsAction;
+@class GeminiSettingsMetadata;
 @protocol BWGGatewayProtocol;
+
+typedef NS_ENUM(NSInteger, GeminiSettingsContext);
 
 using BWGEligibilityCallback = void (^)(BOOL eligible);
 
@@ -38,28 +43,6 @@ enum class BWGLocationPermissionState {
   kEnterpriseDisabled,
 };
 
-// TODO(crbug.com/434662294): Remove when migration is complete.
-// Enum representing the PageContext state of the BWG experience.
-// This needs to stay in sync with GCRGeminiPageState (and its SDK counterpart).
-enum class BWGPageContextState {
-  // Default state.
-  kUnknown,
-  // PageContext was successfully attached.
-  kSuccessfullyAttached,
-  // PageContext should be detached.
-  kShouldDetach,
-  // PageContext is protected.
-  kProtected,
-  // PageContext is present but likely to be blocked.
-  kBlocked,
-  // There was an error extracting the PageContext.
-  kError,
-  // PageContext should be detached due to an enterprise policy.
-  kEnterpriseDisabled,
-  // PageContext should be detached due to the user disabling it.
-  kUserDisabled,
-};
-
 // Enum representing the page context computation state of the BWG experience.
 // This needs to stay in sync with GCRGeminiPageContextComputationState (and its
 // SDK counterpart).
@@ -78,6 +61,8 @@ enum class BWGPageContextComputationState {
   // The page contains blocked content that could be used for Gemini, but will
   // likely be rejected due to its content.
   kBlocked,
+  // The page context is still being created.
+  kPending,
 };
 
 // Enum representing the page context attachment state of the BWG experience.
@@ -96,16 +81,21 @@ enum class BWGPageContextAttachmentState {
   kEnterpriseDisabled,
 };
 
-// Creates request body data using a prompt and page context.
-std::string CreateRequestBody(
-    std::string prompt,
-    std::unique_ptr<optimization_guide::proto::PageContext> page_context);
-
-// Creates resource request for loading glic.
-std::unique_ptr<network::ResourceRequest> CreateResourceRequest();
+// Enum representing the Gemini view state.
+// This needs to stay in sync with GCRGeminiViewState (and its SDK counterpart).
+enum class GeminiViewState {
+  // The Gemini view state is unknown.
+  kUnknown,
+  // The Gemini view is hidden.
+  kHidden,
+  // The Gemini view is collapsed (minimized) into a circle.
+  kCollapsed,
+  // The Gemini view is expanded.
+  kExpanded,
+};
 
 // Starts the overlay experience with the given configuration.
-void StartBwgOverlay(BWGConfiguration* bwg_configuration);
+void StartBwgOverlay(GeminiConfiguration* gemini_configuration);
 
 // Gets the portion of the PageContext script that checks whether PageContext
 // should be detached from the request.
@@ -128,6 +118,28 @@ void UpdatePageAttachmentState(
 
 // Returns true if a URL is protected.
 bool IsProtectedUrl(std::string url);
+
+// Updates the page context of the floaty.
+void UpdatePageContext(GeminiPageContext* gemini_page_context);
+
+// Returns the Gemini settings that the user is eligible for.
+NSArray<GeminiSettingsMetadata*>* GetEligibleSettings(
+    AuthenticationService* auth_service);
+
+// Returns the settings action for a given settings context.
+GeminiSettingsAction* ActionForSettingsContext(GeminiSettingsContext context);
+
+// Updates Gemini overlay offset with a specific `opacity`. A positive `offset`
+// will move the overlay towards the top of the viewport while a negative
+// `offset` will move the overlay towards the bottom and even below the
+// viewport.
+void UpdateOverlayOffsetWithOpacity(CGFloat offset, CGFloat opacity);
+
+// Updates Gemini floaty view state.
+void UpdateGeminiViewState(GeminiViewState view_state);
+
+// Returns the current `GeminiViewState` of the floaty.
+GeminiViewState GetCurrentGeminiViewState();
 
 }  // namespace ios::provider
 

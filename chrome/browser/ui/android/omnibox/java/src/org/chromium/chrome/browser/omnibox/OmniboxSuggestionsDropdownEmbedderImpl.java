@@ -9,6 +9,7 @@ import static org.chromium.build.NullUtil.assertNonNull;
 import android.content.ComponentCallbacks;
 import android.content.Context;
 import android.content.res.Configuration;
+import android.graphics.Matrix;
 import android.view.View;
 import android.view.View.OnLayoutChangeListener;
 import android.view.ViewTreeObserver.OnGlobalLayoutListener;
@@ -17,19 +18,20 @@ import android.view.WindowInsets;
 import androidx.core.graphics.Insets;
 import androidx.core.view.WindowInsetsCompat;
 
-import org.chromium.base.BuildInfo;
 import org.chromium.base.Callback;
+import org.chromium.base.DeviceInfo;
 import org.chromium.base.supplier.ObservableSupplierImpl;
-import org.chromium.base.supplier.Supplier;
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.browser_controls.BrowserControlsStateProvider.ControlsPosition;
+import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.omnibox.styles.OmniboxResourceProvider;
 import org.chromium.chrome.browser.omnibox.suggestions.OmniboxSuggestionsDropdownEmbedder;
 import org.chromium.ui.base.DeviceFormFactor;
 import org.chromium.ui.base.ViewUtils;
 import org.chromium.ui.base.WindowAndroid;
-import org.chromium.ui.display.DisplayUtil;
+
+import java.util.function.Supplier;
 
 /**
  * Implementation of {@link OmniboxSuggestionsDropdownEmbedder} that positions it using an "anchor"
@@ -59,6 +61,7 @@ class OmniboxSuggestionsDropdownEmbedderImpl
     private int mWindowHeightDp;
     private @Nullable WindowInsetsCompat mWindowInsetsCompat;
     private final @Nullable View mBaseChromeLayout;
+    private final LocationBarDataProvider mLocationBarDataProvider;
 
     /**
      * @param windowAndroid Window object in which the dropdown will be displayed.
@@ -79,6 +82,7 @@ class OmniboxSuggestionsDropdownEmbedderImpl
      *     out of this region to be fully visible and interactable. This is used to ensure the
      *     suggestions list draws edge to edge when appropriate. This should only be used when the
      *     soft keyboard is not visible.
+     * @param locationBarDataProvider Provides LocationBar data, e.g. the current URL.
      */
     OmniboxSuggestionsDropdownEmbedderImpl(
             WindowAndroid windowAndroid,
@@ -88,7 +92,8 @@ class OmniboxSuggestionsDropdownEmbedderImpl
             @Nullable View baseChromeLayout,
             Supplier<@ControlsPosition Integer> controlsPositionSupplier,
             Supplier<Integer> keyboardHeightSupplier,
-            Supplier<Integer> bottomWindowPaddingSupplier) {
+            Supplier<Integer> bottomWindowPaddingSupplier,
+            LocationBarDataProvider locationBarDataProvider) {
         mWindowAndroid = windowAndroid;
         mAnchorView = anchorView;
         mAlignmentView = alignmentView;
@@ -102,6 +107,7 @@ class OmniboxSuggestionsDropdownEmbedderImpl
         mWindowWidthDp = configuration.smallestScreenWidthDp;
         mWindowHeightDp = configuration.screenHeightDp;
         mBaseChromeLayout = baseChromeLayout;
+        mLocationBarDataProvider = locationBarDataProvider;
         recalculateOmniboxAlignment();
     }
 
@@ -125,6 +131,14 @@ class OmniboxSuggestionsDropdownEmbedderImpl
         if (mForcePhoneStyleOmnibox) return false;
         return mWindowWidthDp >= DeviceFormFactor.MINIMUM_TABLET_WIDTH_DP
                 && DeviceFormFactor.isWindowOnTablet(mWindowAndroid);
+    }
+
+    @Override
+    public boolean shouldPassThroughUnhandledTouchEvents() {
+        return ChromeFeatureList.sOmniboxAutofocusOnIncognitoNtp.isEnabled()
+                && mLocationBarDataProvider
+                        .getNewTabPageDelegate()
+                        .isIncognitoNewTabPageCurrentlyVisible();
     }
 
     @Override
@@ -183,7 +197,16 @@ class OmniboxSuggestionsDropdownEmbedderImpl
 
     @Override
     public float getVerticalTranslationForAnimation() {
-        return mAlignmentView.getTranslationY();
+        // With TOOLBAR_PHONE_ANIMATION_REFACTOR, the alignment view's translation may be handled by
+        // the animation matrix instead of directly through the view's translationY.
+        Matrix matrix = mAlignmentView.getAnimationMatrix();
+        if (matrix != null) {
+            float[] values = new float[9];
+            matrix.getValues(values);
+            return values[Matrix.MTRANS_Y];
+        } else {
+            return mAlignmentView.getTranslationY();
+        }
     }
 
     /**
@@ -266,7 +289,7 @@ class OmniboxSuggestionsDropdownEmbedderImpl
         int keyboardHeight = mKeyboardHeightSupplier.get();
 
         int windowHeight;
-        if (BuildInfo.getInstance().isAutomotive
+        if (DeviceInfo.isAutomotive()
                 && contentView != null
                 && contentView.getRootWindowInsets() != null) {
             // Some automotive devices dismiss bottom system bars when bringing up the keyboard,
@@ -283,7 +306,8 @@ class OmniboxSuggestionsDropdownEmbedderImpl
                             - systemBars.top
                             - systemBars.bottom;
         } else {
-            windowHeight = DisplayUtil.dpToPx(mWindowAndroid.getDisplay(), mWindowHeightDp);
+            // TODO(crbug.com/446742684): Improve positioning logic calculations
+            windowHeight = mWindowAndroid.getDisplay().getDisplayHeight();
         }
 
         int paddingBottom = 0;
@@ -298,6 +322,7 @@ class OmniboxSuggestionsDropdownEmbedderImpl
                         .getDimensionPixelSize(R.dimen.omnibox_min_space_above_window_bottom);
         int windowSpace =
                 Math.min(windowHeight - keyboardHeight, windowHeight - minSpaceAboveWindowBottom);
+
         // If content view is null, then omnibox might not be in the activity content.
         int contentSpace =
                 contentView == null
@@ -341,5 +366,9 @@ class OmniboxSuggestionsDropdownEmbedderImpl
         boolean result = !windowInsetsCompat.equals(mWindowInsetsCompat);
         mWindowInsetsCompat = windowInsetsCompat;
         return result;
+    }
+
+    public void destroy() {
+        mContext.unregisterComponentCallbacks(this);
     }
 }

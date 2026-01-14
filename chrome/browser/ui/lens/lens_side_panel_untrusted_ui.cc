@@ -13,8 +13,10 @@
 #include "chrome/browser/ui/lens/lens_overlay_side_panel_coordinator.h"
 #include "chrome/browser/ui/lens/lens_overlay_theme_utils.h"
 #include "chrome/browser/ui/lens/lens_search_controller.h"
+#include "chrome/browser/ui/lens/lens_search_feature_flag_utils.h"
 #include "chrome/browser/ui/lens/lens_searchbox_controller.h"
 #include "chrome/browser/ui/webui/searchbox/lens_searchbox_handler.h"
+#include "chrome/browser/ui/webui/theme_source.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/grit/branded_strings.h"
 #include "chrome/grit/generated_resources.h"
@@ -22,44 +24,16 @@
 #include "chrome/grit/lens_shared_resources_map.h"
 #include "chrome/grit/lens_untrusted_resources.h"
 #include "chrome/grit/lens_untrusted_resources_map.h"
+#include "components/contextual_search/contextual_search_metrics_recorder.h"
 #include "components/lens/lens_features.h"
 #include "components/strings/grit/components_strings.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_ui.h"
 #include "content/public/browser/web_ui_data_source.h"
-#include "ui/webui/color_change_listener/color_change_handler.h"
+#include "third_party/lens_server_proto/aim_communication.pb.h"
+#include "ui/base/l10n/l10n_util.h"
 #include "ui/webui/resources/cr_components/composebox/composebox.mojom.h"
 #include "ui/webui/webui_util.h"
-
-namespace {
-static constexpr webui::LocalizedString kStrings[] = {
-      // Composebox.
-      {"composeboxCancelButtonTitle", IDS_NTP_COMPOSE_CANCEL_BUTTON_A11Y_LABEL},
-      {"composeboxCancelButtonTitleInput",
-       IDS_NTP_COMPOSE_CANCEL_BUTTON_A11Y_LABEL_INPUT},
-      {"composeboxImageUploadButtonTitle",
-       IDS_NTP_COMPOSE_IMAGE_UPLOAD_BUTTON_A11Y_LABEL},
-      {"composeboxPdfUploadButtonTitle",
-       IDS_NTP_COMPOSE_PDF_UPLOAD_BUTTON_A11Y_LABEL},
-      {"composeboxPlaceholderText", IDS_NTP_COMPOSE_PLACEHOLDER_TEXT},
-      {"composeboxSubmitButtonTitle", IDS_NTP_COMPOSE_SUBMIT_BUTTON_A11Y_LABEL},
-      {"composeboxDeleteFileTitle", IDS_NTP_COMPOSE_DELETE_FILE_A11Y_LABEL},
-      {"composeboxFileUploadStartedText",
-       IDS_NTP_COMPOSE_FILE_UPLOAD_STARTED_A11Y_TEXT},
-      {"composeboxFileUploadCompleteText",
-       IDS_NTP_COMPOSE_FILE_UPLOAD_COMPLETE_A11Y_TEXT},
-      {"composeboxFileUploadInvalidEmptySize",
-       IDS_NTP_COMPOSE_FILE_UPLOAD_INVALID_EMPTY_SIZE},
-      {"composeboxFileUploadInvalidTooLarge",
-       IDS_NTP_COMPOSE_FILE_UPLOAD_INVALID_TOO_LARGE},
-      {"composeboxFileUploadImageProcessingError",
-       IDS_NTP_COMPOSE_FILE_UPLOAD_IMAGE_PROCESSING_ERROR},
-      {"composeboxFileUploadValidationFailed",
-       IDS_NTP_COMPOSE_FILE_UPLOAD_VALIDATION_FAILED},
-      {"composeboxFileUploadFailed", IDS_NTP_COMPOSE_FILE_UPLOAD_FAILED},
-      {"composeboxFileUploadExpired", IDS_NTP_COMPOSE_FILE_UPLOAD_EXPIRED},
-};
-}
 
 namespace lens {
 
@@ -104,8 +78,10 @@ LensSidePanelUntrustedUI::LensSidePanelUntrustedUI(content::WebUI* web_ui)
   html_source->AddLocalizedString(
       "searchboxGhostLoaderNoSuggestText",
       IDS_GOOGLE_SEARCH_BOX_CONTEXTUAL_NO_SUGGEST_TEXT);
-  html_source->AddLocalizedString("feedbackToastMessage",
-                                  IDS_LENS_OVERLAY_FEEDBACK_TOAST_MESSAGE);
+  html_source->AddLocalizedString(
+      "feedbackToastMessage", lens::features::IsLensUpdatedFeedbackEnabled()
+                                  ? IDS_LENS_OVERLAY_FEEDBACK_TOAST_MESSAGE_ALT
+                                  : IDS_LENS_OVERLAY_FEEDBACK_TOAST_MESSAGE);
   html_source->AddLocalizedString("sendFeedbackButtonText",
                                   IDS_LENS_OVERLAY_SEND_FEEDBACK_BUTTON_LABEL);
   html_source->AddLocalizedString(
@@ -135,6 +111,9 @@ LensSidePanelUntrustedUI::LensSidePanelUntrustedUI(content::WebUI* web_ui)
   html_source->AddBoolean(
       "newFeedbackEnabled",
       lens::features::IsLensSearchSidePanelNewFeedbackEnabled());
+  html_source->AddInteger(
+      "updatedFeedbackToastTimeoutMs",
+      lens::features::GetLensUpdatedFeedbackToastTimeoutMs());
   html_source->AddString("resultsSearchURL",
                          lens::features::GetLensOverlayResultsSearchURL());
   html_source->AddBoolean(
@@ -143,8 +122,32 @@ LensSidePanelUntrustedUI::LensSidePanelUntrustedUI(content::WebUI* web_ui)
   html_source->AddBoolean(
       "enableSummarizeSuggestionHint",
       lens::features::ShouldEnableSummarizeHintForContextualSuggest());
-  html_source->AddBoolean("enableAimSearchbox",
-                          lens::features::GetAimSearchboxEnabled());
+  html_source->AddBoolean(
+      "enableWebviewResults",
+      lens::features::IsLensSidePanelWebviewResultsEnabled());
+  html_source->AddBoolean("enableLensAimSuggestions",
+                          lens::features::GetAimSuggestionsEnabled());
+  html_source->AddBoolean(
+      "enableLensAimSuggestionsGradientBackground",
+      lens::features::GetAimSuggestionsGradientBackgroundEnabled());
+
+  // Aim M3 flags
+  const bool aim_enabled = lens::IsAimM3Enabled(Profile::FromWebUI(web_ui));
+  html_source->AddBoolean(
+      "enableFloatingGForHeader",
+      aim_enabled && lens::features::GetEnableFloatingGForHeader());
+  html_source->AddBoolean(
+      "enableClientSideAimHeader",
+      aim_enabled && lens::features::GetEnableClientSideHeader());
+  html_source->AddBoolean(
+      "enableAimSearchbox",
+      aim_enabled && lens::features::GetAimSearchboxEnabled());
+  html_source->AddBoolean("showLensButton",
+                          lens::features::GetEnableLensButtonInSearchbox());
+  html_source->AddBoolean("updatedFeedbackEnabled",
+                          aim_enabled &&
+                              lens::features::GetAimSearchboxEnabled() &&
+                              lens::features::IsLensUpdatedFeedbackEnabled());
 
   // Allow FrameSrc from all Google subdomains as redirects can occur.
   GURL results_side_panel_url =
@@ -165,18 +168,46 @@ LensSidePanelUntrustedUI::LensSidePanelUntrustedUI(content::WebUI* web_ui)
       network::mojom::CSPDirectiveName::StyleSrc,
       "style-src 'self' chrome-untrusted://resources chrome-untrusted://theme");
 
-  // ComposeBox LoadTimeData
-  html_source->AddLocalizedStrings(kStrings);
   // Support no file types.
   html_source->AddString("composeboxImageFileTypes", "");
   html_source->AddString("composeboxAttachmentFileTypes", "");
   html_source->AddInteger("composeboxFileMaxSize", 0);
   html_source->AddInteger("composeboxFileMaxCount", 0);
-  // Disable ZPS.
-  html_source->AddBoolean("composeboxShowZps", false);
+  // Typed suggest is only enabled for typeahead suggestions.
+  html_source->AddBoolean(
+      "composeboxShowTypedSuggest",
+      lens::features::IsLensAimTypeAheadSuggestionsEnabled());
+  html_source->AddBoolean("composeboxShowTypedSuggestWithContext", true);
+  // Enable ZPS if suggestions are enabled.
+  html_source->AddBoolean("composeboxShowZps",
+                          lens::features::GetAimSuggestionsEnabled());
+  // Disable image context suggestions.
+  html_source->AddBoolean("composeboxShowImageSuggest", false);
+  // Disable context menu and related features.
+  html_source->AddBoolean("composeboxShowContextMenu", false);
+  html_source->AddBoolean("composeboxShowContextMenuDescription", true);
   // Send event when escape is pressed.
   html_source->AddBoolean("composeboxCloseByEscape", true);
+  html_source->AddBoolean("composeboxShowLensSearchChip", false);
+  html_source->AddBoolean("composeboxShowRecentTabChip", false);
+  // Enable submit button.
+  html_source->AddBoolean("composeboxShowSubmit", true);
+  // Enables a fix that causes no flickering when transitioning between ZPS and
+  // typed suggestions.
+  html_source->AddBoolean("composeboxNoFlickerSuggestionsFix", true);
+  // Specify metrics source.
+  html_source->AddString(
+      "composeboxSource",
+      contextual_search::ContextualSearchMetricsRecorder::
+          ContextualSearchSourceToString(
+              contextual_search::ContextualSearchSource::kLens));
 
+  // Add strings for post message communication with the remote UI.
+  lens::ClientToAimMessage handshake_ping;
+  handshake_ping.mutable_handshake_ping()->add_capabilities(
+      lens::FeatureCapability::DEFAULT);
+  html_source->AddString("handshakeMessage",
+                         handshake_ping.SerializeAsString());
 
   // Add required resources.
   webui::SetupWebUIDataSource(html_source, kLensUntrustedResources,
@@ -195,6 +226,9 @@ LensSidePanelUntrustedUI::LensSidePanelUntrustedUI(content::WebUI* web_ui)
           ? "//resources/cr_components/searchbox/icons/google_g_cr23.svg"
           : "//resources/cr_components/searchbox/icons/google_g.svg");
   html_source->AddBoolean("reportMetrics", false);
+  html_source->AddLocalizedString(
+      "lensSearchButtonLabel",
+      IDS_TOOLTIP_LENS_REINVOKE_VISUAL_SELECTION_A11Y_LABEL);
   html_source->AddLocalizedString("searchBoxHint",
                                   IDS_GOOGLE_LENS_SEARCH_BOX_EMPTY_HINT);
   html_source->AddLocalizedString("searchBoxHintMultimodal",
@@ -203,7 +237,6 @@ LensSidePanelUntrustedUI::LensSidePanelUntrustedUI(content::WebUI* web_ui)
   html_source->AddBoolean(
       "forceHideEllipsis",
       lens::features::GetVisualSelectionUpdatesHideCsbEllipsis());
-  html_source->AddBoolean("queryAutocompleteOnEmptyInput", true);
   html_source->AddBoolean(
       "enableCsbMotionTweaks",
       lens::features::GetVisualSelectionUpdatesEnableCsbMotionTweaks());
@@ -213,6 +246,25 @@ LensSidePanelUntrustedUI::LensSidePanelUntrustedUI(content::WebUI* web_ui)
   html_source->AddBoolean(
       "enableThumbnailSizingTweaks",
       lens::features::GetVisualSelectionUpdatesEnableThumbnailSizingTweaks());
+  html_source->AddString(
+      "searchboxComposePlaceholder",
+      l10n_util::GetStringUTF8(IDS_LENS_COMPOSEBOX_HINT_TEXT));
+  html_source->AddBoolean("composeboxShowPdfUpload", false);
+  html_source->AddBoolean("composeboxSmartComposeEnabled", false);
+  html_source->AddBoolean("composeboxShowDeepSearchButton", false);
+  html_source->AddBoolean("composeboxShowCreateImageButton", false);
+  html_source->AddBoolean("composeboxContextDragAndDropEnabled", false);
+  html_source->AddBoolean("steadyComposeboxShowVoiceSearch", false);
+  html_source->AddBoolean("expandedComposeboxShowVoiceSearch", false);
+  html_source->AddBoolean("expandedSearchboxShowVoiceSearch", false);
+
+  // If the ThemeSource isn't added here, since this WebUI is
+  // chrome-untrusted, it will be unable to load stylesheets until a new tab
+  // is opened.
+  content::URLDataSource::Add(
+      Profile::FromWebUI(web_ui),
+      std::make_unique<ThemeSource>(Profile::FromWebUI(web_ui),
+                                    /*serve_untrusted=*/true));
 }
 
 void LensSidePanelUntrustedUI::BindInterface(
@@ -230,20 +282,13 @@ void LensSidePanelUntrustedUI::BindInterface(
 }
 
 void LensSidePanelUntrustedUI::BindInterface(
-    mojo::PendingReceiver<color_change_listener::mojom::PageHandler> receiver) {
-  color_provider_handler_ = std::make_unique<ui::ColorChangeHandler>(
-      web_ui()->GetWebContents(), std::move(receiver));
-}
-
-void LensSidePanelUntrustedUI::BindInterface(
     mojo::PendingReceiver<searchbox::mojom::PageHandler> receiver) {
   LensSearchboxController* controller =
       GetLensSearchController().lens_searchbox_controller();
 
   auto handler = std::make_unique<LensSearchboxHandler>(
       std::move(receiver), Profile::FromWebUI(web_ui()),
-      web_ui()->GetWebContents(),
-      /*metrics_reporter=*/nullptr, /*lens_searchbox_client=*/controller);
+      web_ui()->GetWebContents(), /*lens_searchbox_client=*/controller);
   controller->SetSidePanelSearchboxHandler(std::move(handler));
 }
 
@@ -270,9 +315,9 @@ void LensSidePanelUntrustedUI::CreatePageHandler(
         pending_searchbox_handler) {
   DCHECK(pending_page.is_valid());
   auto* controller = GetLensSearchController().lens_composebox_controller();
-  controller->BindComposebox(std::move(pending_page_handler),
-                             std::move(pending_page),
-                             std::move(pending_searchbox_handler));
+  controller->BindComposebox(
+      std::move(pending_page_handler), std::move(pending_page),
+      std::move(pending_searchbox_page), std::move(pending_searchbox_handler));
 }
 
 LensSearchController& LensSidePanelUntrustedUI::GetLensSearchController() {

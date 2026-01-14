@@ -60,7 +60,6 @@
 #include "ui/compositor/layer_type.h"
 #include "ui/compositor/paint_context.h"
 #include "ui/compositor/paint_recorder.h"
-#include "ui/compositor/scoped_animation_duration_scale_mode.h"
 #include "ui/compositor/scoped_layer_animation_settings.h"
 #include "ui/compositor/test/draw_waiter_for_test.h"
 #include "ui/compositor/test/layer_animator_test_controller.h"
@@ -73,6 +72,7 @@
 #include "ui/gfx/font_list.h"
 #include "ui/gfx/geometry/skia_conversions.h"
 #include "ui/gfx/interpolated_transform.h"
+#include "ui/gfx/scoped_animation_duration_scale_mode.h"
 #include "ui/gfx/test/scoped_default_font_description.h"
 
 using cc::MatchesPNGFile;
@@ -431,6 +431,7 @@ class TestCompositorObserver : public CompositorObserver {
   }
 
   void OnDidPresentCompositorFrame(
+      ui::Compositor* compositor,
       uint32_t frame_token,
       const gfx::PresentationFeedback& feedback) override {
     ended_ = true;
@@ -2763,8 +2764,8 @@ TEST_P(LayerWithRealCompositorTest, SwitchCCLayerSolidColorWhileAnimating) {
   EXPECT_EQ(SK_ColorBLACK, root->GetTargetColor());
 
   auto long_duration_animation =
-      std::make_unique<ui::ScopedAnimationDurationScaleMode>(
-          ui::ScopedAnimationDurationScaleMode::SLOW_DURATION);
+      std::make_unique<gfx::ScopedAnimationDurationScaleMode>(
+          gfx::ScopedAnimationDurationScaleMode::SLOW_DURATION);
   {
     ui::ScopedLayerAnimationSettings animation(root->GetAnimator());
     animation.SetTransitionDuration(base::Milliseconds(1000));
@@ -2860,8 +2861,8 @@ TEST_P(LayerWithRealCompositorTest, SwitchCCLayerDeleteLayer) {
       base::BindLambdaForTesting([&]() { l1.reset(); }));
 
   auto long_duration_animation =
-      std::make_unique<ui::ScopedAnimationDurationScaleMode>(
-          ui::ScopedAnimationDurationScaleMode::SLOW_DURATION);
+      std::make_unique<gfx::ScopedAnimationDurationScaleMode>(
+          gfx::ScopedAnimationDurationScaleMode::SLOW_DURATION);
   {
     ui::ScopedLayerAnimationSettings animation(l1->GetAnimator());
     animation.AddObserver(&animation_observer);
@@ -2898,8 +2899,8 @@ TEST_P(LayerWithRealCompositorTest, TreeMutationDuringScaleFactorChange) {
   transform.Translate(10, 5);
 
   auto long_duration_animation =
-      std::make_unique<ui::ScopedAnimationDurationScaleMode>(
-          ui::ScopedAnimationDurationScaleMode::SLOW_DURATION);
+      std::make_unique<gfx::ScopedAnimationDurationScaleMode>(
+          gfx::ScopedAnimationDurationScaleMode::SLOW_DURATION);
   {
     ui::ScopedLayerAnimationSettings animation(layer_to_delete->GetAnimator());
     animation.AddObserver(&animation_observer);
@@ -2964,8 +2965,8 @@ TEST_P(LayerWithRealCompositorTest, TreeMutationDuringScaleFactorChange) {
       [&]() { root->StackChildrenAtBottom({child2.get()}); }));
 
   long_duration_animation =
-      std::make_unique<ui::ScopedAnimationDurationScaleMode>(
-          ui::ScopedAnimationDurationScaleMode::SLOW_DURATION);
+      std::make_unique<gfx::ScopedAnimationDurationScaleMode>(
+          gfx::ScopedAnimationDurationScaleMode::SLOW_DURATION);
   {
     ui::ScopedLayerAnimationSettings animation(child->GetAnimator());
     animation.AddObserver(&animation_observer);
@@ -3017,8 +3018,8 @@ TEST_P(LayerWithRealCompositorTest, ParentOrChildGoneDuringRemove) {
 
     // Schedule a bounds animation on |child|.
     auto long_duration_animation =
-        std::make_unique<ui::ScopedAnimationDurationScaleMode>(
-            ui::ScopedAnimationDurationScaleMode::SLOW_DURATION);
+        std::make_unique<gfx::ScopedAnimationDurationScaleMode>(
+            gfx::ScopedAnimationDurationScaleMode::SLOW_DURATION);
     {
       ui::ScopedLayerAnimationSettings animation(child->GetAnimator());
       animation.AddObserver(&animation_observer);
@@ -3190,19 +3191,19 @@ TEST(LayerDelegateTest, OnLayerBoundsChanged) {
   EXPECT_CALL(delegate,
               OnLayerBoundsChanged(initial_bounds,
                                    PropertyChangeReason::NOT_FROM_ANIMATION))
-      .WillOnce(testing::Invoke([&](const gfx::Rect&, PropertyChangeReason) {
+      .WillOnce([&](const gfx::Rect&, PropertyChangeReason) {
         // Verify that |layer->bounds()| returns the correct value when the
         // delegate is notified.
         EXPECT_EQ(layer->bounds(), kTargetBounds);
-      }));
+      });
   layer->SetBounds(kTargetBounds);
 }
 
 // Verify that LayerDelegate::OnLayerBoundsChanged() is called at every step of
 // a bounds animation.
 TEST(LayerDelegateTest, OnLayerBoundsChangedAnimation) {
-  ScopedAnimationDurationScaleMode scoped_animation_duration_scale_mode(
-      ScopedAnimationDurationScaleMode::NORMAL_DURATION);
+  gfx::ScopedAnimationDurationScaleMode scoped_animation_duration_scale_mode(
+      gfx::ScopedAnimationDurationScaleMode::NORMAL_DURATION);
   LayerAnimatorTestController test_controller(
       LayerAnimator::CreateImplicitAnimator());
   LayerAnimator* const animator = test_controller.animator();
@@ -3230,26 +3231,26 @@ TEST(LayerDelegateTest, OnLayerBoundsChangedAnimation) {
   EXPECT_CALL(delegate,
               OnLayerBoundsChanged(initial_bounds,
                                    PropertyChangeReason::FROM_ANIMATION))
-      .WillOnce(testing::Invoke([&](const gfx::Rect&, PropertyChangeReason) {
+      .WillOnce([&](const gfx::Rect&, PropertyChangeReason) {
         // Verify that |layer->bounds()| returns the correct value when the
         // delegate is notified.
         EXPECT_EQ(layer->bounds(), step_bounds);
         EXPECT_TRUE(
             animator->IsAnimatingProperty(LayerAnimationElement::BOUNDS));
-      }));
+      });
   test_controller.Step(element_raw->duration() / 2);
   testing::Mock::VerifyAndClear(&delegate);
 
   // End the animation.
   EXPECT_CALL(delegate, OnLayerBoundsChanged(
                             step_bounds, PropertyChangeReason::FROM_ANIMATION))
-      .WillOnce(testing::Invoke([&](const gfx::Rect&, PropertyChangeReason) {
+      .WillOnce([&](const gfx::Rect&, PropertyChangeReason) {
         // Verify that |layer->bounds()| returns the correct value when the
         // delegate is notified.
         EXPECT_EQ(layer->bounds(), kTargetBounds);
         EXPECT_FALSE(
             animator->IsAnimatingProperty(LayerAnimationElement::BOUNDS));
-      }));
+      });
   test_controller.Step(element_raw->duration() / 2);
   testing::Mock::VerifyAndClear(&delegate);
 }
@@ -3266,12 +3267,12 @@ TEST(LayerDelegateTest, OnLayerTransformed) {
     EXPECT_CALL(delegate,
                 OnLayerTransformed(gfx::Transform(),
                                    PropertyChangeReason::NOT_FROM_ANIMATION))
-        .WillOnce(testing::Invoke(
+        .WillOnce(
             [&](const gfx::Transform& old_transform, PropertyChangeReason) {
               // Verify that |layer->transform()| returns the correct value when
               // the delegate is notified.
               EXPECT_EQ(target_transform1, layer->transform());
-            }));
+            });
     layer->SetTransform(target_transform1);
   }
   gfx::Transform target_transform2;
@@ -3279,12 +3280,11 @@ TEST(LayerDelegateTest, OnLayerTransformed) {
   EXPECT_CALL(delegate,
               OnLayerTransformed(target_transform1,
                                  PropertyChangeReason::NOT_FROM_ANIMATION))
-      .WillOnce(testing::Invoke(
-          [&](const gfx::Transform& old_transform, PropertyChangeReason) {
-            // Verify that |layer->transform()| returns the correct value when
-            // the delegate is notified.
-            EXPECT_EQ(target_transform2, layer->transform());
-          }));
+      .WillOnce([&](const gfx::Transform& old_transform, PropertyChangeReason) {
+        // Verify that |layer->transform()| returns the correct value when
+        // the delegate is notified.
+        EXPECT_EQ(target_transform2, layer->transform());
+      });
   layer->SetTransform(target_transform2);
 }
 
@@ -3303,8 +3303,8 @@ TEST(LayerDelegateTest, OnLayerTransformedNotCalledWhenUnchanged) {
 // Verify that LayerDelegate::OnLayerTransformed() is called at every step of a
 // non-threaded transform transition.
 TEST(LayerDelegateTest, OnLayerTransformedNonThreadedAnimation) {
-  ScopedAnimationDurationScaleMode scoped_animation_duration_scale_mode(
-      ScopedAnimationDurationScaleMode::NORMAL_DURATION);
+  gfx::ScopedAnimationDurationScaleMode scoped_animation_duration_scale_mode(
+      gfx::ScopedAnimationDurationScaleMode::NORMAL_DURATION);
   LayerAnimatorTestController test_controller(
       LayerAnimator::CreateImplicitAnimator());
   LayerAnimator* const animator = test_controller.animator();
@@ -3333,14 +3333,13 @@ TEST(LayerDelegateTest, OnLayerTransformedNonThreadedAnimation) {
   EXPECT_CALL(delegate,
               OnLayerTransformed(gfx::Transform(),
                                  PropertyChangeReason::FROM_ANIMATION))
-      .WillOnce(testing::Invoke([&](const gfx::Transform& old_transform,
-                                    PropertyChangeReason) {
+      .WillOnce([&](const gfx::Transform& old_transform, PropertyChangeReason) {
         // Verify that |layer->transform()| returns the correct value when the
         // delegate is notified.
         EXPECT_EQ(layer->transform(), initial_transform);
         EXPECT_TRUE(
             animator->IsAnimatingProperty(LayerAnimationElement::TRANSFORM));
-      }));
+      });
   animator->StartAnimation(new LayerAnimationSequence(std::move(element)));
   testing::Mock::VerifyAndClear(&delegate);
 
@@ -3348,12 +3347,11 @@ TEST(LayerDelegateTest, OnLayerTransformedNonThreadedAnimation) {
   EXPECT_CALL(delegate,
               OnLayerTransformed(initial_transform,
                                  PropertyChangeReason::FROM_ANIMATION))
-      .WillOnce(testing::Invoke(
-          [&](const gfx::Transform& old_transform, PropertyChangeReason) {
-            // Verify that |layer->transform()| returns the correct value when
-            // the delegate is notified.
-            EXPECT_EQ(layer->transform(), step_transform);
-          }));
+      .WillOnce([&](const gfx::Transform& old_transform, PropertyChangeReason) {
+        // Verify that |layer->transform()| returns the correct value when
+        // the delegate is notified.
+        EXPECT_EQ(layer->transform(), step_transform);
+      });
   test_controller.Step(element_raw->duration() / 2);
   testing::Mock::VerifyAndClear(&delegate);
 
@@ -3361,14 +3359,13 @@ TEST(LayerDelegateTest, OnLayerTransformedNonThreadedAnimation) {
   EXPECT_CALL(
       delegate,
       OnLayerTransformed(step_transform, PropertyChangeReason::FROM_ANIMATION))
-      .WillOnce(testing::Invoke([&](const gfx::Transform& old_transform,
-                                    PropertyChangeReason) {
+      .WillOnce([&](const gfx::Transform& old_transform, PropertyChangeReason) {
         // Verify that |layer->transform()| returns the correct value when the
         // delegate is notified.
         EXPECT_EQ(layer->transform(), target_transform);
         EXPECT_FALSE(
             animator->IsAnimatingProperty(LayerAnimationElement::TRANSFORM));
-      }));
+      });
   test_controller.Step(element_raw->duration() / 2);
   testing::Mock::VerifyAndClear(&delegate);
 }
@@ -3376,8 +3373,8 @@ TEST(LayerDelegateTest, OnLayerTransformedNonThreadedAnimation) {
 // Verify that LayerDelegate::OnLayerTransformed() is called at the end of a
 // threaded transform transition.
 TEST(LayerDelegateTest, OnLayerTransformedThreadedAnimation) {
-  ScopedAnimationDurationScaleMode scoped_animation_duration_scale_mode(
-      ScopedAnimationDurationScaleMode::NORMAL_DURATION);
+  gfx::ScopedAnimationDurationScaleMode scoped_animation_duration_scale_mode(
+      gfx::ScopedAnimationDurationScaleMode::NORMAL_DURATION);
   LayerAnimatorTestController test_controller(
       LayerAnimator::CreateImplicitAnimator());
   LayerAnimator* const animator = test_controller.animator();
@@ -3410,14 +3407,13 @@ TEST(LayerDelegateTest, OnLayerTransformedThreadedAnimation) {
   EXPECT_CALL(delegate,
               OnLayerTransformed(initial_transform,
                                  PropertyChangeReason::FROM_ANIMATION))
-      .WillOnce(testing::Invoke([&](const gfx::Transform& old_transform,
-                                    PropertyChangeReason) {
+      .WillOnce([&](const gfx::Transform& old_transform, PropertyChangeReason) {
         // Verify that |layer->transform()| returns the correct value when the
         // delegate is notified.
         EXPECT_EQ(layer->transform(), target_transform);
         EXPECT_FALSE(
             animator->IsAnimatingProperty(LayerAnimationElement::TRANSFORM));
-      }));
+      });
   test_controller.Step(
       element_raw->duration() +
       (element_raw->effective_start_time() - animator->last_step_time()));
@@ -3433,19 +3429,19 @@ TEST(LayerDelegateTest, OnLayerOpacityChanged) {
   constexpr float kTargetOpacity = 0.5f;
   EXPECT_CALL(delegate,
               OnLayerOpacityChanged(PropertyChangeReason::NOT_FROM_ANIMATION))
-      .WillOnce(testing::Invoke([&](PropertyChangeReason) {
+      .WillOnce([&](PropertyChangeReason) {
         // Verify that |layer->opacity()| returns the correct value when the
         // delegate is notified.
         EXPECT_EQ(layer->opacity(), kTargetOpacity);
-      }));
+      });
   layer->SetOpacity(kTargetOpacity);
 }
 
 // Verify that LayerDelegate::OnLayerOpacityChanged() is called at the beginning
 // and at the end of a threaded opacity animation.
 TEST(LayerDelegateTest, OnLayerOpacityChangedAnimation) {
-  ScopedAnimationDurationScaleMode scoped_animation_duration_scale_mode(
-      ScopedAnimationDurationScaleMode::NORMAL_DURATION);
+  gfx::ScopedAnimationDurationScaleMode scoped_animation_duration_scale_mode(
+      gfx::ScopedAnimationDurationScaleMode::NORMAL_DURATION);
   LayerAnimatorTestController test_controller(
       LayerAnimator::CreateImplicitAnimator());
   LayerAnimator* const animator = test_controller.animator();
@@ -3465,13 +3461,13 @@ TEST(LayerDelegateTest, OnLayerOpacityChangedAnimation) {
   LayerAnimationElement* element_raw = element.get();
   EXPECT_CALL(delegate,
               OnLayerOpacityChanged(PropertyChangeReason::FROM_ANIMATION))
-      .WillOnce(testing::Invoke([&](PropertyChangeReason) {
+      .WillOnce([&](PropertyChangeReason) {
         // Verify that |layer->opacity()| returns the correct value when the
         // delegate is notified.
         EXPECT_EQ(layer->opacity(), initial_opacity);
         EXPECT_TRUE(
             animator->IsAnimatingProperty(LayerAnimationElement::OPACITY));
-      }));
+      });
   animator->StartAnimation(new LayerAnimationSequence(std::move(element)));
   testing::Mock::VerifyAndClear(&delegate);
   test_controller.StartThreadedAnimationsIfNeeded();
@@ -3479,13 +3475,13 @@ TEST(LayerDelegateTest, OnLayerOpacityChangedAnimation) {
   // End the animation.
   EXPECT_CALL(delegate,
               OnLayerOpacityChanged(PropertyChangeReason::FROM_ANIMATION))
-      .WillOnce(testing::Invoke([&](PropertyChangeReason) {
+      .WillOnce([&](PropertyChangeReason) {
         // Verify that |layer->opacity()| returns the correct value when the
         // delegate is notified.
         EXPECT_EQ(layer->opacity(), kTargetOpacity);
         EXPECT_FALSE(
             animator->IsAnimatingProperty(LayerAnimationElement::OPACITY));
-      }));
+      });
   test_controller.Step(
       element_raw->duration() +
       (element_raw->effective_start_time() - animator->last_step_time()));

@@ -9,6 +9,7 @@
 #include <utility>
 
 #include "base/compiler_specific.h"
+#include "base/debug/crash_logging.h"
 #include "base/debug/dump_without_crashing.h"
 #include "base/logging.h"
 #include "cc/base/features.h"
@@ -304,7 +305,8 @@ void PaintArtifactCompositor::UpdatePaintedScrollTranslationsBeforeLayerization(
          // HitTestData of these types induce touch action regions.
          chunk.id.type == DisplayItem::Type::kScrollbarHitTest ||
          chunk.id.type == DisplayItem::Type::kResizerScrollHitTest)) ||
-       chunk.region_capture_data || chunk.layer_selection_data)) {
+       chunk.region_capture_data || chunk.tracked_element_data ||
+       chunk.layer_selection_data)) {
     const auto& transform = chunk.properties.Transform().Unalias();
     // Mark all non-composited scroll ancestors within the same direct
     // compositing boundary (ideally we should check for both direct and
@@ -375,6 +377,34 @@ cc::Layer* ForeignLayer(const PaintChunk& chunk,
   return foreign_layer ? foreign_layer->GetLayer() : nullptr;
 }
 
+void DumpWithDifferingPaintPropertiesIncluded(const PaintChunk& previous,
+                                              const PaintChunk& repainted) {
+  SCOPED_CRASH_KEY_STRING1024(
+      "PrevTransform", "json",
+      previous.properties.Transform().ToJSON()->ToJSONString().Utf8());
+  SCOPED_CRASH_KEY_STRING1024(
+      "PrevClip", "json",
+      previous.properties.Clip().ToJSON()->ToJSONString().Utf8());
+  SCOPED_CRASH_KEY_STRING1024(
+      "PrevEffect", "json",
+      previous.properties.Effect().ToJSON()->ToJSONString().Utf8());
+  SCOPED_CRASH_KEY_STRING1024(
+      "RepaintTransform", "json",
+      repainted.properties.Transform().ToJSON()->ToJSONString().Utf8());
+  SCOPED_CRASH_KEY_STRING1024(
+      "RepaintClip", "json",
+      repainted.properties.Clip().ToJSON()->ToJSONString().Utf8());
+  SCOPED_CRASH_KEY_STRING1024(
+      "RepaintEffect", "json",
+      repainted.properties.Effect().ToJSON()->ToJSONString().Utf8());
+
+  // This id is not useful on its own, but can be correlated to objects
+  // in a heap dump.
+  SCOPED_CRASH_KEY_STRING32("ChunkId", "id", previous.id.ToString().Utf8());
+
+  base::debug::DumpWithoutCrashing();
+}
+
 // True if the paint chunk change affects the result of |Update|, such as the
 // compositing decisions in |CollectPendingLayers|. This will return false for
 // repaint updates that can be handled by |UpdateRepaintedLayers|, such as
@@ -401,7 +431,7 @@ bool NeedsFullUpdateAfterPaintingChunk(
     // properties are changed, which would indicate a missing call to
     // SetNeedsUpdate.
     if (previous.properties != repainted.properties) {
-      base::debug::DumpWithoutCrashing();
+      DumpWithDifferingPaintPropertiesIncluded(previous, repainted);
       return true;
     }
 
@@ -470,7 +500,7 @@ bool NeedsFullUpdateAfterPaintingChunk(
   // properties are changed, which would indicate a missing call to
   // SetNeedsUpdate.
   if (previous.properties != repainted.properties) {
-    base::debug::DumpWithoutCrashing();
+    DumpWithDifferingPaintPropertiesIncluded(previous, repainted);
     return true;
   }
 

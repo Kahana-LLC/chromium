@@ -138,8 +138,8 @@ ScriptPromise<BluetoothRemoteGATTServer> BluetoothRemoteGATTServer::connect(
 
   service->RemoteServerConnect(
       device_->GetDevice()->id, std::move(client),
-      WTF::BindOnce(&BluetoothRemoteGATTServer::ConnectCallback,
-                    WrapPersistent(this), WrapPersistent(resolver)));
+      BindOnce(&BluetoothRemoteGATTServer::ConnectCallback,
+               WrapPersistent(this), WrapPersistent(resolver)));
 
   return promise;
 }
@@ -211,9 +211,9 @@ void BluetoothRemoteGATTServer::GetPrimaryServicesCallback(
   } else {
     if (result == mojom::blink::WebBluetoothResult::SERVICE_NOT_FOUND) {
       resolver->Reject(BluetoothError::CreateDOMException(
-          BluetoothErrorCode::kServiceNotFound, "No Services matching UUID " +
-                                                    requested_service_uuid +
-                                                    " found in Device."));
+          BluetoothErrorCode::kServiceNotFound,
+          StrCat({"No Services matching UUID ", requested_service_uuid,
+                  " found in Device."})));
     } else {
       resolver->Reject(BluetoothError::CreateDOMException(result));
     }
@@ -302,9 +302,9 @@ void BluetoothRemoteGATTServer::GetPrimaryServicesImpl(
       device_->GetBluetooth()->Service();
   service->RemoteServerGetPrimaryServices(
       device_->GetDevice()->id, quantity, services_uuid,
-      WTF::BindOnce(&BluetoothRemoteGATTServer::GetPrimaryServicesCallback,
-                    WrapPersistent(this), services_uuid, quantity,
-                    WrapPersistent(resolver)));
+      BindOnce(&BluetoothRemoteGATTServer::GetPrimaryServicesCallback,
+               WrapPersistent(this), services_uuid, quantity,
+               WrapPersistent(resolver)));
 }
 
 }  // namespace blink

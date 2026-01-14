@@ -6,6 +6,7 @@
 #define DEVICE_VR_OPENXR_OPENXR_EXTENSION_HELPER_H_
 
 #include <memory>
+#include <string>
 #include <vector>
 
 #include "base/logging.h"
@@ -20,11 +21,8 @@
 #include "device/vr/openxr/openxr_stage_bounds_provider.h"
 #include "device/vr/openxr/openxr_unbounded_space_provider.h"
 #include "device/vr/public/mojom/xr_session.mojom-forward.h"
-#include "third_party/openxr/src/include/openxr/openxr.h"
-
-#if BUILDFLAG(IS_ANDROID)
 #include "third_party/openxr/dev/xr_android.h"
-#endif
+#include "third_party/openxr/src/include/openxr/openxr.h"
 
 namespace device {
 // Helper macro to facilitate declaring the method names of functions that will
@@ -36,6 +34,9 @@ namespace device {
 struct OpenXrExtensionMethods {
   OpenXrExtensionMethods();
   ~OpenXrExtensionMethods();
+  // General Methods
+  OPENXR_DECLARE_FN(xrPollFutureEXT);
+
   // Hand Tracking
   OPENXR_DECLARE_FN(xrCreateHandTrackerEXT);
   OPENXR_DECLARE_FN(xrDestroyHandTrackerEXT);
@@ -57,6 +58,30 @@ struct OpenXrExtensionMethods {
   OPENXR_DECLARE_FN(xrGetSceneComponentsMSFT);
   OPENXR_DECLARE_FN(xrLocateSceneComponentsMSFT);
   OPENXR_DECLARE_FN(xrGetSceneMeshBuffersMSFT);
+
+  // Spatial Entities
+  OPENXR_DECLARE_FN(xrCreateSpatialContextAsyncEXT);
+  OPENXR_DECLARE_FN(xrCreateSpatialContextCompleteEXT);
+  OPENXR_DECLARE_FN(xrCreateSpatialDiscoverySnapshotAsyncEXT);
+  OPENXR_DECLARE_FN(xrCreateSpatialDiscoverySnapshotCompleteEXT);
+  OPENXR_DECLARE_FN(xrCreateSpatialUpdateSnapshotEXT);
+  OPENXR_DECLARE_FN(xrDestroySpatialContextEXT);
+  OPENXR_DECLARE_FN(xrDestroySpatialEntityEXT);
+  OPENXR_DECLARE_FN(xrDestroySpatialSnapshotEXT);
+  OPENXR_DECLARE_FN(xrEnumerateSpatialCapabilitiesEXT);
+  OPENXR_DECLARE_FN(xrEnumerateSpatialCapabilityComponentTypesEXT);
+  OPENXR_DECLARE_FN(xrQuerySpatialComponentDataEXT);
+  OPENXR_DECLARE_FN(xrGetSpatialBufferVector2fEXT);
+
+  // Spatial Anchors
+  OPENXR_DECLARE_FN(xrCreateSpatialAnchorEXT);
+  OPENXR_DECLARE_FN(xrEnumerateSpatialAnchorAttachableComponentsANDROID);
+
+  // Spatial HitTest
+  OPENXR_DECLARE_FN(xrCreateSpatialRaycastSnapshotANDROID);
+
+  // Visibility Mask
+  OPENXR_DECLARE_FN(xrGetVisibilityMaskKHR);
 
 #if BUILDFLAG(IS_WIN)
   // Time
@@ -88,12 +113,13 @@ struct OpenXrExtensionMethods {
 // Ensure that we don't export our helper macro.
 #undef OPENXR_DECLARE_FN
 
+class OpenXrApiWrapper;
 class OpenXrExtensionEnumeration {
  public:
   OpenXrExtensionEnumeration();
   ~OpenXrExtensionEnumeration();
 
-  bool ExtensionSupported(const char* extension_name) const;
+  bool ExtensionSupported(std::string_view extension_name) const;
 
  private:
   std::vector<XrExtensionProperties> extension_properties_;
@@ -101,6 +127,9 @@ class OpenXrExtensionEnumeration {
 
 class OpenXrExtensionHelper {
  public:
+  // Gets the set of extensions required to support WebXR Layers.
+  static std::vector<const char*> GetRequiredExtensionsForLayers();
+
   OpenXrExtensionHelper(
       XrInstance instance,
       const OpenXrExtensionEnumeration* const extension_enumeration);
@@ -128,10 +157,6 @@ class OpenXrExtensionHelper {
   // abstract the *actual* extension that we need to use, since different
   // extensions will be looking for different methods.
 
-  std::unique_ptr<OpenXrAnchorManager> CreateAnchorManager(
-      XrSession session,
-      XrSpace base_space) const;
-
   std::unique_ptr<OpenXrDepthSensor> CreateDepthSensor(
       XrSession session,
       XrSpace base_space,
@@ -147,7 +172,7 @@ class OpenXrExtensionHelper {
 
   std::unique_ptr<OpenXRSceneUnderstandingManager>
   CreateSceneUnderstandingManager(
-      XrSession session,
+      OpenXrApiWrapper* openxr,
       XrSpace base_space,
       const std::vector<mojom::XRSessionFeature>& required_features,
       const std::vector<mojom::XRSessionFeature>& optional_features) const;

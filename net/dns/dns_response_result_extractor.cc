@@ -20,7 +20,6 @@
 #include <vector>
 
 #include "base/check.h"
-#include "base/containers/contains.h"
 #include "base/containers/to_vector.h"
 #include "base/dcheck_is_on.h"
 #include "base/metrics/histogram_macros.h"
@@ -63,14 +62,13 @@ using RecordsOrError =
 using ResultsOrError = DnsResponseResultExtractor::ResultsOrError;
 using Source = HostResolverInternalResult::Source;
 
-void SaveMetricsForAdditionalHttpsRecord(const RecordParsed& record,
-                                         bool is_unsolicited) {
+void SaveMetricsForRequestedAdditionalHttpsRecord(const RecordParsed& record) {
   const HttpsRecordRdata* rdata = record.rdata<HttpsRecordRdata>();
   DCHECK(rdata);
 
   // These values are persisted to logs. Entries should not be renumbered and
   // numeric values should never be reused.
-  enum class UnsolicitedHttpsRecordStatus {
+  enum class AdditionalHttpsRecordStatus {
     kMalformed = 0,  // No longer recorded.
     kAlias = 1,
     kService = 2,
@@ -78,18 +76,13 @@ void SaveMetricsForAdditionalHttpsRecord(const RecordParsed& record,
   } status;
 
   if (rdata->IsAlias()) {
-    status = UnsolicitedHttpsRecordStatus::kAlias;
+    status = AdditionalHttpsRecordStatus::kAlias;
   } else {
-    status = UnsolicitedHttpsRecordStatus::kService;
+    status = AdditionalHttpsRecordStatus::kService;
   }
 
-  if (is_unsolicited) {
-    UMA_HISTOGRAM_ENUMERATION("Net.DNS.DnsTask.AdditionalHttps.Unsolicited",
-                              status);
-  } else {
-    UMA_HISTOGRAM_ENUMERATION("Net.DNS.DnsTask.AdditionalHttps.Requested",
-                              status);
-  }
+  UMA_HISTOGRAM_ENUMERATION("Net.DNS.DnsTask.AdditionalHttps.Requested",
+                            status);
 }
 
 // Sort service targets per RFC2782.  In summary, sort first by `priority`,
@@ -316,8 +309,10 @@ RecordsOrError ExtractResponseRecords(
         RecordParsed::CreateFrom(&parser, base::Time::Now());
     if (record && record->klass() == dns_protocol::kClassIN &&
         record->type() == dns_protocol::kTypeHttps) {
-      bool is_unsolicited = query_type != DnsQueryType::HTTPS;
-      SaveMetricsForAdditionalHttpsRecord(*record, is_unsolicited);
+      bool was_requested = query_type == DnsQueryType::HTTPS;
+      if (was_requested) {
+        SaveMetricsForRequestedAdditionalHttpsRecord(*record);
+      }
     }
   }
 
@@ -572,8 +567,8 @@ ResultsOrError ExtractHttpsResults(const DnsResponse& response,
 
     metadata.supported_protocol_alpns = service->alpn_ids();
     if (service->default_alpn() &&
-        !base::Contains(metadata.supported_protocol_alpns,
-                        dns_protocol::kHttpsServiceDefaultAlpn)) {
+        !std::ranges::contains(metadata.supported_protocol_alpns,
+                               dns_protocol::kHttpsServiceDefaultAlpn)) {
       metadata.supported_protocol_alpns.push_back(
           dns_protocol::kHttpsServiceDefaultAlpn);
     }

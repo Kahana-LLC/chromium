@@ -493,6 +493,7 @@ void AXMediaAppUntrustedService::PerformAction(
     case ax::mojom::Action::kStopDuckingMedia:
     case ax::mojom::Action::kSuspendMedia:
     case ax::mojom::Action::kLongClick:
+    case ax::mojom::Action::kRequestLayoutBasedAction:
       NOTIMPLEMENTED();
       return;
   }
@@ -906,7 +907,7 @@ void AXMediaAppUntrustedService::DisconnectFromOcrService() {
   ocr_.reset();
   // To avoid redoing OCR on the content if accessibility is temporarily turned
   // off / on, we keep the existing OCR results and do not reset the
-  // `ocr_state_`.
+  // `ocr_status_`.
 }
 
 void AXMediaAppUntrustedService::StartWatchingForAccessibilityEvents() {
@@ -1288,9 +1289,11 @@ void AXMediaAppUntrustedService::OnBitmapReceived(
     OnPageOcred(dirty_page_id, ui::AXTreeUpdate());
     return;
   }
-  ocr_->PerformOCR(
-      bitmap, base::BindOnce(&AXMediaAppUntrustedService::OnPageOcred,
-                             weak_ptr_factory_.GetWeakPtr(), dirty_page_id));
+  if (IsOcrServiceEnabled()) {
+    ocr_->PerformOCR(
+        bitmap, base::BindOnce(&AXMediaAppUntrustedService::OnPageOcred,
+                               weak_ptr_factory_.GetWeakPtr(), dirty_page_id));
+  }
 }
 
 void AXMediaAppUntrustedService::OnPageOcred(
@@ -1478,7 +1481,7 @@ AXMediaAppUntrustedService::MakeTransformFromOffsetAndScale() const {
   float device_pixel_ratio = 1.0f;
   if (native_window_ && !native_window_tracker_->WasNativeWindowDestroyed()) {
     const auto maybe_device_pixel_ratio =
-        display::Screen::GetScreen()->GetPreferredScaleFactorForWindow(
+        display::Screen::Get()->GetPreferredScaleFactorForWindow(
             native_window_);
     device_pixel_ratio = maybe_device_pixel_ratio.value_or(device_pixel_ratio);
   }

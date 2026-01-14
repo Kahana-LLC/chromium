@@ -52,6 +52,7 @@ namespace content {
 namespace {
 
 using ::blink::mojom::CapturedSurfaceControlResult;
+using ::blink::mojom::MediaStreamRequestResult;
 
 void BindMediaStreamDeviceObserverReceiver(
     GlobalRenderFrameHostId render_frame_host_id,
@@ -106,6 +107,11 @@ bool MayApplySubCaptureTarget(GlobalRenderFrameHostId capturing_id,
     return false;
   }
 
+  // Uncropping / unrestricting is always permitted.
+  if (target.is_zero()) {
+    return true;
+  }
+
   if (capturing_wc != captured_wc) {
     switch (type) {
       case media::mojom::SubCaptureTargetType::kCropTarget:
@@ -128,36 +134,10 @@ bool MayApplySubCaptureTarget(GlobalRenderFrameHostId capturing_id,
   if (!helper) {
     // No sub-capture target IDs of this type were produced on this WebContents.
     // Any non-zero ID should be rejected on account of being invalid.
-    // A zero ID would ultimately be rejected on account of the track
-    // being uncropped/unrestricted, so we can unconditionally reject.
     return false;
   }
 
-  // * target.is_zero() = uncrop-request.
-  // * !target.is_zero() = crop-request.
-  return target.is_zero() || helper->IsAssociatedWith(target, type);
-}
-
-MediaStreamDispatcherHost::ApplySubCaptureTargetCallback
-WrapApplySubCaptureTarget(
-    MediaStreamDispatcherHost::ApplySubCaptureTargetCallback callback,
-    mojo::ReportBadMessageCallback bad_message_callback) {
-  return base::BindOnce(
-      [](MediaStreamDispatcherHost::ApplySubCaptureTargetCallback callback,
-         mojo::ReportBadMessageCallback bad_message_callback,
-         media::mojom::ApplySubCaptureTargetResult result) {
-        if (result ==
-            media::mojom::ApplySubCaptureTargetResult::kNonIncreasingVersion) {
-          std::move(bad_message_callback)
-              .Run("Non-increasing sub-capture-target-version.");
-          // Intentionally avoid returning. Instead, continue execution and
-          // invoke the callback. If the callback were allowed to "drop" that
-          // would trigger a DCHECK in the mojom pipe.
-          // TODO(crbug.com/40823292): Avoid the necessity for this.
-        }
-        std::move(callback).Run(result);
-      },
-      std::move(callback), std::move(bad_message_callback));
+  return helper->IsAssociatedWith(target, type);
 }
 #endif  // BUILDFLAG(ENABLE_SCREEN_CAPTURE)
 
@@ -380,16 +360,24 @@ void MediaStreamDispatcherHost::GenerateStreamsChecksOnUIThread(
         result_callback) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
+  RenderFrameHostImpl* const render_frame_host =
+      RenderFrameHostImpl::FromID(render_frame_host_id);
+  if (!render_frame_host || !render_frame_host->IsActive()) {
+    std::move(result_callback)
+        .Run(
+            base::unexpected(MediaStreamRequestResult::FAILED_DUE_TO_SHUTDOWN));
+    return;
+  }
+
   if (request_all_screens) {
     CheckRequestAllScreensAllowed(std::move(get_salt_and_origin_cb),
                                   std::move(result_callback),
-                                  render_frame_host_id);
+                                  render_frame_host);
     return;
   }
 
   CheckStreamsPermissionResultReceived(std::move(get_salt_and_origin_cb),
-                                       std::move(result_callback),
-                                       /*result=*/true);
+                                       std::move(result_callback));
 }
 
 void MediaStreamDispatcherHost::CheckRequestAllScreensAllowed(
@@ -397,44 +385,40 @@ void MediaStreamDispatcherHost::CheckRequestAllScreensAllowed(
         get_salt_and_origin_cb,
     base::OnceCallback<void(GenerateStreamsUIThreadCheckResult)>
         result_callback,
-    GlobalRenderFrameHostId render_frame_host_id) {
+    RenderFrameHost* render_frame_host) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
-  RenderFrameHostImpl* render_frame_host =
-      RenderFrameHostImpl::FromID(render_frame_host_id);
-  if (!render_frame_host) {
-    CheckStreamsPermissionResultReceived(std::move(get_salt_and_origin_cb),
-                                         std::move(result_callback),
-                                         /*result=*/false);
+  if (!render_frame_host || !render_frame_host->IsActive()) {
+    std::move(result_callback)
+        .Run(
+            base::unexpected(MediaStreamRequestResult::FAILED_DUE_TO_SHUTDOWN));
     return;
   }
 
-  GetContentClient()->browser()->CheckGetAllScreensMediaAllowed(
-      render_frame_host,
-      base::BindOnce(
-          &MediaStreamDispatcherHost::CheckStreamsPermissionResultReceived,
-          std::move(get_salt_and_origin_cb), std::move(result_callback)));
+  if (GetContentClient()->browser()->IsMultiCaptureAllowed(render_frame_host)) {
+    CheckStreamsPermissionResultReceived(std::move(get_salt_and_origin_cb),
+                                         std::move(result_callback));
+  } else {
+    MediaStreamRequestResult error_value;
+#if BUILDFLAG(IS_CHROMEOS)
+    error_value = MediaStreamRequestResult::CAPTURE_NOT_ALLOWED_BY_POLICY;
+#else
+    error_value = MediaStreamRequestResult::MULTI_CAPTURE_NOT_SUPPORTED;
+#endif
+    std::move(result_callback).Run(base::unexpected(error_value));
+  }
 }
 
 void MediaStreamDispatcherHost::CheckStreamsPermissionResultReceived(
     base::OnceCallback<void(MediaDeviceSaltAndOriginCallback)>
         get_salt_and_origin_cb,
     base::OnceCallback<void(GenerateStreamsUIThreadCheckResult)>
-        result_callback,
-    bool result) {
-  if (!result) {
-    std::move(result_callback)
-        .Run({.request_allowed = false,
-              .salt_and_origin = MediaDeviceSaltAndOrigin::Empty()});
-    return;
-  }
-
+        result_callback) {
   auto got_salt_and_origin = base::BindOnce(
       [](base::OnceCallback<void(GenerateStreamsUIThreadCheckResult)>
              result_callback,
          const MediaDeviceSaltAndOrigin& salt_and_origin) {
-        std::move(result_callback)
-            .Run({.request_allowed = true, .salt_and_origin = salt_and_origin});
+        std::move(result_callback).Run(salt_and_origin);
       },
       std::move(result_callback));
   std::move(get_salt_and_origin_cb).Run(std::move(got_salt_and_origin));
@@ -471,7 +455,7 @@ void MediaStreamDispatcherHost::CancelAllRequests() {
 
   for (auto& pending_request : pending_requests_) {
     std::move(pending_request->callback)
-        .Run(blink::mojom::MediaStreamRequestResult::FAILED_DUE_TO_SHUTDOWN,
+        .Run(MediaStreamRequestResult::FAILED_DUE_TO_SHUTDOWN,
              /*label=*/std::string(),
              /*stream_devices_set=*/nullptr,
              /*pan_tilt_zoom_allowed=*/false);
@@ -492,7 +476,7 @@ void MediaStreamDispatcherHost::GenerateStreams(
   const std::optional<bad_message::BadMessageReason> bad_message =
       ValidateControlsForGenerateStreams(controls);
   if (bad_message.has_value()) {
-    ReceivedBadMessage(render_frame_host_id_.child_id, bad_message.value());
+    ReceivedBadMessage(render_frame_host_id_.child_id, *bad_message);
     return;
   }
 
@@ -518,25 +502,23 @@ void MediaStreamDispatcherHost::DoGenerateStreams(
     GenerateStreamsUIThreadCheckResult ui_check_result) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
 
-  if (!ui_check_result.request_allowed) {
-    std::move(callback).Run(
-        blink::mojom::MediaStreamRequestResult::PERMISSION_DENIED,
-        /*label=*/std::string(),
-        /*stream_devices_set=*/nullptr,
-        /*pan_tilt_zoom_allowed=*/false);
+  if (!ui_check_result.has_value()) {
+    std::move(callback).Run(ui_check_result.error(),
+                            /*label=*/std::string(),
+                            /*stream_devices_set=*/nullptr,
+                            /*pan_tilt_zoom_allowed=*/false);
     return;
   }
 
-  MediaDeviceSaltAndOrigin salt_and_origin =
-      std::move(ui_check_result.salt_and_origin);
-  ui_check_result = {.salt_and_origin = MediaDeviceSaltAndOrigin::Empty()};
-  if (!MediaStreamManager::IsOriginAllowed(render_frame_host_id_.child_id,
-                                           salt_and_origin.origin())) {
-    std::move(callback).Run(
-        blink::mojom::MediaStreamRequestResult::INVALID_SECURITY_ORIGIN,
-        /*label=*/std::string(),
-        /*stream_devices_set=*/nullptr,
-        /*pan_tilt_zoom_allowed=*/false);
+  MediaDeviceSaltAndOrigin salt_and_origin = std::move(*ui_check_result);
+  // TODO(crbug.com/379869738) Remove GetUnsafeValue.
+  if (!MediaStreamManager::IsOriginAllowed(
+          render_frame_host_id_.child_id.GetUnsafeValue(),
+          salt_and_origin.origin())) {
+    std::move(callback).Run(MediaStreamRequestResult::INVALID_SECURITY_ORIGIN,
+                            /*label=*/std::string(),
+                            /*stream_devices_set=*/nullptr,
+                            /*pan_tilt_zoom_allowed=*/false);
     return;
   }
 
@@ -627,8 +609,10 @@ void MediaStreamDispatcherHost::DoOpenDevice(
     const MediaDeviceSaltAndOrigin& salt_and_origin) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
 
-  if (!MediaStreamManager::IsOriginAllowed(render_frame_host_id_.child_id,
-                                           salt_and_origin.origin())) {
+  // TODO(crbug.com/379869738) Remove GetUnsafeValue.
+  if (!MediaStreamManager::IsOriginAllowed(
+          render_frame_host_id_.child_id.GetUnsafeValue(),
+          salt_and_origin.origin())) {
     std::move(callback).Run(false /* success */, std::string(),
                             blink::MediaStreamDevice());
     return;
@@ -653,8 +637,9 @@ void MediaStreamDispatcherHost::SetCapturingLinkSecured(
     bool is_secure) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
 
+  // TODO(crbug.com/379869738) Remove GetUnsafeValue.
   media_stream_manager_->SetCapturingLinkSecured(
-      render_frame_host_id_.child_id,
+      render_frame_host_id_.child_id.GetUnsafeValue(),
       session_id.value_or(base::UnguessableToken()), type, is_secure);
 }
 
@@ -744,7 +729,7 @@ void MediaStreamDispatcherHost::ApplySubCaptureTarget(
     const base::UnguessableToken& device_id,
     media::mojom::SubCaptureTargetType type,
     const base::Token& sub_capture_target,
-    uint32_t sub_capture_target_version,
+    uint32_t sub_capture_version,
     ApplySubCaptureTargetCallback callback) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
 
@@ -757,8 +742,6 @@ void MediaStreamDispatcherHost::ApplySubCaptureTarget(
   // Namely, cropping and restricting are currently only allowed
   // for self-capture, so the sub_capture_target has to be associated with the
   // top-level WebContents belonging to this very tab.
-  // TODO(crbug.com/40823292): Switch away from the free function version
-  // when SelfOwnedReceiver properly supports this.
   GetUIThreadTaskRunner({})->PostTaskAndReplyWithResult(
       FROM_HERE,
       base::BindOnce(&MayApplySubCaptureTarget,
@@ -767,16 +750,14 @@ void MediaStreamDispatcherHost::ApplySubCaptureTarget(
       base::BindOnce(
           &MediaStreamDispatcherHost::OnSubCaptureTargetValidationComplete,
           weak_factory_.GetWeakPtr(), device_id, type, sub_capture_target,
-          sub_capture_target_version,
-          WrapApplySubCaptureTarget(std::move(callback),
-                                    mojo::GetBadMessageCallback())));
+          sub_capture_version, std::move(callback)));
 }
 
 void MediaStreamDispatcherHost::OnSubCaptureTargetValidationComplete(
     const base::UnguessableToken& session_id,
     media::mojom::SubCaptureTargetType type,
     const base::Token& target,
-    uint32_t sub_capture_target_version,
+    uint32_t sub_capture_version,
     ApplySubCaptureTargetCallback callback,
     bool target_passed_validation) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
@@ -790,8 +771,7 @@ void MediaStreamDispatcherHost::OnSubCaptureTargetValidationComplete(
   }
 
   media_stream_manager_->video_capture_manager()->ApplySubCaptureTarget(
-      session_id, type, target, sub_capture_target_version,
-      std::move(callback));
+      session_id, type, target, sub_capture_version, std::move(callback));
 }
 #endif  // BUILDFLAG(ENABLE_SCREEN_CAPTURE)
 
@@ -806,8 +786,7 @@ void MediaStreamDispatcherHost::GetOpenDevice(
     ReceivedBadMessage(render_frame_host_id_.child_id,
                        bad_message::MSDH_GET_OPEN_DEVICE_USE_WITHOUT_FEATURE);
 
-    std::move(callback).Run(
-        blink::mojom::MediaStreamRequestResult::NOT_SUPPORTED, nullptr);
+    std::move(callback).Run(MediaStreamRequestResult::NOT_SUPPORTED, nullptr);
     return;
   }
   // TODO(crbug.com/40058526): Decide whether we need to have another
@@ -832,11 +811,12 @@ void MediaStreamDispatcherHost::DoGetOpenDevice(
     GetOpenDeviceCallback callback,
     const MediaDeviceSaltAndOrigin& salt_and_origin) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
-  if (!MediaStreamManager::IsOriginAllowed(render_frame_host_id_.child_id,
-                                           salt_and_origin.origin())) {
-    std::move(callback).Run(
-        blink::mojom::MediaStreamRequestResult::INVALID_SECURITY_ORIGIN,
-        nullptr);
+  // TODO(crbug.com/379869738) Remove GetUnsafeValue.
+  if (!MediaStreamManager::IsOriginAllowed(
+          render_frame_host_id_.child_id.GetUnsafeValue(),
+          salt_and_origin.origin())) {
+    std::move(callback).Run(MediaStreamRequestResult::INVALID_SECURITY_ORIGIN,
+                            nullptr);
     return;
   }
 
@@ -899,7 +879,7 @@ MediaStreamDispatcherHost::ValidateControlsForGenerateStreams(
 }
 
 void MediaStreamDispatcherHost::ReceivedBadMessage(
-    int render_process_id,
+    ChildProcessId render_process_id,
     bad_message::BadMessageReason reason) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
 
@@ -911,7 +891,7 @@ void MediaStreamDispatcherHost::ReceivedBadMessage(
 }
 
 void MediaStreamDispatcherHost::SetBadMessageCallbackForTesting(
-    base::RepeatingCallback<void(int, bad_message::BadMessageReason)>
+    base::RepeatingCallback<void(ChildProcessId, bad_message::BadMessageReason)>
         callback) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   DCHECK(!bad_message_callback_for_testing_);

@@ -16,7 +16,6 @@
 // Must come after all headers that specialize FromJniType() / ToJniType().
 #include "chrome/android/chrome_test_util_jni/PwaRestoreBottomSheetTestUtils_jni.h"
 
-using base::android::JavaParamRef;
 using base::android::JavaRef;
 
 namespace webapps {
@@ -26,7 +25,8 @@ void OnWebApkDatabaseInitialized(JNIEnv* env, bool initialized) {
                                                                   initialized);
 }
 
-void JNI_PwaRestoreBottomSheetTestUtils_WaitForWebApkDatabaseInitialization(
+static void
+JNI_PwaRestoreBottomSheetTestUtils_WaitForWebApkDatabaseInitialization(
     JNIEnv* env,
     Profile* profile) {
   DCHECK(profile);
@@ -41,9 +41,9 @@ void JNI_PwaRestoreBottomSheetTestUtils_WaitForWebApkDatabaseInitialization(
       base::BindOnce(&OnWebApkDatabaseInitialized, env));
 }
 
-void JNI_PwaRestoreBottomSheetTestUtils_SetAppListForRestoring(
+static void JNI_PwaRestoreBottomSheetTestUtils_SetAppListForRestoring(
     JNIEnv* env,
-    const JavaParamRef<jobjectArray>& apps,
+    const JavaRef<jobjectArray>& apps,
     Profile* profile) {
   DCHECK(profile);
   if (!profile) {
@@ -59,3 +59,5 @@ void JNI_PwaRestoreBottomSheetTestUtils_SetAppListForRestoring(
 }
 
 }  // namespace webapps
+
+DEFINE_JNI(PwaRestoreBottomSheetTestUtils)

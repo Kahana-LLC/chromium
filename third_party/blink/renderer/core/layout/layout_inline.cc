@@ -167,10 +167,12 @@ void LayoutInline::UpdateFromStyle() {
   SetHasReflection(false);
 }
 
-void LayoutInline::StyleDidChange(StyleDifference diff,
-                                  const ComputedStyle* old_style) {
+void LayoutInline::StyleDidChange(
+    StyleDifference diff,
+    const ComputedStyle* old_style,
+    const StyleChangeContext& style_change_context) {
   NOT_DESTROYED();
-  LayoutBoxModelObject::StyleDidChange(diff, old_style);
+  LayoutBoxModelObject::StyleDidChange(diff, old_style, style_change_context);
 
   const ComputedStyle& new_style = StyleRef();
   if (!IsInLayoutNGInlineFormattingContext()) {
@@ -217,7 +219,10 @@ bool LayoutInline::ComputeInitialShouldCreateBoxFragment(
     return true;
 
   if (const Element* element = DynamicTo<Element>(GetNode())) {
-    if (element->HasImplicitlyAnchoredElement()) {
+    if (element->MayBeImplicitAnchor()) {
+      return true;
+    }
+    if (element->GetTrackedElementRect()) {
       return true;
     }
   }
@@ -422,9 +427,9 @@ LayoutBox* LayoutInline::CreateAnonymousBoxToSplit(
   return CreateAnonymousContainerForBlockChildren();
 }
 
-void LayoutInline::MarkMayHaveAnchorQuery() {
+void LayoutInline::MarkMayContainAnchor() {
   NOT_DESTROYED();
-  LayoutBoxModelObject::MarkMayHaveAnchorQuery();
+  LayoutBoxModelObject::MarkMayContainAnchor();
   // If this is an anchor, it cannot be a culled inline.
   UpdateShouldCreateBoxFragment();
 }
@@ -876,7 +881,17 @@ void LayoutInline::ImageChanged(WrappedImagePtr, CanDeferInvalidation) {
 void LayoutInline::AddOutlineRects(OutlineRectCollector& collector,
                                    OutlineInfo* info,
                                    const PhysicalOffset& additional_offset,
-                                   OutlineType include_block_overflows) const {
+                                   OutlineType type) const {
+  AddOutlineRectsInternal(collector, info, additional_offset, type,
+                          IncludeDescendants(true));
+}
+
+void LayoutInline::AddOutlineRectsInternal(
+    OutlineRectCollector& collector,
+    OutlineInfo* info,
+    const PhysicalOffset& additional_offset,
+    OutlineType include_block_overflows,
+    IncludeDescendants include_descendants) const {
   NOT_DESTROYED();
 #if DCHECK_IS_ON()
   // TODO(crbug.com/987836): enable this DCHECK universally.
@@ -892,8 +907,10 @@ void LayoutInline::AddOutlineRects(OutlineRectCollector& collector,
     rect.Move(additional_offset);
     collector.AddRect(rect);
   });
-  AddOutlineRectsForNormalChildren(collector, additional_offset,
-                                   include_block_overflows);
+  if (include_descendants) {
+    AddOutlineRectsForNormalChildren(collector, additional_offset,
+                                     include_block_overflows);
+  }
   if (info) {
     *info = OutlineInfo::GetFromStyle(StyleRef());
   }
@@ -916,11 +933,13 @@ gfx::RectF LayoutInline::LocalBoundingBoxRectF() const {
   return result;
 }
 
-gfx::RectF LayoutInline::LocalBoundingBoxRectForAccessibility() const {
+gfx::RectF LayoutInline::LocalBoundingBoxRectForAccessibility(
+    IncludeDescendants include_descendants) const {
   NOT_DESTROYED();
   UnionOutlineRectCollector collector;
-  AddOutlineRects(collector, nullptr, PhysicalOffset(),
-                  OutlineType::kIncludeBlockInkOverflow);
+  AddOutlineRectsInternal(collector, nullptr, PhysicalOffset(),
+                          OutlineType::kIncludeBlockInkOverflow,
+                          include_descendants);
   return gfx::RectF(collector.Rect());
 }
 

@@ -26,7 +26,7 @@ public class FormFieldData {
     /**
      * Define the control types supported by android.view.autofill.AutofillValue.
      *
-     * Android doesn't have DATALIST control, it is sent to the Autofill service as
+     * <p>Android doesn't have DATALIST control, it is sent to the Autofill service as
      * View.AUTOFILL_TYPE_TEXT with AutofillOptions.
      */
     @IntDef({ControlType.TEXT, ControlType.TOGGLE, ControlType.LIST, ControlType.DATALIST})
@@ -61,7 +61,8 @@ public class FormFieldData {
 
     private boolean mIsChecked;
     private String mValue;
-    private boolean mVisible;
+    private boolean mFocusable;
+    private final boolean mVisible;
     // Indicates whether mValue is autofilled.
     private boolean mAutofilled;
     // Indicates whether this fields was autofilled, but changed by user.
@@ -70,7 +71,7 @@ public class FormFieldData {
     // Provides the field type along with mHeuristicType, but could be changed
     // after the object instantiated.
     private String mServerType;
-    private String mComputedType;
+    private String mOverallType;
     private String[] mServerPredictions;
     private @Nullable AutofillId mAutofillId;
 
@@ -90,7 +91,7 @@ public class FormFieldData {
             int maxLength,
             String heuristicType,
             String serverType,
-            String computedType,
+            String overallType,
             String[] serverPredictions,
             float left,
             float top,
@@ -98,6 +99,7 @@ public class FormFieldData {
             float bottom,
             String[] datalistValues,
             String[] datalistLabels,
+            boolean focusable,
             boolean visible,
             boolean isAutofilled,
             String origin) {
@@ -128,8 +130,9 @@ public class FormFieldData {
         mHeuristicType = heuristicType;
         mServerType = serverType;
         mServerPredictions = serverPredictions;
-        mComputedType = computedType;
+        mOverallType = overallType;
         mBounds = new RectF(left, top, right, bottom);
+        mFocusable = focusable;
         mVisible = visible;
         mAutofilled = isAutofilled;
     }
@@ -155,7 +158,9 @@ public class FormFieldData {
         return mBoundsInContainerViewCoordinates;
     }
 
-    /** @return value of field. */
+    /**
+     * @return value of field.
+     */
     @CalledByNative
     public String getValue() {
         return mValue;
@@ -177,20 +182,24 @@ public class FormFieldData {
         updateAutofillState(false);
     }
 
+    public boolean getFocusable() {
+        return mFocusable;
+    }
+
+    @CalledByNative
+    private void updateFocusable(boolean focusable) {
+        mFocusable = focusable;
+    }
+
     public boolean getVisible() {
         return mVisible;
     }
 
     @CalledByNative
-    private void updateVisible(boolean visible) {
-        mVisible = visible;
-    }
-
-    @CalledByNative
     private void updateFieldTypes(
-            String serverType, String computedType, String[] serverPredictions) {
+            String serverType, String overallType, String[] serverPredictions) {
         mServerType = serverType;
-        mComputedType = computedType;
+        mOverallType = overallType;
         mServerPredictions = serverPredictions;
     }
 
@@ -198,8 +207,8 @@ public class FormFieldData {
         return mServerType;
     }
 
-    public String getComputedType() {
-        return mComputedType;
+    public String getOverallType() {
+        return mOverallType;
     }
 
     public String[] getServerPredictions() {
@@ -263,7 +272,7 @@ public class FormFieldData {
             int maxLength,
             String heuristicType,
             String serverType,
-            String computedType,
+            String overallType,
             String[] serverPredictions,
             float left,
             float top,
@@ -271,6 +280,7 @@ public class FormFieldData {
             float bottom,
             String[] datalistValues,
             String[] datalistLabels,
+            boolean focusable,
             boolean visible,
             boolean isAutofilled,
             String origin) {
@@ -290,7 +300,7 @@ public class FormFieldData {
                 maxLength,
                 heuristicType,
                 serverType,
-                computedType,
+                overallType,
                 serverPredictions,
                 left,
                 top,
@@ -298,6 +308,7 @@ public class FormFieldData {
                 bottom,
                 datalistValues,
                 datalistLabels,
+                focusable,
                 visible,
                 isAutofilled,
                 origin);

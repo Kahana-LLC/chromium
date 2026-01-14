@@ -50,6 +50,10 @@
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/accessibility/ax_error_types.h"
 
+namespace base {
+class UnguessableToken;
+}
+
 namespace ui {
 struct AXTreeUpdate;
 class AXMode;
@@ -79,7 +83,9 @@ enum class BackForwardCacheAware { kAllow, kPossiblyDisallow };
 // Provides readonly access to some properties of a DOM document.
 class BLINK_EXPORT WebDocument : public WebNode {
  public:
-  WebDocument() = default;
+  explicit WebDocument(
+      cppgc::SourceLocation loc = BLINK_WEB_NODE_LOCATION_FROM_HERE)
+      : WebNode(loc) {}
   WebDocument(const WebDocument& e) = default;
 
   WebDocument& operator=(const WebDocument& e) {
@@ -224,6 +230,16 @@ class BLINK_EXPORT WebDocument : public WebNode {
   void ExecuteScriptTool(const WebString& name,
                          const WebString& input_arguments,
                          ScriptToolExecutedCallback tool_executed_cb);
+
+  // Dispatches an autofill event on the document with the given field data.
+  // This is called by the autofill agent before filling form fields.
+  // The `fill_id` is passed so that refill requests can be associated with
+  // the original fill operation. If `supports_refill` is false, the event's
+  // refill() method will be null.
+  void DispatchAutofillEvent(
+      std::vector<std::pair<WebFormControlElement, WebString>> autofill_values,
+      const base::UnguessableToken& fill_id,
+      bool supports_refill);
 
 #if INSIDE_BLINK
   WebDocument(Document*);

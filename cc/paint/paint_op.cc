@@ -40,6 +40,8 @@
 #include "third_party/skia/include/core/SkColorSpace.h"
 #include "third_party/skia/include/core/SkImage.h"
 #include "third_party/skia/include/core/SkMatrix.h"
+#include "third_party/skia/include/core/SkPath.h"
+#include "third_party/skia/include/core/SkPathBuilder.h"
 #include "third_party/skia/include/core/SkRefCnt.h"
 #include "third_party/skia/include/core/SkRegion.h"
 #include "third_party/skia/include/core/SkSerialProcs.h"
@@ -54,9 +56,7 @@
 namespace cc {
 namespace {
 
-BASE_FEATURE(kUseLitePaintOps,
-             "UseLitePaintOps",
-             base::FEATURE_ENABLED_BY_DEFAULT);
+BASE_FEATURE(kUseLitePaintOps, base::FEATURE_ENABLED_BY_DEFAULT);
 
 // In a future CL, convert DrawImage to explicitly take sampling instead of
 // quality
@@ -788,7 +788,9 @@ void SaveLayerFiltersOp::Serialize(PaintOpWriter& writer,
                                    const SkM44& current_ctm,
                                    const SkM44& original_ctm) const {
   writer.Write(*flags_to_serialize, current_ctm);
+  writer.Write(bounds);
   writer.Write(filters, current_ctm);
+  writer.Write(backdrop_filter, current_ctm);
 }
 
 void ScaleOp::Serialize(PaintOpWriter& writer,
@@ -970,7 +972,11 @@ PaintOp* DrawPathOp::Deserialize(PaintOpReader& reader, void* output) {
   reader.Read(&op->flags);
   reader.Read(&op->path);
   reader.Read(&op->sk_path_fill_type);
-  op->path.setFillType(static_cast<SkPathFillType>(op->sk_path_fill_type));
+  if (reader.valid()) {
+    // Only apply successfully-deserialized fill types, as SkPath has
+    // self-validation asserts that trip on invalid fill type values.
+    op->path.setFillType(op->sk_path_fill_type);
+  }
   return op;
 }
 
@@ -1173,7 +1179,9 @@ PaintOp* SaveLayerAlphaOp::Deserialize(PaintOpReader& reader, void* output) {
 PaintOp* SaveLayerFiltersOp::Deserialize(PaintOpReader& reader, void* output) {
   SaveLayerFiltersOp* op = new (output) SaveLayerFiltersOp;
   reader.Read(&op->flags);
+  reader.Read(&op->bounds);
   reader.Read(op->filters);
+  reader.Read(&op->backdrop_filter);
   return op;
 }
 
@@ -1315,6 +1323,7 @@ void DrawImageOp::RasterWithFlags(const DrawImageOp* op,
   // Retrieve the SkImages and sampling.
   sk_sp<SkImage> sk_image;
   sk_sp<SkImage> gainmap_sk_image;
+  gfx::HDRMetadata hdr_metadata;
   SkSamplingOptions sampling = op->sampling;
   // If the SkImages are from an ImageProvider, keep them in scope.
   ImageProvider::ScopedResult scoped_result;
@@ -1334,6 +1343,8 @@ void DrawImageOp::RasterWithFlags(const DrawImageOp* op,
     DCHECK_EQ(0, static_cast<int>(decoded_image.src_rect_offset().height()));
 
     sk_image = decoded_image.image();
+    gainmap_sk_image = decoded_image.gainmap_image();
+    hdr_metadata = decoded_image.hdr_metadata();
     SkSize scale_adjustment = SkSize::Make(
         op->scale_adjustment.width() * decoded_image.scale_adjustment().width(),
         op->scale_adjustment.height() *
@@ -1355,6 +1366,7 @@ void DrawImageOp::RasterWithFlags(const DrawImageOp* op,
       sk_image = op->image.GetSwSkImage();
     }
     gainmap_sk_image = op->image.gainmap_sk_image_;
+    hdr_metadata = op->image.hdr_metadata_;
     if (!IsScaleAdjustmentIdentity(op->scale_adjustment)) {
       save_restore.emplace(canvas, /*doSave=*/true);
       canvas->scale(1.f / op->scale_adjustment.width(),
@@ -1378,7 +1390,7 @@ void DrawImageOp::RasterWithFlags(const DrawImageOp* op,
   if (ToneMapUtil::UseGlobalToneMapFilter(sk_image.get(),
                                           canvas->imageInfo().colorSpace())) {
     ToneMapUtil::AddGlobalToneMapFilterToPaint(
-        paint, sk_image.get(), op->image.hdr_metadata_,
+        paint, sk_image.get(), hdr_metadata,
         ComputeEffectiveHdrHeadroom(flags, params));
   }
   SkTiledImageUtils::DrawImage(canvas, sk_image.get(), op->left, op->top,
@@ -1429,6 +1441,7 @@ void DrawImageRectOp::RasterWithFlags(const DrawImageRectOp* op,
   // Retrieve the SkImages, adjusted source rect, and sampling.
   sk_sp<SkImage> sk_image;
   sk_sp<SkImage> gainmap_sk_image;
+  gfx::HDRMetadata hdr_metadata;
   SkRect adjusted_src;
   SkSamplingOptions sampling;
   // If the SkImages are from an ImageProvider, keep them in scope.
@@ -1463,6 +1476,8 @@ void DrawImageRectOp::RasterWithFlags(const DrawImageRectOp* op,
     sampling = PaintFlags::FilterQualityToSkSamplingOptions(
         decoded_image.filter_quality(), scale);
     sk_image = decoded_image.image();
+    gainmap_sk_image = decoded_image.gainmap_image();
+    hdr_metadata = decoded_image.hdr_metadata();
   } else {
     adjusted_src = AdjustSrcRectForScale(op->src, op->scale_adjustment);
     SkM44 matrix = canvas->getLocalToDevice() *
@@ -1479,13 +1494,15 @@ void DrawImageRectOp::RasterWithFlags(const DrawImageRectOp* op,
       sk_image = op->image.GetSwSkImage();
     }
     gainmap_sk_image = op->image.gainmap_sk_image_;
+    hdr_metadata = op->image.hdr_metadata_;
   }
   if (!sk_image) {
     return;
   }
 
   auto draw_proc = [op, adjusted_src, sampling, sk_image, gainmap_sk_image,
-                    flags, params](SkCanvas* c, const SkPaint& p) {
+                    flags, params,
+                    hdr_metadata](SkCanvas* c, const SkPaint& p) {
     // If the PaintImage uses a gainmap shader, then replace DrawImage with
     // a shader.
     if (op->image.HasGainmapInfo() && gainmap_sk_image) {
@@ -1502,7 +1519,7 @@ void DrawImageRectOp::RasterWithFlags(const DrawImageRectOp* op,
                                             c->imageInfo().colorSpace())) {
       SkPaint tonemap_paint = p;
       ToneMapUtil::AddGlobalToneMapFilterToPaint(
-          tonemap_paint, sk_image.get(), op->image.hdr_metadata_,
+          tonemap_paint, sk_image.get(), hdr_metadata,
           ComputeEffectiveHdrHeadroom(flags, params));
       DrawImageRect(c, sk_image.get(), adjusted_src, op->dst, sampling,
                     &tonemap_paint, op->constraint);
@@ -1530,10 +1547,7 @@ void DrawLineOp::RasterWithFlags(const DrawLineOp* op,
                                  const PlaybackParams& params) {
   flags->DrawToSk(canvas, [op](SkCanvas* c, const SkPaint& p) {
     if (op->draw_as_path) {
-      SkPath path;
-      path.moveTo(op->x0, op->y0);
-      path.lineTo(op->x1, op->y1);
-      c->drawPath(path, p);
+      c->drawPath(SkPath::Line({op->x0, op->y0}, {op->x1, op->y1}), p);
     } else {
       c->drawLine(op->x0, op->y0, op->x1, op->y1, p);
     }
@@ -1567,9 +1581,11 @@ void DrawArcImpl(SkCanvas* canvas,
     canvas->drawOval(oval, paint);
   } else {
     // Closed partial arcs -> general SkPath.
-    SkPath path;
-    path.arcTo(oval, start_angle_degrees, sweep_angle_degrees, false);
-    path.close();
+    const SkPath path =
+        SkPathBuilder()
+            .arcTo(oval, start_angle_degrees, sweep_angle_degrees, false)
+            .close()
+            .detach();
     canvas->drawPath(path, paint);
   }
 }
@@ -1831,9 +1847,18 @@ void SaveLayerFiltersOp::RasterWithFlags(const SaveLayerFiltersOp* op,
                                          SkCanvas* canvas,
                                          const PlaybackParams& params) {
   SkPaint paint = flags->ToSkPaint();
+  // Backdrop filter is the only thing using bounds, but Skia does not use
+  // the bound when a backdrop filter is present. Instead, clip to the bound.
+  PaintFilter* backdrop_filter = op->backdrop_filter.get();
+  if (backdrop_filter && !backdrop_filter->GetCropRect() &&
+      op->bounds.left() != SK_ScalarInfinity) {
+    canvas->clipRect(op->bounds);
+  }
   canvas->saveLayer(SkCanvasPriv::ScaledBackdropLayer(
-      /*bounds=*/nullptr, &paint, /*backdrop=*/nullptr, /*backdropScale=*/1.0f,
-      /*saveLayerFlags=*/0, PaintFilter::ToSkImageFilters(op->filters)));
+      /* bounds */ nullptr, &paint,
+      PaintFilter::GetSkFilter(backdrop_filter).get(),
+      /*backdropScale=*/1.0f, /*saveLayerFlags=*/0,
+      PaintFilter::ToSkImageFilters(op->filters)));
 }
 
 void ScaleOp::Raster(const ScaleOp* op,
@@ -2032,6 +2057,7 @@ bool SaveLayerAlphaOp::EqualsForTesting(const SaveLayerAlphaOp& other) const {
 bool SaveLayerFiltersOp::EqualsForTesting(
     const SaveLayerFiltersOp& other) const {
   return flags.EqualsForTesting(other.flags) &&  // IN-TEST
+         bounds == other.bounds &&
          std::ranges::equal(
              filters, other.filters,
              [](const sk_sp<PaintFilter>& lhs, const sk_sp<PaintFilter>& rhs) {
@@ -2039,7 +2065,12 @@ bool SaveLayerFiltersOp::EqualsForTesting(
                    lhs, rhs, [](const PaintFilter& x, const PaintFilter& y) {
                      return x.EqualsForTesting(y);  // IN-TEST
                    });
-             });
+             }) &&
+         ((!backdrop_filter && !other.backdrop_filter) ||
+          ((backdrop_filter && other.backdrop_filter) &&
+           backdrop_filter->EqualsForTesting(  // IN-TEST
+               *other.backdrop_filter)));
+  ;
 }
 
 bool ScaleOp::EqualsForTesting(const ScaleOp& other) const {
@@ -2683,12 +2714,25 @@ DrawSlugOp::~DrawSlugOp() = default;
 
 SaveLayerFiltersOp::SaveLayerFiltersOp(
     base::span<const sk_sp<PaintFilter>> filters,
+    const sk_sp<PaintFilter> backdrop_filter,
     const PaintFlags& flags)
     : PaintOpWithFlagsBaseInternal(kType, flags),
-      filters(filters.begin(), filters.end()) {}
+      bounds(kUnsetRect),
+      filters(filters.begin(), filters.end()),
+      backdrop_filter(backdrop_filter) {}
+
+SaveLayerFiltersOp::SaveLayerFiltersOp(
+    const SkRect& bounds,
+    base::span<const sk_sp<PaintFilter>> filters,
+    const sk_sp<PaintFilter> backdrop_filter,
+    const PaintFlags& flags)
+    : PaintOpWithFlagsBaseInternal(kType, flags),
+      bounds(bounds),
+      filters(filters.begin(), filters.end()),
+      backdrop_filter(backdrop_filter) {}
 
 SaveLayerFiltersOp::SaveLayerFiltersOp()
-    : PaintOpWithFlagsBaseInternal(kType) {}
+    : PaintOpWithFlagsBaseInternal(kType), bounds(kUnsetRect) {}
 
 SaveLayerFiltersOp::~SaveLayerFiltersOp() = default;
 

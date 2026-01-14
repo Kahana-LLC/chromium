@@ -7,7 +7,6 @@
 #include <algorithm>
 
 #include "base/check_op.h"
-#include "base/containers/contains.h"
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
 #include "chrome/browser/content_settings/cookie_settings_factory.h"
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
@@ -96,13 +95,13 @@ void DurableStoragePermissionContext::DecidePermission(
           net::registry_controlled_domains::INCLUDE_PRIVATE_REGISTRIES);
   if (registerable_domain.empty() &&
       request_data->requesting_origin.HostIsIPAddress()) {
-    registerable_domain = request_data->requesting_origin.host();
+    registerable_domain = request_data->requesting_origin.GetHost();
   }
 
   std::set<std::string> installed_registerable_domains =
       site_engagement::ImportantSitesUtil::GetInstalledRegisterableDomains(
           Profile::FromBrowserContext(browser_context()));
-  if (base::Contains(installed_registerable_domains, registerable_domain)) {
+  if (installed_registerable_domains.contains(registerable_domain)) {
     NotifyPermissionSet(*request_data, std::move(callback),
                         /*persist=*/true, PermissionDecision::kAllow,
                         /*is_final_decision=*/true);

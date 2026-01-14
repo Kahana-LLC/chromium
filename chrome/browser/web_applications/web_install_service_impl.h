@@ -11,6 +11,7 @@
 #include "base/memory/weak_ptr.h"
 #include "components/webapps/common/web_app_id.h"
 #include "content/public/browser/document_service.h"
+#include "content/public/browser/permission_result.h"
 #include "third_party/blink/public/mojom/manifest/manifest.mojom-forward.h"
 #include "third_party/blink/public/mojom/permissions/permission_status.mojom.h"
 #include "third_party/blink/public/mojom/web_install/web_install.mojom.h"
@@ -23,7 +24,7 @@ class WebContents;
 namespace webapps {
 enum class InstallResultCode;
 enum class InstallableStatusCode;
-}
+}  // namespace webapps
 namespace web_app {
 class AppLock;
 struct WebAppInstallInfo;
@@ -87,6 +88,8 @@ class WebInstallServiceImpl
   // blink::mojom::WebInstallService implementation:
   void Install(blink::mojom::InstallOptionsPtr options,
                InstallCallback callback) override;
+  void InstallFromElement(blink::mojom::InstallOptionsPtr options,
+                          InstallCallback callback) override;
 
  private:
   WebInstallServiceImpl(
@@ -119,12 +122,12 @@ class WebInstallServiceImpl
       webapps::InstallableStatusCode error_code);
 
   void RequestWebInstallPermission(
-      base::OnceCallback<
-          void(const std::vector<blink::mojom::PermissionStatus>&)> callback);
+      base::OnceCallback<void(const std::vector<content::PermissionResult>&)>
+          callback);
 
   void OnPermissionDecided(
       InstallCallbackWithMetrics callback_with_metrics,
-      const std::vector<blink::mojom::PermissionStatus>& permission_status);
+      const std::vector<content::PermissionResult>& permission_result);
 
   // `install_info` was fetched from an install url and is used to populate the
   // background launch dialog.
@@ -133,6 +136,15 @@ class WebInstallServiceImpl
       webapps::AppId app_id,
       const GURL& manifest_id,
       std::unique_ptr<WebAppInstallInfo> install_info);
+
+  // Triggers the icon launch dialog after any behavior has been applied on the
+  // icon, like masking.
+  void OnIconFinalizedTriggerDialog(
+      InstallCallbackWithMetrics callback_with_metrics,
+      webapps::AppId app_id,
+      const GURL& manifest_id,
+      std::u16string app_title,
+      const SkBitmap icon_to_use);
 
   // Used by the launch dialog to report whether the user accepted the launch.
   void OnBackgroundAppLaunchDialogClosed(
@@ -150,6 +162,9 @@ class WebInstallServiceImpl
   // `install_url` and an optional `manifest_id`.
   blink::mojom::InstallOptionsPtr install_options_;
   const content::GlobalRenderFrameHostId frame_routing_id_;
+  GURL last_committed_url_;
+  // True if install was triggered from <install> element rather than JS API.
+  bool triggered_from_element_ = false;
   base::WeakPtrFactory<web_app::WebInstallServiceImpl> weak_ptr_factory_{this};
 };
 

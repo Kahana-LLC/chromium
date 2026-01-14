@@ -244,7 +244,7 @@ class VolumeControlInternal : public SystemVolumeControl::Delegate {
     DCHECK(thread_.task_runner()->BelongsToCurrentThread());
     DCHECK_NE(AudioContentType::kOther, type);
     DCHECK(!from_system || type == AudioContentType::kMedia);
-    DCHECK(base::Contains(volume_multipliers_, type));
+    DCHECK(volume_multipliers_.contains(type));
 
     {
       base::AutoLock lock(volume_lock_);
@@ -275,9 +275,8 @@ class VolumeControlInternal : public SystemVolumeControl::Delegate {
     }
 
     stored_values_.SetByDottedPath(ContentTypeToDbFSPath(type), dbfs);
-    std::string output_js;
-    base::JSONWriter::Write(stored_values_, &output_js);
-    saved_volumes_writer_->WriteNow(std::move(output_js));
+    saved_volumes_writer_->WriteNow(
+        base::WriteJson(stored_values_).value_or(""));
   }
 
   void SetVolumeMultiplierOnThread(AudioContentType type, float multiplier) {

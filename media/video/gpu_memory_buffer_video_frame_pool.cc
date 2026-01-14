@@ -47,6 +47,7 @@
 #include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
 #include "components/viz/common/resources/shared_image_format.h"
+#include "components/viz/common/resources/shared_image_format_utils.h"
 #include "gpu/GLES2/gl2extchromium.h"
 #include "gpu/command_buffer/client/client_shared_image.h"
 #include "gpu/command_buffer/client/shared_image_interface.h"
@@ -59,7 +60,7 @@
 #include "media/base/video_util.h"
 #include "media/video/gpu_video_accelerator_factories.h"
 #include "third_party/libyuv/include/libyuv.h"
-#include "ui/gfx/buffer_format_util.h"
+#include "third_party/perfetto/include/perfetto/tracing/track.h"
 #include "ui/gfx/buffer_types.h"
 #include "ui/gfx/color_space.h"
 #include "ui/gl/trace_util.h"
@@ -167,7 +168,7 @@ class GpuMemoryBufferVideoFramePool::PoolImpl
     std::unique_ptr<gpu::ClientSharedImage::ScopedMapping> scoped_mapping;
 
     // The sync token used to recycle or destroy the resource. It is set when
-    // resource is returned from the VideoFrame (via MailboxHolderReleased).
+    // resource is returned from the VideoFrame (via SharedImageReleased).
     gpu::SyncToken sync_token;
 
    private:
@@ -254,8 +255,8 @@ class GpuMemoryBufferVideoFramePool::PoolImpl
 
   // Callback called when a VideoFrame generated with GetOrCreateFrameResource
   // is no longer referenced.
-  void MailboxHolderReleased(FrameResource* frame_resource,
-                             const gpu::SyncToken& sync_token);
+  void SharedImageReleased(FrameResource* frame_resource,
+                           const gpu::SyncToken& sync_token);
 
   // Delete resource. This has to be called on the thread where |task_runner|
   // is current.
@@ -603,10 +604,8 @@ gfx::Size CodedSize(const VideoFrame* video_frame,
     case GpuVideoAcceleratorFactories::OutputFormat::NV12:
       DCHECK_EQ(video_frame->visible_rect().x() % 2, 0);
       DCHECK_EQ(video_frame->visible_rect().y() % 2, 0);
-      if (!gfx::IsOddWidthMultiPlanarBuffersAllowed()) {
+      if (!viz::IsOddSizeMultiPlanarBuffersAllowed()) {
         width = base::bits::AlignUp(width, size_t{2});
-      }
-      if (!gfx::IsOddHeightMultiPlanarBuffersAllowed()) {
         height = base::bits::AlignUp(height, size_t{2});
       }
       output = gfx::Size(width, height);
@@ -760,11 +759,11 @@ void GpuMemoryBufferVideoFramePool::PoolImpl::CreateHardwareFrame(
   // TODO(https://crbug.com/webrtc/9033): Eliminate odd size video frame input
   // cases as they are not valid.
   if (video_frame->coded_size().width() % 2 &&
-      !gfx::IsOddWidthMultiPlanarBuffersAllowed()) {
+      !viz::IsOddSizeMultiPlanarBuffersAllowed()) {
     passthrough = true;
   }
   if (video_frame->coded_size().height() % 2 &&
-      !gfx::IsOddHeightMultiPlanarBuffersAllowed()) {
+      !viz::IsOddSizeMultiPlanarBuffersAllowed()) {
     passthrough = true;
   }
 
@@ -820,10 +819,10 @@ void GpuMemoryBufferVideoFramePool::PoolImpl::OnCopiesDone(
     bool copy_failed,
     scoped_refptr<VideoFrame> video_frame,
     FrameResource* frame_resource) {
-  TRACE_EVENT_NESTABLE_ASYNC_END0(
-      "media", "CopyVideoFrameToGpuMemoryBuffer",
-      TRACE_ID_WITH_SCOPE("CopyVideoFrameToGpuMemoryBuffer",
-                          video_frame->timestamp().InNanoseconds()));
+  TRACE_EVENT_END("media",
+                  /*"CopyVideoFrameToGpuMemoryBuffer"*/ perfetto::NamedTrack(
+                      "CopyVideoFrameToGpuMemoryBuffer",
+                      video_frame->timestamp().InNanoseconds()));
 
   media_task_runner_->PostTask(
       FROM_HERE,
@@ -883,10 +882,10 @@ void GpuMemoryBufferVideoFramePool::PoolImpl::CopyVideoFrameToGpuMemoryBuffer(
   auto on_copies_done =
       base::BindOnce(&PoolImpl::OnCopiesDone, this, /*copy_failed=*/false,
                      video_frame, frame_resource);
-  TRACE_EVENT_NESTABLE_ASYNC_BEGIN0(
+  TRACE_EVENT_BEGIN(
       "media", "CopyVideoFrameToGpuMemoryBuffer",
-      TRACE_ID_WITH_SCOPE("CopyVideoFrameToGpuMemoryBuffer",
-                          video_frame->timestamp().InNanoseconds()));
+      perfetto::NamedTrack("CopyVideoFrameToGpuMemoryBuffer",
+                           video_frame->timestamp().InNanoseconds()));
 
   // Compute the number of tasks to post and create the barrier.
   const gfx::Size coded_size = CodedSize(video_frame.get(), output_format_);
@@ -1107,11 +1106,11 @@ scoped_refptr<VideoFrame> GpuMemoryBufferVideoFramePool::PoolImpl::
 
   if (!frame) {
     frame_resource->MarkUnused(tick_clock_->NowTicks());
-    MailboxHolderReleased(frame_resource, sync_token);
+    SharedImageReleased(frame_resource, sync_token);
     return nullptr;
   }
   frame->SetReleaseMailboxCB(
-      base::BindOnce(&PoolImpl::MailboxHolderReleased, this, frame_resource));
+      base::BindOnce(&PoolImpl::SharedImageReleased, this, frame_resource));
 
   frame->set_color_space(frame_resource->shared_image->color_space());
 
@@ -1301,12 +1300,12 @@ void GpuMemoryBufferVideoFramePool::PoolImpl::DeleteFrameResource(
 
 // Called when a VideoFrame is no longer referenced. Put back the resource in
 // the pool.
-void GpuMemoryBufferVideoFramePool::PoolImpl::MailboxHolderReleased(
+void GpuMemoryBufferVideoFramePool::PoolImpl::SharedImageReleased(
     FrameResource* frame_resource,
     const gpu::SyncToken& release_sync_token) {
   if (!media_task_runner_->RunsTasksInCurrentSequence()) {
     media_task_runner_->PostTask(
-        FROM_HERE, base::BindOnce(&PoolImpl::MailboxHolderReleased, this,
+        FROM_HERE, base::BindOnce(&PoolImpl::SharedImageReleased, this,
                                   frame_resource, release_sync_token));
     return;
   }

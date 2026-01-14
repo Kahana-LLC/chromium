@@ -64,7 +64,7 @@
 namespace autofill {
 
 SaveCardOfferBubbleViews::SaveCardOfferBubbleViews(
-    views::View* anchor_view,
+    views::BubbleAnchor anchor_view,
     content::WebContents* web_contents,
     SaveCardBubbleController* controller)
     : SaveCardBubbleViews(anchor_view, web_contents, controller) {
@@ -422,6 +422,12 @@ void SaveCardOfferBubbleViews::LinkClicked(const GURL& url) {
 void SaveCardOfferBubbleViews::ShowThrobber() {
   if (loading_row_ == nullptr) {
     return;
+  }
+
+  // Disable the cardholder name field (if present) to avoid the user modifying
+  // it (to no effect) while the dialog is in the loading state.
+  if (cardholder_name_textfield_) {
+    cardholder_name_textfield_->SetEnabled(false);
   }
 
   SetButtons(static_cast<int>(ui::mojom::DialogButton::kNone));

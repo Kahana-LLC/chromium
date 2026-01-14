@@ -149,7 +149,7 @@ WebAppToolbarButtonContainer::WebAppToolbarButtonContainer(
     }
 
     const int page_action_icon_size =
-        GetLayoutConstant(WEB_APP_PAGE_ACTION_ICON_SIZE);
+        GetLayoutConstant(LayoutConstant::kWebAppPageActionIconSize);
     const page_actions::PageActionViewParams page_action_params{
         .icon_size = page_action_icon_size,
         .icon_insets = PageActionIconInsetsFromSize(page_action_icon_size),
@@ -230,8 +230,9 @@ WebAppToolbarButtonContainer::WebAppToolbarButtonContainer(
   // Pinned buttons are not shown in web apps but buttons can be shown
   // ephemerally in this container and should have the same flex behavior as
   // other toolbar buttons.
-  pinned_toolbar_actions_container_ = AddChildView(
-      std::make_unique<PinnedToolbarActionsContainer>(browser_view_));
+  pinned_toolbar_actions_container_ =
+      AddChildView(std::make_unique<PinnedToolbarActionsContainer>(
+          browser_view_, toolbar_button_provider));
   views::SetHitTestComponent(pinned_toolbar_actions_container_,
                              static_cast<int>(HTCLIENT));
 
@@ -256,13 +257,12 @@ WebAppToolbarButtonContainer::WebAppToolbarButtonContainer(
                                       views::FlexSpecification());
   }
 
-  browser_view_->immersive_mode_controller()->AddObserver(this);
+  ImmersiveModeController::From(browser_view_->browser())->AddObserver(this);
 }
 
 WebAppToolbarButtonContainer::~WebAppToolbarButtonContainer() {
-  ImmersiveModeController* immersive_controller =
-      browser_view_->immersive_mode_controller();
-  if (immersive_controller) {
+  if (auto* const immersive_controller =
+          ImmersiveModeController::From(browser_view_->browser())) {
     immersive_controller->RemoveObserver(this);
   }
 }
@@ -336,7 +336,7 @@ void WebAppToolbarButtonContainer::AddPageActionIcon(
 }
 
 int WebAppToolbarButtonContainer::GetPageActionIconSize() const {
-  return GetLayoutConstant(WEB_APP_PAGE_ACTION_ICON_SIZE);
+  return GetLayoutConstant(LayoutConstant::kWebAppPageActionIconSize);
 }
 
 gfx::Insets WebAppToolbarButtonContainer::GetPageActionIconInsets(
@@ -361,7 +361,7 @@ gfx::Insets WebAppToolbarButtonContainer::PageActionIconInsetsFromSize(
 // highlight and icon fade in).
 bool WebAppToolbarButtonContainer::GetAnimate() const {
   return !g_animation_disabled_for_testing &&
-         !browser_view_->immersive_mode_controller()->IsEnabled();
+         !ImmersiveModeController::From(browser_view_->browser())->IsEnabled();
 }
 
 void WebAppToolbarButtonContainer::StartTitlebarAnimation() {

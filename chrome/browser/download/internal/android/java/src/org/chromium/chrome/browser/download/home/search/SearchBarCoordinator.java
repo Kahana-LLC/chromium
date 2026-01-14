@@ -12,6 +12,9 @@ import android.view.View;
 import android.widget.EditText;
 
 import org.chromium.base.Callback;
+import org.chromium.base.supplier.NonNullObservableSupplier;
+import org.chromium.base.supplier.ObservableSuppliers;
+import org.chromium.base.supplier.SettableNonNullObservableSupplier;
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.chrome.browser.download.internal.R;
 
@@ -22,11 +25,14 @@ public class SearchBarCoordinator {
     private final EditText mEditText;
     private final View mClearButton;
     private final Callback<String> mQueryCallback;
+    private final SettableNonNullObservableSupplier<Boolean> mHasTextSupplier =
+            ObservableSuppliers.createNonNull(false);
 
     public SearchBarCoordinator(
             Context context, Callback<String> queryCallback, boolean autoFocusSearchBox) {
         mView = LayoutInflater.from(context).inflate(R.layout.download_search_bar, null);
         mEditText = mView.findViewById(R.id.search_text);
+        mEditText.setHint(R.string.download_manager_search);
         mClearButton = mView.findViewById(R.id.clear_text_button);
         mQueryCallback = queryCallback;
 
@@ -47,7 +53,8 @@ public class SearchBarCoordinator {
                     @Override
                     public void afterTextChanged(Editable s) {
                         mQueryCallback.onResult(s.toString());
-                        mClearButton.setVisibility(s.length() > 0 ? View.VISIBLE : View.GONE);
+                        mHasTextSupplier.set(s.length() > 0);
+                        mClearButton.setVisibility(s.length() > 0 ? View.VISIBLE : View.INVISIBLE);
                     }
                 });
 
@@ -70,5 +77,24 @@ public class SearchBarCoordinator {
      */
     public View getView() {
         return mView;
+    }
+
+    /**
+     * @return An observable supplier that broadcasts whether the search box has text.
+     */
+    public NonNullObservableSupplier<Boolean> getHasTextSupplier() {
+        return mHasTextSupplier;
+    }
+
+    /** Clears the text in the search edit text box. */
+    public void clearText() {
+        mEditText.setText("");
+    }
+
+    /**
+     * @return Whether the search edit text box has any text.
+     */
+    public boolean hasText() {
+        return mEditText.getText().length() > 0;
     }
 }

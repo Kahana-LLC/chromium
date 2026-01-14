@@ -7,7 +7,6 @@
 
 #include <stddef.h>
 
-#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -16,7 +15,7 @@
 
 #include "base/files/file_path.h"
 #include "base/functional/callback_forward.h"
-#include "base/memory/ref_counted.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/task/thread_pool/thread_pool_instance.h"
 #include "build/build_config.h"
@@ -46,7 +45,6 @@ class GURL;
 class SkBitmap;
 
 namespace base {
-class FilePath;
 class SingleThreadTaskRunner;
 }
 
@@ -157,14 +155,6 @@ class CONTENT_EXPORT ContentRendererClient {
                                     const blink::WebPluginParams& params,
                                     blink::WebPlugin** plugin);
 
-  // Creates a replacement plugin that is shown when the plugin at |file_path|
-  // couldn't be loaded. This allows the embedder to show a custom placeholder.
-  // This may return nullptr. However, if it does return a WebPlugin, it must
-  // never fail to initialize.
-  virtual blink::WebPlugin* CreatePluginReplacement(
-      RenderFrame* render_frame,
-      const base::FilePath& plugin_path);
-
   // Returns the information to display when a navigation error occurs.
   // |error_html| should be set to null if this is a custom error page that will
   // set its own html content, otherwise if |error_html| is not null then it may
@@ -262,6 +252,12 @@ class CONTENT_EXPORT ContentRendererClient {
                                 blink::WebNavigationPolicy default_policy,
                                 bool is_redirect);
 #endif
+
+  // Waits for critical security settings to be processed by the renderer.
+  // These settings (such as cross-origin isolation) are sent via
+  // `RenderProcessHostImpl::NotifyRendererOfLockedStateUpdate()` and must be
+  // in place before the renderer can safely process web content.
+  virtual void WaitForProcessReady();
 
   // Notifies the embedder that the given frame is requesting the resource at
   // `target_url`. If the function returns a valid `new_url`, the request must

@@ -28,8 +28,10 @@ import android.app.Activity;
 import android.text.method.PasswordTransformationMethod;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.ImageButton;
 import android.widget.TextView;
 
+import androidx.annotation.IntRange;
 import androidx.annotation.StringRes;
 import androidx.recyclerview.widget.RecyclerView;
 import androidx.test.espresso.PerformException;
@@ -47,6 +49,7 @@ import org.junit.Assert;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.task.PostTask;
 import org.chromium.base.task.TaskTraits;
+import org.chromium.base.test.transit.ViewElement;
 import org.chromium.base.test.util.Criteria;
 import org.chromium.base.test.util.CriteriaHelper;
 import org.chromium.chrome.browser.ChromeKeyboardVisibilityDelegate;
@@ -57,7 +60,7 @@ import org.chromium.chrome.browser.keyboard_accessory.bar_component.KeyboardAcce
 import org.chromium.chrome.browser.keyboard_accessory.button_group_component.KeyboardAccessoryButtonGroupView;
 import org.chromium.chrome.browser.keyboard_accessory.data.KeyboardAccessoryData;
 import org.chromium.chrome.browser.keyboard_accessory.data.KeyboardAccessoryData.AccessorySheetData;
-import org.chromium.chrome.browser.keyboard_accessory.data.PropertyProvider;
+import org.chromium.chrome.browser.keyboard_accessory.data.Provider;
 import org.chromium.chrome.browser.keyboard_accessory.sheet_tabs.AddressAccessorySheetCoordinator;
 import org.chromium.chrome.browser.keyboard_accessory.sheet_tabs.CreditCardAccessorySheetCoordinator;
 import org.chromium.chrome.browser.keyboard_accessory.sheet_tabs.PasswordAccessorySheetCoordinator;
@@ -72,7 +75,6 @@ import org.chromium.net.test.EmbeddedTestServer;
 import org.chromium.net.test.ServerCertificate;
 import org.chromium.ui.DropdownPopupWindowInterface;
 import org.chromium.ui.test.util.ViewUtils;
-import org.chromium.ui.widget.ChromeImageButton;
 
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicReference;
@@ -256,8 +258,7 @@ public class ManualFillingTestHelper {
         pollUiThread(
                 () -> {
                     Activity activity = mActivityTestRule.getActivity();
-                    return !getKeyboard()
-                            .isSoftKeyboardShowing(activity, activity.getCurrentFocus());
+                    return !getKeyboard().isSoftKeyboardShowing(activity.getCurrentFocus());
                 });
     }
 
@@ -278,7 +279,6 @@ public class ManualFillingTestHelper {
                             mActivityTestRule
                                     .getKeyboardDelegate()
                                     .isKeyboardShowing(
-                                            mActivityTestRule.getActivity(),
                                             mActivityTestRule.getActivity().getTabsView());
                     Criteria.checkThat(isKeyboardShowing, Matchers.is(true));
                 });
@@ -524,7 +524,7 @@ public class ManualFillingTestHelper {
                 for (int buttonIndex = 0;
                         buttonIndex < buttonGroupView.getButtons().size();
                         buttonIndex++) {
-                    final ChromeImageButton button = buttonGroupView.getButtons().get(buttonIndex);
+                    final ImageButton button = buttonGroupView.getButtons().get(buttonIndex);
                     if (descriptionToMatch.equals(button.getContentDescription())) {
                         PostTask.runOrPostTask(TaskTraits.UI_DEFAULT, button::performClick);
                         return;
@@ -588,13 +588,19 @@ public class ManualFillingTestHelper {
     }
 
     /**
-     * Use like {@link androidx.test.espresso.Espresso#onView}. It waits for a view matching
-     * the given |matcher| to be displayed and allows to chain checks/performs on the result.
+     * Use like {@link androidx.test.espresso.Espresso#onView}. It waits for a view matching the
+     * given |matcher| to be displayed and allows to chain checks/performs on the result.
+     *
      * @param matcher The matcher matching exactly the view that is expected to be displayed.
      * @return An interaction on the view matching |matcher|.
      */
     public static ViewInteraction whenDisplayed(Matcher<View> matcher) {
-        return onViewWaiting(allOf(matcher, isDisplayed()));
+        return onViewWaiting(matcher);
+    }
+
+    public static ViewInteraction whenDisplayed(
+            Matcher<View> matcher, @IntRange(from = 1, to = 100) int atLeast) {
+        return onViewWaiting(matcher, ViewElement.displayingAtLeastOption(atLeast));
     }
 
     public ViewInteraction waitForViewOnRoot(View root, Matcher<View> matcher) {
@@ -622,8 +628,8 @@ public class ManualFillingTestHelper {
     // --------------------------------------------
 
     public void addGenerationButton() {
-        PropertyProvider<KeyboardAccessoryData.Action[]> generationActionProvider =
-                new PropertyProvider<>(AccessoryAction.GENERATE_PASSWORD_AUTOMATIC);
+        Provider<KeyboardAccessoryData.Action[]> generationActionProvider =
+                new Provider<>(AccessoryAction.GENERATE_PASSWORD_AUTOMATIC);
         getManualFillingCoordinator()
                 .registerActionProvider(mWebContentsRef.get(), generationActionProvider);
         ThreadUtils.runOnUiThreadBlocking(
@@ -647,8 +653,7 @@ public class ManualFillingTestHelper {
     public void registerSheetDataProvider(@AccessoryTabType int tabType) {
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
-                    PropertyProvider<AccessorySheetData> sheetDataProvider =
-                            new PropertyProvider<>();
+                    Provider<AccessorySheetData> sheetDataProvider = new Provider<>();
                     getManualFillingCoordinator()
                             .registerSheetDataProvider(
                                     mWebContentsRef.get(), tabType, sheetDataProvider);

@@ -2,12 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "base/check.h"
+#include "base/compiler_specific.h"
 #include "build/build_config.h"
 #include "crypto/hash.h"
 #include "crypto/signature_verifier.h"
@@ -30,7 +26,8 @@ namespace crypto {
 namespace {
 
 std::vector<uint8_t> CBBToVector(const CBB* cbb) {
-  return std::vector<uint8_t>(CBB_data(cbb), CBB_data(cbb) + CBB_len(cbb));
+  return std::vector<uint8_t>(CBB_data(cbb),
+                              UNSAFE_TODO(CBB_data(cbb) + CBB_len(cbb)));
 }
 
 class SoftwareECDSA : public UnexportableSigningKey {
@@ -70,6 +67,10 @@ class SoftwareECDSA : public UnexportableSigningKey {
                      key_.get()));
     ret.resize(ret_size);
     return ret;
+  }
+
+  StatefulUnexportableSigningKey* AsStatefulUnexportableSigningKey() override {
+    return nullptr;
   }
 
 #if BUILDFLAG(IS_MAC)
@@ -120,6 +121,10 @@ class SoftwareRSA : public UnexportableSigningKey {
 #if BUILDFLAG(IS_MAC)
   SecKeyRef GetSecKeyRef() const override { NOTREACHED(); }
 #endif  // BUILDFLAG(IS_MAC)
+
+  StatefulUnexportableSigningKey* AsStatefulUnexportableSigningKey() override {
+    return nullptr;
+  }
 
  private:
   bssl::UniquePtr<RSA> key_;
@@ -203,9 +208,10 @@ class SoftwareProvider : public UnexportableKeyProvider {
     return nullptr;
   }
 
-  bool DeleteSigningKeySlowly(base::span<const uint8_t> wrapped_key) override {
+  StatefulUnexportableKeyProvider* AsStatefulUnexportableKeyProvider()
+      override {
     // Unexportable software keys are stateless.
-    return true;
+    return nullptr;
   }
 };
 

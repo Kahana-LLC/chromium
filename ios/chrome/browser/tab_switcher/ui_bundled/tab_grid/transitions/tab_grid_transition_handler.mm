@@ -6,12 +6,14 @@
 
 #import "base/check.h"
 #import "base/ios/block_types.h"
+#import "ios/chrome/browser/shared/public/features/features.h"
 #import "ios/chrome/browser/shared/ui/util/layout_guide_names.h"
 #import "ios/chrome/browser/shared/ui/util/named_guide.h"
 #import "ios/chrome/browser/shared/ui/util/uikit_ui_util.h"
 #import "ios/chrome/browser/shared/ui/util/util_swift.h"
 #import "ios/chrome/browser/tab_switcher/ui_bundled/tab_grid/transitions/animations/grid_to_tab_animation.h"
 #import "ios/chrome/browser/tab_switcher/ui_bundled/tab_grid/transitions/animations/tab_grid_animation_parameters.h"
+#import "ios/chrome/browser/tab_switcher/ui_bundled/tab_grid/transitions/animations/tab_grid_reduced_animation.h"
 #import "ios/chrome/browser/tab_switcher/ui_bundled/tab_grid/transitions/animations/tab_grid_transition_animation.h"
 #import "ios/chrome/browser/tab_switcher/ui_bundled/tab_grid/transitions/animations/tab_to_grid_animation.h"
 #import "ios/chrome/browser/tab_switcher/ui_bundled/tab_grid/transitions/tab_grid_transition_item.h"
@@ -34,6 +36,12 @@
   // The view controller of the currently active tab grid.
   UIViewController* _activeGrid;
 
+  // The view controller of the pinned tabs.
+  UIViewController* _pinnedTabsViewController;
+
+  // Whether the active cell if from a pinned tab.
+  BOOL _activeCellPinned;
+
   // The tab grid transition animation to be performed.
   id<TabGridTransitionAnimation> _animation;
 
@@ -44,7 +52,7 @@
   BOOL _isRegularBrowserNTP;
 
   // Whether the transition is for an incognito tab.
-  BOOL _isIncognito;
+  BOOL _incognito;
 }
 
 #pragma mark - Public
@@ -58,11 +66,11 @@
                 (UIViewController*)bvcContainerViewController
                      layoutGuideCenter:(LayoutGuideCenter*)layoutGuideCenter
                    isRegularBrowserNTP:(BOOL)isRegularBrowserNTP
-                           isIncognito:(BOOL)isIncognito {
+                             incognito:(BOOL)incognito {
   self = [super init];
   if (self) {
     TabGridTransitionLayout* transitionLayout = [tabGridTransitionLayoutProvider
-        transitionLayoutForIsIncognito:isIncognito];
+        transitionLayoutForIsIncognito:incognito];
     _transitionType = transitionType;
     _direction = direction;
     _tabGridTransitionLayoutProvider = tabGridTransitionLayoutProvider;
@@ -70,9 +78,11 @@
     _BVCContainerViewController = bvcContainerViewController;
     _tabGridCellItem = transitionLayout.activeCell;
     _activeGrid = transitionLayout.activeGrid;
+    _pinnedTabsViewController = transitionLayout.pinnedTabs;
+    _activeCellPinned = transitionLayout.isActiveCellPinned;
     _layoutGuideCenter = layoutGuideCenter;
     _isRegularBrowserNTP = isRegularBrowserNTP;
-    _isIncognito = isIncognito;
+    _incognito = incognito;
   }
   return self;
 }
@@ -131,7 +141,14 @@
 // Prepares items for the Tab Grid to Browser transition.
 - (void)prepareTabGridToBrowserTransition {
   [_tabGridViewController addChildViewController:_BVCContainerViewController];
-  _BVCContainerViewController.view.frame = _tabGridViewController.view.bounds;
+  if (IsChromeNextIaEnabled()) {
+    CGRect frame = _tabGridViewController.view.bounds;
+    // TODO(crbug.com/472279443): Use autolayout instead of fixed margins.
+    frame.size.height -= 50;
+    _BVCContainerViewController.view.frame = frame;
+  } else {
+    _BVCContainerViewController.view.frame = _tabGridViewController.view.bounds;
+  }
   [_tabGridViewController.view addSubview:_BVCContainerViewController.view];
 
   _BVCContainerViewController.view.accessibilityViewIsModal = YES;
@@ -155,22 +172,48 @@
 
 // Performs transition animation.
 - (void)performTransitionAnimationWithCompletion:(ProceduralBlock)completion {
-  TabGridAnimationParameters* animationParameters =
-      [self createAnimationParameters];
+  // The animation is ugly or crashes when the selected cell is not visible.
+  TabGridTransitionType transitionType = _transitionType;
+  if (transitionType == TabGridTransitionType::kNormal && !_tabGridCellItem) {
+    transitionType = TabGridTransitionType::kReducedMotion;
+  }
 
-  if (animationParameters) {
-    switch (_direction) {
-      case TabGridTransitionDirection::kFromTabGridToBrowser:
-        _animation = [[GridToTabAnimation alloc]
-            initWithAnimationParameters:animationParameters];
-        break;
+  switch (transitionType) {
+    case TabGridTransitionType::kNormal: {
+      TabGridAnimationParameters* animationParameters =
+          [self createAnimationParameters];
 
-      case TabGridTransitionDirection::kFromBrowserToTabGrid:
-        _animation = [[TabToGridAnimation alloc]
-            initWithAnimationParameters:animationParameters];
-        break;
+      switch (_direction) {
+        case TabGridTransitionDirection::kFromTabGridToBrowser: {
+          _animation = [[GridToTabAnimation alloc]
+              initWithAnimationParameters:animationParameters];
+          break;
+        }
+
+        case TabGridTransitionDirection::kFromBrowserToTabGrid: {
+          _animation = [[TabToGridAnimation alloc]
+              initWithAnimationParameters:animationParameters];
+          break;
+        }
+      }
+
+      break;
     }
 
+    case TabGridTransitionType::kReducedMotion: {
+      _animation = [[TabGridReducedAnimation alloc]
+          initWithAnimatedView:_BVCContainerViewController.view
+                beingPresented:_direction == TabGridTransitionDirection::
+                                                 kFromTabGridToBrowser];
+      break;
+    }
+
+    case TabGridTransitionType::kAnimationDisabled: {
+      break;
+    }
+  }
+
+  if (_animation) {
     [_animation animateWithCompletion:completion];
   } else if (completion) {
     completion();
@@ -187,7 +230,11 @@
   CGRect primaryToolbarFrameInWindow =
       [primaryToolbarView.superview convertRect:primaryToolbarView.frame
                                          toView:nil];
-  CGFloat topToolbarHeight = CGRectGetMaxY(primaryToolbarFrameInWindow);
+
+  BOOL topToolbarHidden = [self shouldHideTopToolbar];
+  CGFloat topToolbarHeight =
+      topToolbarHidden ? _tabGridViewController.view.safeAreaInsets.top
+                       : CGRectGetMaxY(primaryToolbarFrameInWindow);
 
   // Get the "bottom toolbar height" (everything below the web content area).
   UIView* bottomToolbarView =
@@ -209,6 +256,17 @@
                                                  view:tabContentView]
                                 .layoutFrame;
 
+  // No top toolbar snapshot for regular browser NTPs for grid to tab
+  // animations. `topToolbarHidden` is not directly used here as the screenshot
+  // of the content below the status bar is needed when doing a Tab to Grid
+  // transition.
+  UIView* topToolbarSnapshotView =
+      topToolbarHidden &&
+              _direction == TabGridTransitionDirection::kFromTabGridToBrowser
+          ? nil
+          : [self snapshotOfViewPortionAboveRect:tabContentView
+                                      middleRect:contentAreaFrame];
+
   // Get the animation's destination and origin frames.
   CGRect destinationFrame =
       _direction == TabGridTransitionDirection::kFromBrowserToTabGrid
@@ -220,39 +278,25 @@
           ? _BVCContainerViewController.view.frame
           : _tabGridCellItem.originalFrame;
 
-  // The animation is ugly or crashes when the selected cell is not visible.
-  TabGridTransitionType transitionType = _transitionType;
-  if (!_tabGridTransitionLayoutProvider.isSelectedCellVisible) {
-    transitionType = TabGridTransitionType::kReducedMotion;
-  }
+  CHECK(_tabGridCellItem);
 
-  switch (transitionType) {
-    case TabGridTransitionType::kNormal:
-      CHECK(_tabGridCellItem);
-
-      return [[TabGridAnimationParameters alloc]
-           initWithDestinationFrame:destinationFrame
-                        originFrame:originFrame
-                         activeGrid:_activeGrid
-                       animatedView:_BVCContainerViewController.view
-                    contentSnapshot:_tabGridCellItem.snapshot
-                   topToolbarHeight:topToolbarHeight
-                bottomToolbarHeight:bottomToolbarHeight
-             topToolbarSnapshotView:
-                 [self snapshotOfViewPortionAboveRect:tabContentView
-                                           middleRect:contentAreaFrame]
-          bottomToolbarSnapshotView:
-              [self snapshotOfViewPortionBelowRect:tabContentView
-                                        middleRect:contentAreaFrame]
-              shouldScaleTopToolbar:scaleTopToolbar
-                        isIncognito:_isIncognito];
-    case TabGridTransitionType::kReducedMotion:
-      // TODO(crbug.com/414807974): Handle reduced motion.
-      return nil;
-    case TabGridTransitionType::kAnimationDisabled:
-      // TODO(crbug.com/414807974): Handle animation disabled.
-      return nil;
-  }
+  return [[TabGridAnimationParameters alloc]
+       initWithDestinationFrame:destinationFrame
+                    originFrame:originFrame
+                     activeGrid:_activeGrid
+                     pinnedTabs:_pinnedTabsViewController
+               activeCellPinned:_activeCellPinned
+                   animatedView:_BVCContainerViewController.view
+                contentSnapshot:_tabGridCellItem.snapshot
+               topToolbarHeight:topToolbarHeight
+            bottomToolbarHeight:bottomToolbarHeight
+         topToolbarSnapshotView:topToolbarSnapshotView
+      bottomToolbarSnapshotView:
+          [self snapshotOfViewPortionBelowRect:tabContentView
+                                    middleRect:contentAreaFrame]
+          shouldScaleTopToolbar:scaleTopToolbar
+                      incognito:_incognito
+               topToolbarHidden:topToolbarHidden];
 }
 
 // Returns the frame for the snapshotted content of the active tab.
@@ -260,7 +304,7 @@
 // However, currently the BVC instances are themselves contained within a
 // BVCContainer view controller. This means that the
 // `viewControllerForTab.view` is not the BVC's view; rather it's the view of
-// the view controller that contains the BVC. Unfortunatley, the layout guide
+// the view controller that contains the BVC. Unfortunately, the layout guide
 // needed here is attached to the BVC's view, which is the first (and only)
 // subview of the BVCContainerViewController's view.
 // TODO(crbug.com/40583629) Clean up this arrangement.
@@ -301,6 +345,13 @@
   }
 
   return nil;
+}
+
+// Returns YES if the transition should hide the top toolbar (use the safe area
+// insets instead of the top toolbar LayoutGuide).
+- (BOOL)shouldHideTopToolbar {
+  return _isRegularBrowserNTP && !CanShowTabStrip(_tabGridViewController) &&
+         IsSplitToolbarMode(_tabGridViewController);
 }
 
 @end

@@ -10,7 +10,6 @@
 #include <utility>
 #include <vector>
 
-#include "base/containers/contains.h"
 #include "base/functional/callback_helpers.h"
 #include "base/memory/raw_ptr.h"
 #include "base/strings/utf_string_conversions.h"
@@ -45,9 +44,6 @@
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
-#if BUILDFLAG(IS_ANDROID)
-#include "base/android/build_info.h"
-#endif
 
 namespace password_manager_util {
 namespace {
@@ -691,7 +687,7 @@ TEST(PasswordManagerUtil, FindLoginWithChangedPassword) {
   EXPECT_CALL(*form_manager, GetPendingCredentials())
       .WillOnce(testing::ReturnRef(submitted_form));
 
-  EXPECT_EQ(*FindLoginWithChangedPassword(*form_manager.get()),
+  EXPECT_EQ(*FindChangedPasswordLoginWithBackup(*form_manager.get()),
             backup_password_match);
 }
 

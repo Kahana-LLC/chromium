@@ -17,7 +17,6 @@
 #include "chrome/android/chrome_jni_headers/TabModelObserverJniBridge_jni.h"
 
 using base::android::AttachCurrentThread;
-using base::android::JavaParamRef;
 using base::android::JavaRef;
 
 TabModelObserverJniBridge::TabModelObserverJniBridge(
@@ -43,6 +42,9 @@ void TabModelObserverJniBridge::DidSelectTab(JNIEnv* env,
   CHECK(tab);
   for (auto& observer : model_observers_) {
     observer.DidSelectTab(tab, static_cast<TabModel::TabSelectionType>(type));
+  }
+  for (auto& observer : interface_observers_) {
+    observer.OnActiveTabChanged(tab);
   }
 }
 
@@ -149,6 +151,9 @@ void TabModelObserverJniBridge::TabRemoved(JNIEnv* env, TabAndroid* tab) {
   for (auto& observer : model_observers_) {
     observer.TabRemoved(tab);
   }
+  for (auto& observer : interface_observers_) {
+    observer.OnTabRemoved(tab);
+  }
 }
 
 void TabModelObserverJniBridge::AddObserver(TabModelObserver* observer) {
@@ -168,3 +173,5 @@ void TabModelObserverJniBridge::RemoveTabListInterfaceObserver(
     TabListInterfaceObserver* observer) {
   interface_observers_.RemoveObserver(observer);
 }
+
+DEFINE_JNI(TabModelObserverJniBridge)

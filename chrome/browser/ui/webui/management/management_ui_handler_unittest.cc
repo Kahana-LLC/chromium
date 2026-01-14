@@ -99,6 +99,7 @@
 #include "chromeos/ash/components/network/proxy/ui_proxy_config_service.h"
 #include "chromeos/ash/components/settings/cros_settings_names.h"
 #include "chromeos/ash/components/system/fake_statistics_provider.h"
+#include "chromeos/constants/pref_names.h"
 #include "chromeos/dbus/power/power_manager_client.h"
 #include "components/account_id/account_id.h"
 #include "components/onc/onc_pref_names.h"
@@ -373,7 +374,8 @@ class ManagementUIHandlerTests :
   void SetConnectorPolicyValue(const char* policy_key,
                                const std::string& value,
                                policy::PolicyMap& policies) {
-    auto policy_value = base::JSONReader::Read(value);
+    auto policy_value =
+        base::JSONReader::Read(value, base::JSON_PARSE_CHROMIUM_EXTENSIONS);
     EXPECT_TRUE(policy_value.has_value());
     policies.Set(policy_key, policy::POLICY_LEVEL_MANDATORY,
                  policy::POLICY_SCOPE_MACHINE, policy::POLICY_SOURCE_CLOUD,
@@ -436,7 +438,6 @@ class ManagementUIHandlerTests :
     bool managed_browser;
     bool managed_device;
     std::string device_domain;
-    base::FilePath crostini_ansible_playbook_filepath;
     bool insights_extension_enabled;
     bool legacy_tech_reporting_enabled;
     bool real_time_url_check_connector_enabled;
@@ -590,9 +591,6 @@ class ManagementUIHandlerTests :
           std::make_unique<base::Value>(std::move(allowlist)));
     }
 
-    profile_->GetPrefs()->SetFilePath(
-        crostini::prefs::kCrostiniAnsiblePlaybookFilePath,
-        GetTestConfig().crostini_ansible_playbook_filepath);
     crostini_features()->set_is_allowed_now(true);
 
     profile_->GetPrefs()->SetBoolean(
@@ -665,11 +663,11 @@ class ManagementUIHandlerTests :
 #if BUILDFLAG(IS_CHROMEOS)
     // Set Floating Workspace (responsible for syncing windows) pref.
     profile_->GetTestingPrefService()->SetManagedPref(
-        ash::prefs::kFloatingWorkspaceV2Enabled,
+        chromeos::prefs::kFloatingWorkspaceV2Enabled,
         std::make_unique<base::Value>(GetTestConfig().sync_windows));
     // Set Floating SSO (responsible for syncing cookies) pref.
     profile_->GetTestingPrefService()->SetManagedPref(
-        prefs::kFloatingSsoEnabled,
+        chromeos::prefs::kFloatingSsoEnabled,
         std::make_unique<base::Value>(GetTestConfig().sync_cookies));
     fake_user_manager_->OnUserProfileCreated(account_id, profile_->GetPrefs());
 #endif  // BUILDFLAG(IS_CHROMEOS)
@@ -1243,32 +1241,6 @@ TEST_F(ManagementUIHandlerTests, AllEnabledDeviceReportingInfo) {
       {kManagementReportExtensions, "extension"},
       {kManagementReportAndroidApplications, "android application"},
       {kManagementReportDlpEvents, "dlp events"},
-      {kManagementReportLoginLogout, "login-logout"},
-      {kManagementReportFileEvents, "file events"}};
-
-  ASSERT_PRED_FORMAT2(ReportingElementsToBeEQ, info, expected_elements);
-}
-
-TEST_F(ManagementUIHandlerTests,
-       AllEnabledCrostiniAnsiblePlaybookDeviceReportingInfo) {
-  ResetTestConfig(true);
-  GetTestConfig().report_dlp_events = false;
-  GetTestConfig().crostini_ansible_playbook_filepath = base::FilePath("/tmp/");
-  const base::Value::List info = SetUpForReportingInfo();
-  const std::map<std::string, std::string> expected_elements = {
-      {kManagementReportActivityTimes, "device activity"},
-      {kManagementReportNetworkData, "device"},
-      {kManagementReportDeviceAudioStatus, "device"},
-      {kManagementReportDevicePeripherals, "peripherals"},
-      {kManagementReportHardwareData, "device statistics"},
-      {kManagementReportCrashReports, "crash report"},
-      {kManagementReportAppInfoAndActivity, "app info and activity"},
-      {kManagementLogUploadEnabled, "logs"},
-      {kManagementPrinting, "print"},
-      {kManagementCrostiniContainerConfiguration, "crostini"},
-      {kManagementExtensionReportUsername, "username"},
-      {kManagementReportExtensions, "extension"},
-      {kManagementReportAndroidApplications, "android application"},
       {kManagementReportLoginLogout, "login-logout"},
       {kManagementReportFileEvents, "file events"}};
 

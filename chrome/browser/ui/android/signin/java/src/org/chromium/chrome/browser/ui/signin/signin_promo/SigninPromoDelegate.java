@@ -6,6 +6,7 @@ package org.chromium.chrome.browser.ui.signin.signin_promo;
 
 import android.content.Context;
 import android.content.Intent;
+import android.text.TextUtils;
 
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
@@ -17,9 +18,11 @@ import org.chromium.chrome.browser.ui.signin.BottomSheetSigninAndHistorySyncConf
 import org.chromium.chrome.browser.ui.signin.BottomSheetSigninAndHistorySyncConfig.WithAccountSigninMode;
 import org.chromium.chrome.browser.ui.signin.R;
 import org.chromium.chrome.browser.ui.signin.SigninAndHistorySyncActivityLauncher;
+import org.chromium.chrome.browser.ui.signin.SigninSurveyController;
 import org.chromium.chrome.browser.ui.signin.SigninUtils;
 import org.chromium.chrome.browser.ui.signin.account_picker.AccountPickerBottomSheetStrings;
 import org.chromium.chrome.browser.ui.signin.history_sync.HistorySyncConfig;
+import org.chromium.components.signin.SigninFeatureMap;
 import org.chromium.components.signin.base.CoreAccountInfo;
 
 /** A delegate object that provides necessary information to customize sign-in promo. */
@@ -45,7 +48,7 @@ public abstract class SigninPromoDelegate {
     abstract String getTitle();
 
     /** Returns the description string for the promo. */
-    abstract String getDescription();
+    abstract String getDescription(@Nullable String accountEmail);
 
     /** Returns the access point name to be recorded in promo histograms. */
     abstract @SigninPreferencesManager.SigninPromoAccessPointId String getAccessPointName();
@@ -70,6 +73,9 @@ public abstract class SigninPromoDelegate {
      */
     abstract boolean canShowPromo();
 
+    /** Returns whether this entry point supports seamless sign-in. */
+    abstract boolean isSeamlessSigninAllowed();
+
     /** Returns the number of times where the promo is shown to the user, */
     abstract int getPromoShownCount();
 
@@ -88,7 +94,7 @@ public abstract class SigninPromoDelegate {
 
     AccountPickerBottomSheetStrings getBottomSheetStrings() {
         return new AccountPickerBottomSheetStrings.Builder(
-                        R.string.signin_account_picker_bottom_sheet_title)
+                        mContext.getString(R.string.signin_account_picker_bottom_sheet_title))
                 .build();
     }
 
@@ -100,10 +106,43 @@ public abstract class SigninPromoDelegate {
         return false;
     }
 
+    boolean shouldDisplaySignedInLayout() {
+        return false;
+    }
+
     String getTextForPrimaryButton(@Nullable DisplayableProfileData profileData) {
-        return profileData == null
-                ? mContext.getString(R.string.signin_promo_signin)
-                : SigninUtils.getContinueAsButtonText(mContext, profileData);
+        @SigninFeatureMap.SeamlessSigninStringType
+        int seamlessSigninStringType = SigninFeatureMap.getInstance().getSeamlessSigninStringType();
+        if (profileData == null) {
+            if (seamlessSigninStringType
+                    == SigninFeatureMap.SeamlessSigninStringType.NON_SEAMLESS) {
+                return mContext.getString(R.string.signin_promo_signin);
+            }
+            return mContext.getString(R.string.sign_in_to_chrome);
+        }
+        if (seamlessSigninStringType == SigninFeatureMap.SeamlessSigninStringType.CONTINUE_BUTTON) {
+            if (!TextUtils.isEmpty(profileData.getGivenName())) {
+                return mContext.getString(
+                        R.string.sync_promo_continue_as, profileData.getGivenName());
+            }
+            if (!TextUtils.isEmpty(profileData.getFullName())) {
+                return mContext.getString(
+                        R.string.sync_promo_continue_as, profileData.getFullName());
+            }
+            return mContext.getString(R.string.sync_promo_continue);
+        } else if (seamlessSigninStringType
+                == SigninFeatureMap.SeamlessSigninStringType.SIGNIN_BUTTON) {
+            if (!TextUtils.isEmpty(profileData.getGivenName())) {
+                return mContext.getString(
+                        R.string.signin_promo_sign_in_as, profileData.getGivenName());
+            }
+            if (!TextUtils.isEmpty(profileData.getFullName())) {
+                return mContext.getString(
+                        R.string.signin_promo_sign_in_as, profileData.getFullName());
+            }
+            return mContext.getString(R.string.signin_promo_sign_in);
+        }
+        return SigninUtils.getContinueAsButtonText(mContext, profileData);
     }
 
     String getTextForSecondaryButton() {
@@ -122,37 +161,36 @@ public abstract class SigninPromoDelegate {
         return false;
     }
 
-    void onPrimaryButtonClicked() {
-        BottomSheetSigninAndHistorySyncConfig config =
-                new BottomSheetSigninAndHistorySyncConfig.Builder(
-                                getBottomSheetStrings(),
-                                NoAccountSigninMode.BOTTOM_SHEET,
-                                WithAccountSigninMode.DEFAULT_ACCOUNT_BOTTOM_SHEET,
-                                getHistoryOptInMode())
-                        .build();
-        @Nullable
-        Intent intent =
+    /**
+     * This primary button handler can, for instance, initiate a sign-in flow for signed-out users
+     * or enable history and tabs sync for signed-in users, depending on the promo's context.
+     *
+     * @param visibleAccount The {@link CoreAccountInfo} of the account displayed in the promo, or
+     *     {@code null} if no account is currently available on the device.
+     */
+    void onPrimaryButtonClicked(@Nullable CoreAccountInfo visibleAccount) {
+        @Nullable Intent intent =
                 mLauncher.createBottomSheetSigninIntentOrShowError(
-                        mContext, mProfile, config, getAccessPoint());
+                        mContext,
+                        mProfile,
+                        getConfigForPrimaryButtonClick(visibleAccount),
+                        getAccessPoint());
         if (intent != null) {
             mContext.startActivity(intent);
         }
     }
 
+    /**
+     * This secondary button handler enables a signed-out user with an account on the device to
+     * choose a different account for sign-in. It is typically hidden for promos shown to signed-in
+     * users.
+     */
     void onSecondaryButtonClicked() {
         assert !shouldHideSecondaryButton();
 
-        BottomSheetSigninAndHistorySyncConfig config =
-                new BottomSheetSigninAndHistorySyncConfig.Builder(
-                                getBottomSheetStrings(),
-                                NoAccountSigninMode.BOTTOM_SHEET,
-                                WithAccountSigninMode.CHOOSE_ACCOUNT_BOTTOM_SHEET,
-                                getHistoryOptInMode())
-                        .build();
-        @Nullable
-        Intent intent =
+        @Nullable Intent intent =
                 mLauncher.createBottomSheetSigninIntentOrShowError(
-                        mContext, mProfile, config, getAccessPoint());
+                        mContext, mProfile, getConfigForSecondaryButtonClick(), getAccessPoint());
         if (intent != null) {
             mContext.startActivity(intent);
         }
@@ -160,5 +198,72 @@ public abstract class SigninPromoDelegate {
 
     void onPromoVisibilityChange() {
         mOnPromoVisibilityChange.run();
+    }
+
+    /** Returns a survey trigger if a signin survey should be shown after the promo. */
+    @Nullable
+    @SigninSurveyController.SigninSurveyType
+    Integer getSurveyTriggerType() {
+        return null;
+    }
+
+    // TODO(https://crbug.com/474294917): Remove this.
+    /** Returns true if the delegate should handle the primary button click. */
+    boolean shouldOverridePrimaryButtonClick() {
+        return true;
+    }
+
+    // TODO(https://crbug.com/474294917): Remove this.
+    /** Returns true if the delegate should handle the secondary button click. */
+    boolean shouldOverrideSecondaryButtonClick() {
+        return true;
+    }
+
+    /** Returns the configuration for the flow started by the secondary button. */
+    BottomSheetSigninAndHistorySyncConfig getConfigForPrimaryButtonClick(
+            @Nullable CoreAccountInfo visibleAccount) {
+        return isSeamlessSigninAllowed() && visibleAccount != null
+                ? getConfigForSeamlessSignin(visibleAccount)
+                : getConfigForCollapsedBottomSheet();
+    }
+
+    /** Returns the configuration for the flow started by the secondary button. */
+    BottomSheetSigninAndHistorySyncConfig getConfigForSecondaryButtonClick() {
+        return getConfigForExpandedBottomSheet(isSeamlessSigninAllowed());
+    }
+
+    private BottomSheetSigninAndHistorySyncConfig getConfigForCollapsedBottomSheet() {
+        return getBaseConfigBuilder(WithAccountSigninMode.DEFAULT_ACCOUNT_BOTTOM_SHEET).build();
+    }
+
+    private BottomSheetSigninAndHistorySyncConfig getConfigForSeamlessSignin(
+            CoreAccountInfo visibleAccount) {
+        return getBaseConfigBuilder(WithAccountSigninMode.SEAMLESS_SIGNIN)
+                .useSeamlessWithAccountSignin(visibleAccount.getId())
+                .build();
+    }
+
+    private BottomSheetSigninAndHistorySyncConfig getConfigForExpandedBottomSheet(
+            boolean shownSigninSnackbar) {
+        return getBaseConfigBuilder(WithAccountSigninMode.CHOOSE_ACCOUNT_BOTTOM_SHEET)
+                .shouldShowSigninSnackbar(shownSigninSnackbar)
+                .build();
+    }
+
+    private BottomSheetSigninAndHistorySyncConfig.Builder getBaseConfigBuilder(
+            @WithAccountSigninMode int mode) {
+        @Nullable Integer surveyType = getSurveyTriggerType();
+        BottomSheetSigninAndHistorySyncConfig.Builder config =
+                new BottomSheetSigninAndHistorySyncConfig.Builder(
+                        getBottomSheetStrings(),
+                        NoAccountSigninMode.BOTTOM_SHEET,
+                        mode,
+                        getHistoryOptInMode(),
+                        mContext.getString(R.string.history_sync_title),
+                        mContext.getString(R.string.history_sync_subtitle));
+        if (surveyType != null) {
+            config.signinSurveyType(surveyType);
+        }
+        return config;
     }
 }

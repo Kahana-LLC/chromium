@@ -70,7 +70,6 @@
 #include "ui/aura/window_delegate.h"
 #include "ui/aura/window_tree_host.h"
 #include "ui/base/ime/init/input_method_initializer.h"
-#include "ui/base/ui_base_switches.h"
 #include "ui/compositor/compositor_switches.h"
 #include "ui/display/display.h"
 #include "ui/display/screen.h"
@@ -81,6 +80,8 @@
 #include "ui/events/devices/touchscreen_device.h"
 #include "ui/gfx/geometry/point.h"
 #include "ui/gfx/geometry/rect.h"
+#include "ui/native_theme/native_theme.h"
+#include "ui/native_theme/os_settings_provider_ash.h"
 #include "ui/views/test/test_widget_builder.h"
 #include "ui/views/view.h"
 #include "ui/views/widget/widget.h"
@@ -112,7 +113,7 @@ class AshEventGeneratorDelegate
 
   // aura::test::EventGeneratorDelegateAura overrides:
   ui::EventTarget* GetTargetAt(const gfx::Point& point_in_screen) override {
-    display::Screen* screen = display::Screen::GetScreen();
+    display::Screen* screen = display::Screen::Get();
     display::Display display = screen->GetDisplayNearestPoint(point_in_screen);
     if (current_display_id_ != display.id()) {
       Shell::Get()->cursor_manager()->SetDisplay(display);
@@ -181,8 +182,12 @@ void AshTestBase::SetUp() {
         std::move(*pixel_test_init_params));
   }
 
-  test_context_factories_ =
-      std::make_unique<ui::TestContextFactories>(/*enable_pixel_output=*/false);
+  const bool enable_pixel_output =
+      base::CommandLine::ForCurrentProcess()->HasSwitch(
+          ::switches::kEnablePixelOutputInTests);
+  test_context_factories_ = std::make_unique<ui::TestContextFactories>(
+      /*enable_pixel_output=*/enable_pixel_output,
+      /*output_to_window=*/enable_pixel_output);
   ash_test_helper_ = std::make_unique<AshTestHelper>(
       test_context_factories_->GetContextFactory());
   ash_test_helper_->SetUp(std::move(*init_params_));
@@ -218,6 +223,11 @@ void AshTestBase::TearDown() {
 
   // Flush the message loop to finish pending release tasks.
   base::RunLoop().RunUntilIdle();
+
+  // Must be deleted before ash_test_helper. AshPixelTestHelper manages a
+  // ScopedFeatureList, and for the correct order of destruction of feature
+  // lists, AshPixelTestHelper needs to be deleted earlier.
+  pixel_test_helper_.reset();
 
   ash_test_helper_->TearDown();
   OnHelperWillBeDestroyed();
@@ -278,6 +288,11 @@ std::optional<pixel_test::InitParams> AshTestBase::CreatePixelTestInitParams()
   return std::nullopt;
 }
 
+std::string AshTestBase::GenerateScreenshotName(const std::string& title) {
+  CHECK(CreatePixelTestInitParams());
+  return pixel_test_helper()->GenerateScreenshotName(title);
+}
+
 void AshTestBase::UpdateDisplay(const std::string& display_specs,
                                 bool from_native_platform,
                                 bool generate_new_ids) {
@@ -329,7 +344,8 @@ std::unique_ptr<aura::Window> AshTestBase::CreateAppWindow(
     const gfx::Rect& bounds_in_screen,
     chromeos::AppType app_type,
     int shell_window_id,
-    views::WidgetDelegate* delegate) {
+    views::WidgetDelegate* delegate,
+    bool show) {
   views::test::TestWidgetBuilder builder;
   if (delegate) {
     builder.SetDelegate(delegate);
@@ -347,6 +363,7 @@ std::unique_ptr<aura::Window> AshTestBase::CreateAppWindow(
           .SetBounds(bounds_in_screen.IsEmpty() ? gfx::Rect(0, 0, 300, 300)
                                                 : bounds_in_screen)
           .SetContext(Shell::GetPrimaryRootWindow())
+          .SetShow(show)
           .SetWindowId(shell_window_id)
           .BuildOwnedByNativeWidget();
   return base::WrapUnique(widget->GetNativeWindow());
@@ -357,8 +374,10 @@ std::unique_ptr<aura::Window> AshTestBase::CreateTestWindow(
     aura::client::WindowType type,
     int shell_window_id) {
   if (type != aura::client::WINDOW_TYPE_NORMAL) {
-    return base::WrapUnique(CreateTestWindowInShellWithDelegateAndType(
-        nullptr, type, shell_window_id, bounds_in_screen));
+    return base::WrapUnique(
+        CreateTestWindowInShell({.bounds = bounds_in_screen,
+                                 .window_type = type,
+                                 .window_id = shell_window_id}));
   }
 
   return CreateAppWindow(bounds_in_screen, chromeos::AppType::NON_APP,
@@ -371,38 +390,15 @@ std::unique_ptr<aura::Window> AshTestBase::CreateToplevelTestWindow(
   aura::test::TestWindowDelegate* delegate =
       aura::test::TestWindowDelegate::CreateSelfDestroyingDelegate();
   return base::WrapUnique<aura::Window>(
-      CreateTestWindowInShellWithDelegateAndType(
-          delegate, aura::client::WINDOW_TYPE_NORMAL, shell_window_id,
-          bounds_in_screen));
+      CreateTestWindowInShell({.delegate = delegate,
+                               .bounds = bounds_in_screen,
+                               .window_id = shell_window_id}));
 }
 
-aura::Window* AshTestBase::CreateTestWindowInShellWithId(int id) {
-  return CreateTestWindowInShellWithDelegate(NULL, id, gfx::Rect());
-}
-
-aura::Window* AshTestBase::CreateTestWindowInShellWithBounds(
-    const gfx::Rect& bounds) {
-  return CreateTestWindowInShellWithDelegate(NULL, 0, bounds);
-}
-
-aura::Window* AshTestBase::CreateTestWindowInShellWithDelegate(
-    aura::WindowDelegate* delegate,
-    int id,
-    const gfx::Rect& bounds) {
-  return CreateTestWindowInShellWithDelegateAndType(
-      delegate, aura::client::WINDOW_TYPE_NORMAL, id, bounds);
-}
-
-aura::Window* AshTestBase::CreateTestWindowInShellWithDelegateAndType(
-    aura::WindowDelegate* delegate,
-    aura::client::WindowType type,
-    int id,
-    const gfx::Rect& bounds) {
-  return TestWindowBuilder({.delegate = delegate,
-                            .bounds = bounds,
-                            .window_type = type,
-                            .window_id = id})
-      .SetWindowTitle(u"Window " + base::NumberToString16(id))
+aura::Window* AshTestBase::CreateTestWindowInShell(
+    aura::test::WindowBuilderParams params) {
+  return TestWindowBuilder(params)
+      .SetWindowTitle(u"Window " + base::NumberToString16(params.window_id))
       .AllowAllWindowStates()
       .Build()
       .release();
@@ -509,6 +505,7 @@ void AshTestBase::SetAccessibilityPanelHeight(int panel_height) {
 
 void AshTestBase::ClearLogin() {
   GetSessionControllerClient()->Reset();
+  Shell::Get()->RecreateMultiUserWindowManagerForTesting();
 }
 
 void AshTestBase::SetCanLockScreen(bool can_lock) {
@@ -587,7 +584,7 @@ bool AshTestBase::TestIfMouseWarpsAt(ui::test::EventGenerator* event_generator,
   static_cast<ExtendedMouseWarpController*>(
       Shell::Get()->mouse_cursor_filter()->mouse_warp_controller_for_test())
       ->allow_non_native_event_for_test();
-  display::Screen* screen = display::Screen::GetScreen();
+  display::Screen* screen = display::Screen::Get();
   display::Display original_display =
       screen->GetDisplayNearestPoint(point_in_screen);
   event_generator->MoveMouseTo(point_in_screen);
@@ -684,8 +681,9 @@ void AshTestBase::MaybeRunDragAndDropSequenceForAppList(
 }
 
 void AshTestBase::SwapPrimaryDisplay() {
-  if (display::Screen::GetScreen()->GetNumDisplays() <= 1)
+  if (display::Screen::Get()->GetNumDisplays() <= 1) {
     return;
+  }
   Shell::Get()->window_tree_host_manager()->SetPrimaryDisplayId(
       display::test::DisplayManagerTestApi(display_manager())
           .GetSecondaryDisplay()
@@ -693,7 +691,7 @@ void AshTestBase::SwapPrimaryDisplay() {
 }
 
 display::Display AshTestBase::GetPrimaryDisplay() const {
-  return display::Screen::GetScreen()->GetDisplayNearestWindow(
+  return display::Screen::Get()->GetDisplayNearestWindow(
       Shell::GetPrimaryRootWindow());
 }
 
@@ -712,9 +710,14 @@ void AshTestBase::PrepareForPixelDiffTest() {
   base::CommandLine::ForCurrentProcess()->AppendSwitch(
       switches::kStabilizeTimeDependentViewForTests);
 
-  // Enable the dark mode switch to maintain the dark mode before user login.
-  base::CommandLine::ForCurrentProcess()->AppendSwitch(
-      ::switches::kForceDarkMode);
+  // Use dark mode by default, which is what many gold images expect.
+  ui::OsSettingsProvider::Get();  // Ensure Ash instance is constructed
+  auto* const os_settings_provider = ui::OsSettingsProviderAsh::GetInstance();
+  CHECK(os_settings_provider);
+  os_settings_provider->SetColorPaletteData(
+      ui::NativeTheme::PreferredColorScheme::kDark,
+      os_settings_provider->AccentColor(),
+      os_settings_provider->SchemeVariant());
 
   DCHECK(!pixel_differ_);
   pixel_differ_ =

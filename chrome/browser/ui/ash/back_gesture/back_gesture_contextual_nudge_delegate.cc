@@ -11,6 +11,7 @@
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "content/public/browser/navigation_details.h"
 #include "content/public/browser/navigation_handle.h"
+#include "content/public/browser/page.h"
 #include "ui/aura/window.h"
 
 BackGestureContextualNudgeDelegate::BackGestureContextualNudgeDelegate(
@@ -84,8 +85,9 @@ void BackGestureContextualNudgeDelegate::StopTrackingNavigation() {
   if (window_) {
     ash::BrowserDelegate* browser =
         ash::BrowserController::GetInstance()->GetBrowserForWindow(window_);
-    CHECK(browser);
-    browser->GetBrowser().tab_strip_model()->RemoveObserver(this);
+    if (browser) {
+      browser->GetBrowser().tab_strip_model()->RemoveObserver(this);
+    }
 
     window_->RemoveObserver(this);
     window_ = nullptr;

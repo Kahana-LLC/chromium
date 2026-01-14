@@ -11,6 +11,10 @@
 
 class TabStripController;
 
+namespace gfx {
+class SlideAnimation;
+}
+
 class TabStripNudgeButton : public TabStripControlButton {
   METADATA_HEADER(TabStripNudgeButton, TabStripControlButton)
 
@@ -29,7 +33,7 @@ class TabStripNudgeButton : public TabStripControlButton {
   ~TabStripNudgeButton() override;
 
   void SetOpacity(float opacity);
-  void SetWidthFactor(float factor);
+  virtual void SetWidthFactor(float factor);
   float width_factor_for_testing() const { return width_factor_; }
 
   // TabStripControlButton:
@@ -40,8 +44,9 @@ class TabStripNudgeButton : public TabStripControlButton {
   float GetWidthFactor() const { return width_factor_; }
 
   virtual void SetIsShowingNudge(bool is_showing);
+  virtual bool GetIsShowingNudge() const;
 
-  bool GetIsShowingNudge() { return is_showing_nudge_; }
+  virtual gfx::SlideAnimation* GetExpansionAnimationForTesting();
 
  protected:
   // TabStripControlButton:
@@ -49,6 +54,8 @@ class TabStripNudgeButton : public TabStripControlButton {
   int GetFlatCornerRadius() const override;
   void SetCloseButtonFocusBehavior(views::View::FocusBehavior focus_behavior);
   bool is_showing_nudge_ = false;
+
+  views::View* close_button() { return close_button_; }
 
  private:
   void SetCloseButton(PressedCallback callback);

@@ -6,7 +6,6 @@ package org.chromium.chrome.test.transit;
 
 import androidx.test.espresso.Espresso;
 
-import org.chromium.base.Log;
 import org.chromium.base.test.transit.Facility;
 import org.chromium.base.test.transit.Station;
 import org.chromium.base.test.transit.TripBuilder;
@@ -15,7 +14,6 @@ import org.chromium.ui.test.transit.SoftKeyboardElement;
 
 /** Represents the soft keyboard shown, expecting it to hide after exiting the Facility. */
 public class SoftKeyboardFacility extends Facility<Station<?>> {
-    private static final String TAG = "Transit";
     public SoftKeyboardElement softKeyboardElement;
 
     @Override
@@ -35,22 +33,27 @@ public class SoftKeyboardFacility extends Facility<Station<?>> {
     public void close(ViewElement... viewElementsToSettle) {
         assertInPhase(Phase.ACTIVE);
 
-        if (softKeyboardElement.get()) {
+        if (softKeyboardElement.value()) {
             // Keyboard was expected to be shown
-            Log.i(TAG, "Recheck soft keyboard is on screen and close it.");
 
             // If this fails, the keyboard was closed before, but not by this facility.
             recheckActiveConditions();
 
-            TripBuilder tripBuilder = runTo(Espresso::closeSoftKeyboard);
-            for (ViewElement<?> viewElement : viewElementsToSettle) {
-                tripBuilder = tripBuilder.waitForAnd(viewElement.createSettleCondition());
+            TripBuilder tripBuilder = runTo(Espresso::closeSoftKeyboard).withRetry();
+
+            if (viewElementsToSettle.length > 0) {
+                Facility<?> viewsSettledFacility = new Facility<>("ViewsSettled");
+                for (ViewElement<?> viewElement : viewElementsToSettle) {
+                    viewsSettledFacility.declareView(
+                            viewElement.getViewSpec(),
+                            viewElement.copyOptions().initialSettleTime(1000).build());
+                }
+                tripBuilder = tripBuilder.enterFacilityAnd(viewsSettledFacility);
             }
-            tripBuilder.withRetry().exitFacility();
-            Log.i(TAG, "Close soft keyboard.");
+
+            tripBuilder.exitFacility();
         } else {
             // Keyboard was not expected to be shown
-            Log.i(TAG, "Keyboard was not expected to be shown, do not try to close it.");
             noopTo().exitFacility();
         }
     }

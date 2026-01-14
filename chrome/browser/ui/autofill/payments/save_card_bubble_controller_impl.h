@@ -20,6 +20,7 @@
 #include "components/autofill/core/browser/payments/payments_autofill_client.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/browser/web_contents_user_data.h"
+#include "ui/actions/action_id.h"
 
 namespace syncer {
 class SyncService;
@@ -159,6 +160,8 @@ class SaveCardBubbleControllerImpl
   int GetSaveSuccessAnimationStringId() const override;
 
   // BubbleControllerBase:
+  void OnBubbleDiscarded() override;
+  bool CanBeReshown() const override;
   BubbleType GetBubbleType() const override;
   base::WeakPtr<BubbleControllerBase> GetBubbleControllerBaseWeakPtr() override;
 
@@ -172,16 +175,39 @@ class SaveCardBubbleControllerImpl
 
   // AutofillBubbleControllerBase::
   void OnVisibilityChanged(content::Visibility visibility) override;
-  PageActionIconType GetPageActionIconType() override;
+  std::optional<PageActionIconType> GetPageActionIconType() override;
   void DoShowBubble() override;
+#if !BUILDFLAG(IS_ANDROID)
+  std::optional<actions::ActionId> GetActionIdForPageAction() override;
+  std::optional<std::u16string> GetPageActionTooltipText() override;
+#endif  // !BUILDFLAG(IS_ANDROID)
 
  private:
   friend class content::WebContentsUserData<SaveCardBubbleControllerImpl>;
   friend class SaveCardBubbleControllerImplTest;
   friend class SaveCardBubbleViewsFullFormBrowserTest;
 
-  // Displays both the offer-to-save bubble and is associated omnibox icon.
-  void SetupAndShowBubble();
+  // Prepares the controller to offer a local credit card save. This sets all
+  // the necessary state for the bubble, including the card details and the
+  // callback to execute on completion.
+  void SetupLocalSave(
+      CreditCard card,
+      payments::PaymentsAutofillClient::SaveCreditCardOptions options,
+      payments::PaymentsAutofillClient::LocalSaveCardPromptCallback
+          save_card_prompt_callback);
+
+  // Prepares the controller to offer saving a credit card to the user's Google
+  // account. This configures the state, including card data, legal messages,
+  // and the callback for the upload flow.
+  void SetupUploadSave(
+      CreditCard card,
+      LegalMessageLines legal_message_lines,
+      payments::PaymentsAutofillClient::SaveCreditCardOptions options,
+      payments::PaymentsAutofillClient::UploadSaveCardPromptCallback
+          save_card_prompt_callback);
+
+  // This method runs a set of checks before showing the bubble.
+  void CheckPreconditionsBeforeShowing();
 
   // Displays the omnibox icon without popping up the offer-to-save bubble.
   void ShowIconOnly();
@@ -196,6 +222,9 @@ class SaveCardBubbleControllerImpl
   // Hides the bubble if it currently being shown, and sets the bubble to
   // inactive, effectively ending the save card flow.
   void EndSaveCardPromptFlow();
+
+  // Logs metrics when the bubble is closed.
+  void LogBubbleCloseMetrics(PaymentsUiClosedReason reason);
 
   // Tied to the profile and outlive this object.
   const raw_ref<PaymentsDataManager> payments_data_manager_;

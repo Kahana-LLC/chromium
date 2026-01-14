@@ -11,6 +11,7 @@
 #include "base/containers/to_vector.h"
 #include "base/feature_list.h"
 #include "base/metrics/histogram_functions.h"
+#include "base/strings/strcat.h"
 #include "base/strings/string_util.h"
 #include "net/base/elements_upload_data_stream.h"
 #include "net/base/upload_bytes_element_reader.h"
@@ -401,8 +402,7 @@ net::CookieSettingOverrides CalculateCookieSettingOverrides(
   // each other's storage access API grants. This must be updated on redirects.
   if (net::cookie_util::ShouldAddInitialStorageAccessApiOverride(
           request.url, request.storage_access_api_status,
-          request.request_initiator, emit_metrics,
-          request.credentials_mode == mojom::CredentialsMode::kInclude)) {
+          request.request_initiator)) {
     overrides.Put(net::CookieSettingOverride::kStorageAccessGrantEligible);
   }
 
@@ -664,6 +664,15 @@ void ConfigureUrlRequest(const ResourceRequest& request,
 
   url_request.set_allows_device_bound_session_registration(
       request.allows_device_bound_session_registration);
+
+  if (base::FeatureList::IsEnabled(features::kSendSameSiteLaxForFedCM) &&
+      (request.destination == mojom::RequestDestination::kWebIdentity ||
+       request.destination == mojom::RequestDestination::kEmailVerification)) {
+    // This check is enforced by CorsURLLoaderFactory::IsValidRequest.
+    CHECK(request.redirect_mode == mojom::RedirectMode::kError ||
+          request.credentials_mode == mojom::CredentialsMode::kOmit);
+    url_request.set_ignore_unsafe_method_for_same_site_lax(true);
+  }
 }
 
 void SetRequestCredentials(
@@ -686,7 +695,7 @@ void SetRequestCredentials(
   // The decision not to include credentials is sticky. This is equivalent to
   // checking the tainted origin flag in the fetch specification.
   if (!allow_credentials) {
-    url_request.set_allow_credentials(false);
+    url_request.set_disallow_credentials();
   }
   if (!allow_client_certificates) {
     url_request.set_send_client_certs(false);
@@ -754,6 +763,7 @@ mojom::URLResponseHeadPtr BuildResponseHead(
       !(url_request.load_flags() & net::LOAD_PREFETCH) &&
       response_info.unused_since_prefetch;
   response->did_use_shared_dictionary = response_info.did_use_shared_dictionary;
+  response->did_use_server_http_auth = response_info.did_use_server_http_auth;
   response->device_bound_session_usage =
       static_cast<network::mojom::DeviceBoundSessionUsage>(
           url_request.device_bound_session_usage());

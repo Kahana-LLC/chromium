@@ -510,7 +510,8 @@ class PolicyTestCases {
         ADD_FAILURE() << "Error reading: " << path;
         return;
       }
-      auto parsed_json = base::JSONReader::ReadAndReturnValueWithError(json);
+      auto parsed_json = base::JSONReader::ReadAndReturnValueWithError(
+          json, base::JSON_PARSE_CHROMIUM_EXTENSIONS);
       if (!parsed_json.has_value()) {
         ADD_FAILURE() << "Error parsing " << path << " : "
                       << parsed_json.error().message;
@@ -699,8 +700,7 @@ void VerifyPolicyToPrefMappings(const base::FilePath& test_case_dir,
       }
     }
 
-    if (test_filter.has_value() &&
-        !base::Contains(test_filter.value(), policy_name)) {
+    if (test_filter.has_value() && !test_filter.value().contains(policy_name)) {
       // Skip policy based on the filter.
       continue;
     }

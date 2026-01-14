@@ -112,7 +112,8 @@ class IOSChromeSavePasswordInfoBarDelegateTest : public PlatformTest {
   // Infobar delegate to test.
   std::unique_ptr<IOSChromeSavePasswordInfoBarDelegate> delegate_;
   // Pointer to the infobar's form manager.
-  raw_ptr<password_manager::MockPasswordFormManagerForUI> form_manager_ptr_;
+  raw_ptr<password_manager::MockPasswordFormManagerForUI, DanglingUntriaged>
+      form_manager_ptr_;
 };
 
 TEST_F(IOSChromeSavePasswordInfoBarDelegateTest, GetUserNameText) {
@@ -840,7 +841,6 @@ TEST_P(IOSChromeSavePasswordInfoBarDelegateRecoveryFlowTest,
       .WillByDefault(testing::ReturnRef(updated_form));
 
   // Set the expectations.
-  EXPECT_CALL(*form_manager_ptr_, OnRemovePasswordBackupNote()).Times(1);
   EXPECT_CALL(*form_manager_ptr_, Save).Times(1);
 
   // Emulate starting presenting the info banner so actions can be taken and

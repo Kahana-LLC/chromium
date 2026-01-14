@@ -20,6 +20,7 @@
 #include "chrome/browser/page_content_annotations/page_content_extraction_types.h"
 #include "chrome/browser/profiles/profile.h"
 #include "components/content_extraction/content/browser/inner_text.h"
+#include "components/optimization_guide/content/browser/page_content_proto_provider.h"
 #include "components/optimization_guide/content/browser/page_context_eligibility.h"
 #include "components/optimization_guide/core/model_execution/optimization_guide_model_execution_error.h"
 #include "components/optimization_guide/core/optimization_guide_common.mojom.h"
@@ -30,6 +31,7 @@
 #include "components/optimization_guide/proto/features/zero_state_suggestions.pb.h"
 #include "components/optimization_guide/proto/hints.pb.h"
 #include "content/public/browser/web_contents.h"
+#include "third_party/blink/public/mojom/content_extraction/ai_page_content.mojom.h"
 
 namespace {
 
@@ -55,12 +57,12 @@ void GetEligibilityAndRunCallback(
     base::OnceCallback<
         void(std::optional<optimization_guide::proto::AnnotatedPageContent>)>
         callback,
-    std::optional<optimization_guide::AIPageContentResult> content) {
+    optimization_guide::AIPageContentResultOrError content) {
   bool is_eligible =
-      content &&
+      content.has_value() &&
       (!page_context_eligibility ||
        optimization_guide::IsPageContextEligible(
-           url.host(), url.path(),
+           url.GetHost(), url.GetPath(),
            optimization_guide::GetFrameMetadataFromPageContent(*content),
            page_context_eligibility));
   std::move(callback).Run(is_eligible ? std::make_optional(content->proto)
@@ -205,9 +207,8 @@ void ZeroStateSuggestionsPageData::InitiatePageContentExtraction() {
     // Otherwise, extract fresh APC.
     if (should_extract_apc) {
       blink::mojom::AIPageContentOptionsPtr ai_page_content_options;
-      ai_page_content_options =
-          optimization_guide::DefaultAIPageContentOptions();
-      ai_page_content_options->on_critical_path = true;
+      ai_page_content_options = optimization_guide::DefaultAIPageContentOptions(
+          /*on_critical_path =*/true);
 
       optimization_guide::GetAIPageContent(
           web_contents, std::move(ai_page_content_options),
@@ -277,6 +278,10 @@ void ZeroStateSuggestionsPageData::GetPageContext(
 
 void ZeroStateSuggestionsPageData::OnReceivedAnnotatedPageContent(
     std::optional<optimization_guide::proto::AnnotatedPageContent> content) {
+  if (annotated_page_content_done_) {
+    return;
+  }
+
   if (content) {
     base::UmaHistogramTimes(
         "ContextualCueing.GlicSuggestions.PageContextFetchlatency."
@@ -290,6 +295,9 @@ void ZeroStateSuggestionsPageData::OnReceivedAnnotatedPageContent(
 
 void ZeroStateSuggestionsPageData::OnReceivedInnerText(
     std::unique_ptr<content_extraction::InnerTextResult> result) {
+  if (inner_text_done_) {
+    return;
+  }
   inner_text_result_ = std::move(result);
   inner_text_done_ = true;
   if (inner_text_result_) {
@@ -319,6 +327,10 @@ void ZeroStateSuggestionsPageData::OnReceivedOptimizationMetadataOnDemand(
 void ZeroStateSuggestionsPageData::OnReceivedOptimizationMetadata(
     optimization_guide::OptimizationGuideDecision decision,
     const optimization_guide::OptimizationMetadata& metadata) {
+  if (optimization_metadata_done_) {
+    return;
+  }
+
   optimization_metadata_done_ = true;
   optimization_decision_ = decision;
   optimization_metadata_ = metadata;
@@ -327,12 +339,23 @@ void ZeroStateSuggestionsPageData::OnReceivedOptimizationMetadata(
 }
 
 void ZeroStateSuggestionsPageData::GiveUp() {
+  if (work_done()) {
+    return;
+  }
+
   MODEL_EXECUTION_LOG(
       base::StringPrintf("ZeroStateSuggestionsPageData: Timed out or page "
                          "destroyed while waiting for "
                          "annotated page content from %s.",
                          GetUrl().spec()));
-  // If we've timed out, fail everything.
+
+  // Each OnReceived* method may try to construct the page context proto and
+  // access the (maybe already destroyed) page if partial results are available,
+  // so clear both of these first.
+  inner_text_result_.reset();
+  annotated_page_content_.reset();
+
+  // Finish with failure and run the page context callbacks.
   OnReceivedInnerText(nullptr);
   OnReceivedOptimizationMetadata(
       optimization_guide::OptimizationGuideDecision::kUnknown, {});
@@ -347,7 +370,8 @@ void ZeroStateSuggestionsPageData::InvokePageContextCallbacksIfComplete() {
   // Check if we are allowed to request suggestions for this page.
   if (!IsEligibleForContextualSuggestions(optimization_decision_,
                                           optimization_metadata_)) {
-    page_context_callbacks_.Notify(std::nullopt);
+    page_context_callbacks_.Notify(
+        base::unexpected(PageContextIneligibilityType::kOptimizationMetadata));
     return;
   }
 
@@ -361,9 +385,12 @@ void ZeroStateSuggestionsPageData::InvokePageContextCallbacksIfComplete() {
         "ContextualCueing.ZeroStateSuggestions.ContextExtractionDone", true);
   }
 
-  page_context_callbacks_.Notify(
-      has_page_context ? std::make_optional(ConstructPageContextProto())
-                       : std::nullopt);
+  if (has_page_context) {
+    page_context_callbacks_.Notify(base::ok(ConstructPageContextProto()));
+  } else {
+    page_context_callbacks_.Notify(
+        base::unexpected(PageContextIneligibilityType::kPageContext));
+  }
 }
 
 const GURL ZeroStateSuggestionsPageData::GetUrl() const {

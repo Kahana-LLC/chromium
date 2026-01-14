@@ -35,6 +35,10 @@
 
 namespace content {
 
+// When enabled, we check that DSNs have a value other than -1.
+// This is enforced at several points in the navigation flow.
+BASE_FEATURE(kCheckDocumentSequenceNumber, base::FEATURE_ENABLED_BY_DEFAULT);
+
 namespace {
 
 // Overridden time for unit tests. Should be accessed only from the main thread.
@@ -81,6 +85,12 @@ BackForwardCacheMetrics::CreateOrReuseBackForwardCacheMetricsForNavigation(
     NavigationEntryImpl* previous_entry,
     bool is_main_frame_navigation,
     int64_t committing_document_sequence_number) {
+  // TODO(https://crbug.com/445585641): Make this enforceable on Android.
+#if !BUILDFLAG(IS_ANDROID)
+  if (base::FeatureList::IsEnabled(kCheckDocumentSequenceNumber)) {
+    CHECK_NE(committing_document_sequence_number, -1);
+  }
+#endif
   if (!previous_entry) {
     // There is no previous NavigationEntry, so we must create a new metrics
     // object.
@@ -215,8 +225,9 @@ void BackForwardCacheMetrics::DidCommitNavigation(
       SCOPED_CRASH_KEY_STRING256(
           "BFCacheMismatch", "previous_url",
           navigation->GetPreviousPrimaryMainFrameURL().spec());
-      // TODO(https://crbug.com/40229455): Remove this and the debugging above.
-      base::debug::DumpWithoutCrashing();
+      // TODO(https://crbug.com/40229455): Reenable this when known cases are
+      // fixed.
+      // base::debug::DumpWithoutCrashing();
     }
 
     TRACE_EVENT1("navigation", "HistoryNavigationOutcome", "outcome",
@@ -693,11 +704,7 @@ void BackForwardCacheMetrics::SetRelatedActiveContentsInfo(
                                                  RenderFrameHost* rfh) {
     const SiteInfo& site_info = static_cast<RenderFrameHostImpl*>(rfh)
                                     ->last_committed_url_derived_site_info();
-    if (doc_count_in_page.contains(site_info)) {
-      doc_count_in_page[site_info]++;
-    } else {
-      doc_count_in_page[site_info] = 1;
-    }
+    ++doc_count_in_page[site_info];
   });
 
   // Determine if any document in the navigating page is potentially

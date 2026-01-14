@@ -59,7 +59,7 @@ ScrollButtonPseudoElement::ScrollButtonPseudoElement(
     Element* originating_element,
     PseudoId pseudo_id)
     : PseudoElement(originating_element, pseudo_id),
-      ScrollSnapshotClient(originating_element->GetDocument().GetFrame()) {
+      PostLayoutSnapshotClient(originating_element->GetDocument().GetFrame()) {
   SetTabIndexExplicitly();
   UseCounter::Count(GetDocument(), WebFeature::kScrollButtonPseudoElement);
 }
@@ -97,20 +97,7 @@ void ScrollButtonPseudoElement::HandleButtonActivation() {
     direction = ScrollDirectionPhysical::kScrollRight;
   }
   if (direction) {
-    gfx::Vector2dF displacement = ToScrollDelta(*direction, 1);
-    displacement.Scale(
-        scrollable_area->ScrollStep(ui::ScrollGranularity::kScrollByPage,
-                                    kHorizontalScrollbar),
-        scrollable_area->ScrollStep(ui::ScrollGranularity::kScrollByPage,
-                                    kVerticalScrollbar));
-    gfx::PointF current_position = scrollable_area->ScrollPosition();
-    std::unique_ptr<cc::SnapSelectionStrategy> strategy =
-        scrollable_area->PageScrollSnapStrategy(*direction);
-    gfx::PointF new_position =
-        scrollable_area->GetSnapPositionAndSetTarget(*strategy).value_or(
-            current_position + displacement);
-    scrollable_area->ScrollToAbsolutePosition(
-        new_position, mojom::blink::ScrollBehavior::kAuto);
+    scrollable_area->ScrollByPageWithSnap(*direction);
   }
   GetDocument().SetFocusedElement(this,
                                   FocusParams(SelectionBehaviorOnFocus::kNone,

@@ -13,7 +13,6 @@ import android.view.ContextThemeWrapper;
 import androidx.annotation.StyleRes;
 
 import org.chromium.base.ObserverList;
-import org.chromium.base.ThreadUtils;
 import org.chromium.build.annotations.NullMarked;
 
 /**
@@ -33,8 +32,10 @@ public class ThemeResourceWrapper {
     /** Observe the theme resource changes provided by the wrapper. */
     public interface ThemeObserver {
 
-        /** Called when the theme / resource is changed. */
-        void onThemeResourceChanged();
+        /**
+         * Called when the theme / resource is changed from the source.
+         * */
+        void onThemeResourceChanged(ThemeResourceWrapper source);
     }
 
     private final Context mBaseContext;
@@ -84,7 +85,6 @@ public class ThemeResourceWrapper {
      * @see Context#getTheme()
      */
     public Theme getTheme() {
-        ThreadUtils.assertOnUiThread();
         assert !mIsBusy;
         try {
             mIsBusy = true;
@@ -100,7 +100,6 @@ public class ThemeResourceWrapper {
      * @see Context#getResources()
      */
     public Resources getResources() {
-        ThreadUtils.assertOnUiThread();
         assert !mIsBusy;
         try {
             mIsBusy = true;
@@ -116,7 +115,6 @@ public class ThemeResourceWrapper {
      * @see Context#getResources()
      */
     public AssetManager getAssets() {
-        ThreadUtils.assertOnUiThread();
         assert !mIsBusy;
         try {
             mIsBusy = true;
@@ -132,7 +130,6 @@ public class ThemeResourceWrapper {
      * @see Context#getSystemService(String)
      */
     public Object getSystemService(String name) {
-        ThreadUtils.assertOnUiThread();
         assert !mIsBusy;
         try {
             mIsBusy = true;
@@ -158,11 +155,15 @@ public class ThemeResourceWrapper {
         mThemedContext =
                 mIsUsingOverlay ? new ContextThemeWrapper(mBaseContext, mResourceId) : mBaseContext;
         for (ThemeObserver observer : mObservers) {
-            observer.onThemeResourceChanged();
+            observer.onThemeResourceChanged(this);
         }
     }
 
     Context getThemedContextForTesting() {
         return mThemedContext;
+    }
+
+    public boolean getIsUsingOverlayForTesting() {
+        return mIsUsingOverlay;
     }
 }

@@ -9,6 +9,7 @@
 
 #include "base/functional/bind.h"
 #include "base/memory/weak_ptr.h"
+#include "base/strings/to_string.h"
 #include "base/values.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/web_applications/commands/web_app_command.h"
@@ -106,8 +107,7 @@ void NavigateAndTriggerInstallDialogCommand::StartWithLock(
 
 void NavigateAndTriggerInstallDialogCommand::OnUrlLoaded(
     webapps::WebAppUrlLoaderResult result) {
-  GetMutableDebugValue().Set("WebAppUrlLoader::Result",
-                             ConvertUrlLoaderResultToString(result));
+  GetMutableDebugValue().Set("WebAppUrlLoader::Result", base::ToString(result));
   if (IsWebContentsDestroyed()) {
     GetMutableDebugValue().Set("web_contents_destroyed", true);
     CompleteAndSelfDestruct(
@@ -175,6 +175,7 @@ void NavigateAndTriggerInstallDialogCommand::OnAppLockGranted() {
   } else {
     switch (app_lock_->registrar().GetInstallState(app_id_).value()) {
       case web_app::proto::SUGGESTED_FROM_ANOTHER_DEVICE:
+      case web_app::proto::SUGGESTED_FROM_MIGRATION:
         is_installable = true;
         break;
       case web_app::proto::INSTALLED_WITH_OS_INTEGRATION:

@@ -9,7 +9,6 @@
 
 #include "ash/constants/ash_features.h"
 #include "ash/constants/web_app_id_constants.h"
-#include "ash/public/cpp/network_config_service.h"
 #include "ash/public/cpp/new_window_delegate.h"
 #include "base/check_is_test.h"
 #include "base/containers/fixed_flat_set.h"
@@ -22,11 +21,11 @@
 #include "chrome/browser/apps/app_service/app_launch_params.h"
 #include "chrome/browser/apps/app_service/app_service_proxy_ash.h"
 #include "chrome/browser/apps/app_service/app_service_proxy_factory.h"
-#include "chrome/browser/ash/assistant/assistant_util.h"
+#include "chrome/browser/ash/browser_delegate/browser_controller.h"
+#include "chrome/browser/ash/browser_delegate/browser_delegate.h"
 #include "chrome/browser/ash/profiles/profile_helper.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
-#include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/browser/web_applications/web_app.h"
 #include "chrome/browser/web_applications/web_app_helpers.h"
@@ -34,8 +33,6 @@
 #include "chrome/browser/web_applications/web_app_registrar.h"
 #include "chrome/common/webui_url_constants.h"
 #include "chromeos/ash/services/assistant/public/cpp/assistant_browser_delegate.h"
-#include "chromeos/ash/services/assistant/public/cpp/features.h"
-#include "chromeos/services/assistant/public/shared/constants.h"
 #include "components/session_manager/core/session_manager.h"
 #include "components/user_manager/user_manager.h"
 
@@ -47,7 +44,6 @@ Profile* GetActiveUserProfile() {
   user_manager::User* active_user =
       user_manager::UserManager::Get()->GetActiveUser();
   CHECK(active_user);
-
   return ash::ProfileHelper::Get()->GetProfileByUser(active_user);
 }
 
@@ -174,36 +170,6 @@ void AssistantBrowserDelegateImpl::InitializeNewEntryPointFor(
           weak_ptr_factory_.GetWeakPtr()));
 }
 
-void AssistantBrowserDelegateImpl::OnAssistantStatusChanged(
-    ash::assistant::AssistantStatus new_status) {}
-
-void AssistantBrowserDelegateImpl::RequestAssistantVolumeControl(
-    mojo::PendingReceiver<ash::mojom::AssistantVolumeControl> receiver) {}
-
-void AssistantBrowserDelegateImpl::RequestBatteryMonitor(
-    mojo::PendingReceiver<device::mojom::BatteryMonitor> receiver) {}
-
-void AssistantBrowserDelegateImpl::RequestWakeLockProvider(
-    mojo::PendingReceiver<device::mojom::WakeLockProvider> receiver) {}
-
-void AssistantBrowserDelegateImpl::RequestAudioStreamFactory(
-    mojo::PendingReceiver<media::mojom::AudioStreamFactory> receiver) {}
-
-void AssistantBrowserDelegateImpl::RequestAudioDecoderFactory(
-    mojo::PendingReceiver<ash::assistant::mojom::AssistantAudioDecoderFactory>
-        receiver) {}
-
-void AssistantBrowserDelegateImpl::RequestAudioFocusManager(
-    mojo::PendingReceiver<media_session::mojom::AudioFocusManager> receiver) {}
-
-void AssistantBrowserDelegateImpl::RequestMediaControllerManager(
-    mojo::PendingReceiver<media_session::mojom::MediaControllerManager>
-        receiver) {}
-
-void AssistantBrowserDelegateImpl::RequestNetworkConfig(
-    mojo::PendingReceiver<chromeos::network_config::mojom::CrosNetworkConfig>
-        receiver) {}
-
 void AssistantBrowserDelegateImpl::OpenUrl(GURL url) {
   // The new tab should be opened with a user activation since the user
   // interacted with the Assistant to open the url. |in_background| describes
@@ -225,11 +191,6 @@ AssistantBrowserDelegateImpl::GetWebAppRegistrarForNewEntryPoint() {
   if (!on_is_new_entry_point_eligible_ready_.is_signaled()) {
     return base::unexpected(
         AssistantBrowserDelegate::Error::kWebAppProviderNotReadyToRead);
-  }
-
-  if (!ash::assistant::features::IsNewEntryPointEnabled()) {
-    return base::unexpected(
-        AssistantBrowserDelegate::Error::kNewEntryPointNotEnabled);
   }
 
   web_app::WebAppProvider* provider =
@@ -282,14 +243,21 @@ void AssistantBrowserDelegateImpl::OpenNewEntryPoint() {
   CHECK(profile_for_new_entry_point_);
 
   // Check if the app is already running. If it is, bring the window to front.
-  for (Browser* browser : BrowserList::GetInstance()->OrderedByActivation()) {
-    if ((browser->is_type_app() || browser->is_type_app_popup()) &&
-        web_app->app_id() ==
-            web_app::GetAppIdFromApplicationName(browser->app_name()) &&
-        profile_for_new_entry_point_ == browser->profile()) {
-      browser->window()->Show();
-      return;
-    }
+  bool app_running = false;
+  ash::BrowserController::GetInstance()->ForEachBrowser(
+      ash::BrowserController::BrowserOrder::kAscendingActivationTime,
+      [&](ash::BrowserDelegate& browser) {
+        if (browser.IsWebApp() && browser.GetAppId() == web_app->app_id() &&
+            browser.GetBrowser().profile() == profile_for_new_entry_point_) {
+          browser.Show();
+          app_running = true;
+          return ash::BrowserController::kBreakIteration;
+        }
+        return ash::BrowserController::kContinueIteration;
+      });
+
+  if (app_running) {
+    return;
   }
 
   apps::AppServiceProxyFactory::GetForProfile(profile_for_new_entry_point_)

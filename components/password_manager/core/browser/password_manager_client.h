@@ -116,7 +116,6 @@ class PasswordManagerMetricsRecorder;
 class PasswordRequirementsService;
 class PasswordReuseManager;
 class PasswordStoreInterface;
-class SmsOtpBackend;
 class WebAuthnCredentialsDelegate;
 struct PasswordForm;
 
@@ -152,6 +151,10 @@ class PasswordManagerClient {
   // TODO(crbug.com/40685327): This method's name is misleading as it also
   // determines whether saving prompts should be shown.
   virtual bool IsFillingEnabled(const GURL& url) const;
+
+  // Checks if the field was last filled with an OTP.
+  virtual bool IsFieldFilledWithOtp(autofill::FormGlobalId form_id,
+                                    autofill::FieldGlobalId field_id);
 
   // Checks if the auto sign-in functionality is enabled.
   virtual bool IsAutoSignInEnabled() const;
@@ -530,8 +533,6 @@ class PasswordManagerClient {
   // Marks all credentials that have been loaded for this page and have been
   // received via the password sharing feature as notified.
   virtual void MarkSharedCredentialsAsNotified(const GURL& url);
-
-  virtual SmsOtpBackend* GetSmsOtpBackend() const;
 #endif  // BUILDFLAG(IS_ANDROID)
 
   // Returns the Chrome channel for the installation.
@@ -569,6 +570,10 @@ class PasswordManagerClient {
   virtual password_manager::LeakDetectionInitiator GetLeakDetectionInitiator();
 
   virtual UndoPasswordChangeController* GetUndoPasswordChangeController();
+
+#if !BUILDFLAG(IS_ANDROID)
+  virtual bool IsActorTaskActive();
+#endif  // !BUILDFLAG(IS_ANDROID)
 };
 
 }  // namespace password_manager

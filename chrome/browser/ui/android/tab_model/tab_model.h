@@ -9,6 +9,7 @@
 
 #include "base/android/scoped_java_ref.h"
 #include "base/memory/raw_ptr.h"
+#include "build/android_buildflags.h"
 #include "chrome/browser/flags/android/chrome_session_state.h"
 #include "chrome/browser/ui/android/tab_model/android_live_tab_context.h"
 #include "chrome/browser/ui/tabs/tab_list_interface.h"
@@ -42,6 +43,13 @@ class TabModelObserver;
 class TabModel : public TabListInterface {
  public:
   DECLARE_USER_DATA(TabModel);
+
+  // LINT.IfChange(kInvalidIndex)
+  // Keep this in sync with
+  // chrome/browser/tabmodel/android/java/src/org/chromium/chrome/browser/tabmodel/TabList.java
+  static constexpr int kInvalidIndex = -1;
+  // LINT.ThenChange(//chrome/browser/tabmodel/android/java/src/org/chromium/chrome/browser/tabmodel/TabList.java:INVALID_TAB_INDEX)
+
   // LINT.IfChange(TabLaunchType)
   // Various ways tabs can be launched.
   // Values must be numbered from 0 and can't have gaps.
@@ -152,6 +160,8 @@ class TabModel : public TabListInterface {
     FROM_TAB_LIST_INTERFACE,
     // Open a link, creating a new window.
     FROM_LINK_CREATING_NEW_WINDOW,
+    // Like FROM_CHROME_UI, and opens a tip notification, creating a new tab.
+    FROM_TIPS_NOTIFICATIONS,
     // Must be last.
     SIZE
   };
@@ -240,10 +250,12 @@ class TabModel : public TabListInterface {
   virtual void ForceCloseAllTabs() = 0;
   virtual void CloseTabAt(int index) = 0;
 
-  // Used for restoring tabs from synced foreign sessions.
-  virtual void CreateTab(TabAndroid* parent,
-                         content::WebContents* web_contents,
-                         bool select) = 0;
+  virtual tabs::TabInterface* CreateTab(
+      TabAndroid* parent,
+      std::unique_ptr<content::WebContents> web_contents,
+      int index,
+      TabLaunchType type,
+      bool should_pin) = 0;
 
   virtual void HandlePopupNavigation(TabAndroid* parent,
                                      NavigateParams* params) = 0;
@@ -288,6 +300,18 @@ class TabModel : public TabListInterface {
   void BroadcastSessionRestoreComplete();
 
   LocationBarModel* GetLocationBarModel();
+
+#if BUILDFLAG(IS_DESKTOP_ANDROID)
+  // Sets the |SessionID|.
+  //
+  // This is only needed on desktop Android, where |BrowserWindowInterface|
+  // should be the source of truth for |SessionID|. This function will be
+  // called when |TabModel| is associated with a |BrowserWindowInterface|.
+  //
+  // TODO(http://crbug.com/444518651): remove the if-def when
+  // |BrowserWindowInterface| is compiled into all Android builds.
+  void SetSessionId(SessionID sessionId);
+#endif
 
  private:
   raw_ptr<Profile, DanglingUntriaged> profile_;

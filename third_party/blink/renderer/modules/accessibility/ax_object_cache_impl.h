@@ -33,7 +33,7 @@
 #include <utility>
 
 #include "base/gtest_prod_util.h"
-#include "base/memory/scoped_refptr.h"
+#include "third_party/blink/public/mojom/input/input_handler.mojom-blink.h"
 #include "third_party/blink/public/mojom/render_accessibility.mojom-blink.h"
 #include "third_party/blink/public/web/web_ax_enums.h"
 #include "third_party/blink/renderer/core/accessibility/ax_object_cache_base.h"
@@ -105,6 +105,18 @@ struct TextChangedOperation {
   AXID start_anchor_id;
   AXID end_anchor_id;
   ax::mojom::blink::Command op;
+};
+
+// Contains the current IME (Input Method Editor) context for a given AXObject
+// associated with a text field.
+// This struct is used to track whether a text field has an active composition
+// or there is a text suggestion selected by the IME or any text committed by
+// the IME, which is crucial for providing accurate accessibility feedback for
+// text changes.
+struct ImeContext {
+  bool has_composition = false;
+  mojom::blink::ImeState ime_state = mojom::blink::ImeState::kNone;
+  int committed_text_length = 0;
 };
 
 // This class should only be used from inside the accessibility directory.
@@ -186,6 +198,7 @@ class MODULES_EXPORT AXObjectCacheImpl : public AXObjectCacheBase {
     if (--frozen_count_ == 0) {
       ax_tree_source_->Thaw();
       ClearCachedNodesOnLine();
+      radio_group_name_to_node_ids_.clear();
     }
   }
   bool IsFrozen() const override { return frozen_count_; }
@@ -209,11 +222,10 @@ class MODULES_EXPORT AXObjectCacheImpl : public AXObjectCacheBase {
   void ListboxSelectedChildrenChanged(HTMLSelectElement*) override;
   void ListboxActiveIndexChanged(HTMLSelectElement*) override;
   void SetMenuListOptionsBounds(HTMLSelectElement*,
-                                const WTF::Vector<gfx::Rect>&) override;
+                                const Vector<gfx::Rect>&) override;
   // Return the bounds for <option>s in an open <select>, or nullptr if they
   // are not available.
-  const WTF::Vector<gfx::Rect>* GetOptionsBounds(
-      const AXObject& ax_menu_list) const;
+  const Vector<gfx::Rect>* GetOptionsBounds(const AXObject& ax_menu_list) const;
 
   // Return true if the node has previously had aria-hidden="true" that was used
   // illegally, e.g. focus went inside of it.
@@ -339,6 +351,10 @@ class MODULES_EXPORT AXObjectCacheImpl : public AXObjectCacheBase {
   // stored for the given object, returns an empty `AriaNotifications`.
   AriaNotifications RetrieveAriaNotifications(const AXObject*) override;
 
+  void HandleSetComposition(Node* node,
+                            mojom::blink::ImeState ime_state) override;
+  void HandleCommitText(Node* node, int committed_text_length) override;
+
   void SetCanvasObjectBounds(HTMLCanvasElement*,
                              Element*,
                              const PhysicalRect&) override;
@@ -375,6 +391,8 @@ class MODULES_EXPORT AXObjectCacheImpl : public AXObjectCacheBase {
 
   // Called when the scroll offset changes.
   void HandleScrollPositionChanged(LayoutObject*) override;
+
+  void HandleScrollMarkerTabSelectionChanged(Element* scroller) override;
 
   void HandleScrolledToAnchor(const Node* anchor_node) override;
 
@@ -448,7 +466,7 @@ class MODULES_EXPORT AXObjectCacheImpl : public AXObjectCacheBase {
   void MarkAXObjectDirtyWithCleanLayout(AXObject*);
 
   void MarkAXSubtreeDirtyWithCleanLayout(AXObject*);
-  void MarkSubtreeDirty(Node*);
+  void MarkSubtreeDirty(Node*) override;
   void NotifySubtreeDirty(AXObject* obj);
 
   // Set the parent of the AXObject associated with |child|. If no parent is
@@ -660,10 +678,17 @@ class MODULES_EXPORT AXObjectCacheImpl : public AXObjectCacheBase {
 
   // Returns the `TextChangedOperation` associated with the `id` from the
   // `text_operation_in_node_ids_` map, if `id` is in the map.
-  WTF::Vector<TextChangedOperation>* GetFromTextOperationInNodeIdMap(AXID id);
+  Vector<TextChangedOperation>* GetFromTextOperationInNodeIdMap(AXID id);
 
   // Clears the map after each call, should be called after each serialization.
   void ClearTextOperationInNodeIdMap();
+
+  // Returns the `ImeContext` for a given AXObject. Returns nullptr if the given
+  // AXObject's id is not equal to `ime_context_axid_`.
+  ImeContext* GetImeContext(const AXObject* obj);
+
+  // Clears stored IME context. It should be called after each serialization.
+  void ClearImeContext();
 
   // Adds an event to the list of pending_events_ and mark the object as dirty
   // via AXObjectCache::AddDirtyObjectToSerializationQueue. If
@@ -761,6 +786,10 @@ class MODULES_EXPORT AXObjectCacheImpl : public AXObjectCacheBase {
   // information is used.
   void ComputeNodesOnLine(const LayoutObject* layout_object);
 
+  // Returns the radio button group members for the given radio button.
+  HeapVector<Member<AXObject>> GetRadioButtonGroupMembers(
+      HTMLInputElement* radio_button);
+
   bool HasCachedDataForNodesOnLine() const {
     return !processed_blocks_.empty();
   }
@@ -778,7 +807,7 @@ class MODULES_EXPORT AXObjectCacheImpl : public AXObjectCacheBase {
   const LayoutObject* CachedPreviousOnLine(const LayoutObject* layout_object);
 
   // Updates the node on which the browser last requested accessibility focus.
-  void UpdateAccessibilityFocus(AXID id) { accessibility_focus_ = id; }
+  void UpdateAccessibilityFocus(AXID id);
 
 #if AX_FAIL_FAST_BUILD()
   void AddNodeRequiringCacheUpdate(AXID ax_id, TreeUpdateReason reason);
@@ -1016,7 +1045,7 @@ class MODULES_EXPORT AXObjectCacheImpl : public AXObjectCacheBase {
 
   // When the AXMode filter flag kOnScreenOnly is set, this set holds the IDs of
   // nodes that are not on-screen, but are still serialized.
-  WTF::HashSet<AXID> extra_off_screen_nodes_to_serialize_;
+  HashSet<AXID> extra_off_screen_nodes_to_serialize_;
 #if AX_FAIL_FAST_BUILD()
   size_t included_node_count_ = 0;
   size_t plugin_included_node_count_ = 0;
@@ -1244,6 +1273,28 @@ class MODULES_EXPORT AXObjectCacheImpl : public AXObjectCacheBase {
   HashMap<AXID, WebAXAutofillSuggestionAvailability>
       autofill_suggestion_availability_map_;
 
+  struct RadioButtonGroup : public GarbageCollected<RadioButtonGroup> {
+    RadioButtonGroup(HTMLFormElement* form,
+                     TreeScope* tree_scope,
+                     Vector<AXID> members)
+        : form_(form), tree_scope_(tree_scope), members_(std::move(members)) {}
+
+    void Trace(Visitor* visitor) const;
+
+    WeakMember<HTMLFormElement> form_;
+    WeakMember<TreeScope> tree_scope_;
+    Vector<AXID> members_;
+  };
+
+  RadioButtonGroup* GetCachedRadioButtonGroup(HTMLInputElement* radio_button);
+  void RemoveFromRadioButtonGroupCache(AXID id);
+  RadioButtonGroup* ComputeAndCacheRadioButtonGroup(
+      HTMLInputElement* radio_button,
+      AXObject* ax_object);
+
+  HeapHashMap<String, HeapVector<Member<RadioButtonGroup>>>
+      radio_group_name_to_node_ids_;
+
   // The set of node IDs whose bounds has changed since the last time
   // SerializeLocationChanges was called.
   HashSet<AXID> changed_bounds_ids_;
@@ -1252,7 +1303,7 @@ class MODULES_EXPORT AXObjectCacheImpl : public AXObjectCacheBase {
   // bounding boxes for the options, which are rendered in a special popup
   // document that is not in the AX tree that duplicates the option elements
   // from the main document.
-  WTF::Vector<gfx::Rect> options_bounds_;
+  Vector<gfx::Rect> options_bounds_;
   // AXID for the <select> containing tracked options bounds.
   AXID current_menu_list_axid_ = 0;
 
@@ -1271,10 +1322,17 @@ class MODULES_EXPORT AXObjectCacheImpl : public AXObjectCacheBase {
   // Map of node IDs where there was an operation done, could be deletion or
   // insertion. The items in the vector are in the order that the operations
   // were made in.
-  HashMap<AXID, WTF::Vector<TextChangedOperation>> text_operation_in_node_ids_;
+  HashMap<AXID, Vector<TextChangedOperation>> text_operation_in_node_ids_;
 
   // A set of ARIA notifications that have yet to be added to `ax_tree_data`.
   HashMap<AXID, AriaNotifications> aria_notifications_;
+
+  // Stores the AXID of the object currently undergoing IME composition or
+  // commit. This is kInvalidAXID if no active ime context.
+  AXID ime_context_axid_ = ui::AXNodeData::kInvalidAXID;
+  // Stores the IME context details for the object identified by
+  // `ime_context_axid_`.
+  ImeContext ime_context_;
 
   // The source of the event that is currently being handled.
   ax::mojom::blink::EventFrom active_event_from_ =

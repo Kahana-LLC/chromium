@@ -10,7 +10,6 @@
 #include "base/command_line.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
-#include "base/functional/callback_forward.h"
 #include "base/functional/callback_helpers.h"
 #include "base/memory/weak_ptr.h"
 #include "base/metrics/histogram_functions.h"
@@ -278,6 +277,7 @@ class DefaultBrowserStepController : public ProfileManagementStepController {
       if (can_pin_) {
         browser_util::PinAppToTaskbar(
             ShellUtil::GetBrowserModelId(InstallUtil::IsPerUserInstall()),
+            browser_util::PinAppToTaskbarChannel::kFirstRunExperience,
             base::BindOnce(&PinToTaskbarResult));
       }
 #endif  // BUILDFLAG(IS_WIN)
@@ -310,6 +310,7 @@ class DefaultBrowserStepController : public ProfileManagementStepController {
               features::kOfferPinToTaskbarInFirstRunExperience)) {
         browser_util::ShouldOfferToPin(
             ShellUtil::GetBrowserModelId(InstallUtil::IsPerUserInstall()),
+            browser_util::PinAppToTaskbarChannel::kFirstRunExperience,
             base::BindOnce(
                 &DefaultBrowserStepController::OnCanPinToTaskbarResult,
                 weak_ptr_factory_.GetWeakPtr()));
@@ -450,10 +451,12 @@ class FirstRunPostSignInAdapter : public ProfilePickerPostSignInAdapter {
     }
     // The supervised user IPH should be called after the present
     // post_host_cleared_callback which finishes the browser creation.
+    std::vector<PostHostClearedCallback> callbacks;
+    callbacks.push_back(std::move(post_host_cleared_callback));
+    callbacks.push_back(CreateSupervisedUserIphCallback());
     auto combined_callback =
         CombineCallbacks<PostHostClearedCallback, Browser*>(
-            std::move(post_host_cleared_callback),
-            CreateSupervisedUserIphCallback());
+            std::move(callbacks));
     std::move(step_completed_callback_)
         .Run(std::move(combined_callback), is_continue_callback);
   }
@@ -522,7 +525,7 @@ void FirstRunFlowController::Init() {
                         PROMO_ACTION_NEW_ACCOUNT_NO_EXISTING_ACCOUNT);
 }
 
-void FirstRunFlowController::CancelPostSignInFlow() {
+void FirstRunFlowController::CancelSigninFlow() {
   // Called when the user declines enterprise management. Unfortunately, for
   // some technical and historical reasons, management is already marked as
   // accepted before we show the prompt. So here we need to revert it.

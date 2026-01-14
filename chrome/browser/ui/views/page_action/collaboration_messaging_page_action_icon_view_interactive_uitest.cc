@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/strings/strcat.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/scoped_feature_list.h"
 #include "chrome/browser/profiles/profile.h"
@@ -78,7 +79,6 @@ class CollaborationMessagingPageActionIconViewInteractiveTest
  public:
   CollaborationMessagingPageActionIconViewInteractiveTest() {
     std::vector<base::test::FeatureRefAndParams> enabled_features = {
-        {tab_groups::kTabGroupSyncServiceDesktopMigration, {}},
         {data_sharing::features::kDataSharingFeature, {}},
     };
     std::vector<base::test::FeatureRef> disabled_features;
@@ -98,22 +98,22 @@ class CollaborationMessagingPageActionIconViewInteractiveTest
     }
     features_.InitWithFeaturesAndParameters(enabled_features,
                                             disabled_features);
-    CHECK_EQ(IsPageActionMigrationEnabled(),
+    CHECK_EQ(IsPageActionsMigrationEnabled(),
              GetParam().page_actions_migration_enabled);
   }
 
  protected:
-  bool IsPageActionMigrationEnabled() {
+  bool IsPageActionsMigrationEnabled() {
     return IsPageActionMigrated(PageActionIconType::kCollaborationMessaging);
   }
 
-  using PageActionInteractiveTestMixin::WaitForPageActionButtonVisible;
+  using PageActionInteractiveTestMixin::WaitForPageActionChipVisible;
 
   auto WaitForPageActionToShow() {
     MultiStep steps;
-    if (IsPageActionMigrationEnabled()) {
-      steps += WaitForPageActionButtonVisible(
-          kActionShowCollaborationRecentActivity);
+    if (IsPageActionsMigrationEnabled()) {
+      steps +=
+          WaitForPageActionChipVisible(kActionShowCollaborationRecentActivity);
     } else {
       steps += WaitForShow(kCollaborationMessagingPageActionIconElementId);
     }
@@ -122,9 +122,9 @@ class CollaborationMessagingPageActionIconViewInteractiveTest
 
   auto CheckLabelText(const std::u16string expected_string) {
     MultiStep steps;
-    if (IsPageActionMigrationEnabled()) {
-      steps += WaitForPageActionButtonVisible(
-          kActionShowCollaborationRecentActivity);
+    if (IsPageActionsMigrationEnabled()) {
+      steps +=
+          WaitForPageActionChipVisible(kActionShowCollaborationRecentActivity);
     }
     steps += CheckView(
         kCollaborationMessagingPageActionIconElementId,

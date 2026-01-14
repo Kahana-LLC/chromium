@@ -108,10 +108,19 @@ InterpolationValue CSSTextIndentInterpolationType::MaybeConvertValue(
     const StyleResolverState&,
     ConversionCheckers&) const {
   InterpolationValue length = nullptr;
-
-  for (const auto& item : To<CSSValueList>(value)) {
-    length =
-        InterpolationValue(InterpolableLength::MaybeConvertCSSValue(*item));
+  if (const auto* primitive_value = DynamicTo<CSSPrimitiveValue>(value)) {
+    length = InterpolationValue(
+        InterpolableLength::MaybeConvertCSSValue(*primitive_value));
+  } else {
+    for (const auto& list_value : To<CSSValueList>(value)) {
+      if (const auto* primitive = DynamicTo<CSSPrimitiveValue>(*list_value)) {
+        length = InterpolationValue(
+            InterpolableLength::MaybeConvertCSSValue(*primitive));
+      } else {
+        // TODO(crbug.com/434361099): Not implemented yet.
+        DCHECK(IsA<CSSIdentifierValue>(*list_value));
+      }
+    }
   }
   DCHECK(length);
 

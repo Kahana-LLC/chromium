@@ -39,7 +39,6 @@ import org.mockito.junit.MockitoRule;
 import org.robolectric.Robolectric;
 import org.robolectric.RuntimeEnvironment;
 import org.robolectric.annotation.Config;
-import org.robolectric.shadows.ShadowLog;
 
 import org.chromium.base.ActivityState;
 import org.chromium.base.ApplicationStatus;
@@ -47,6 +46,7 @@ import org.chromium.base.supplier.ObservableSupplierImpl;
 import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.base.test.util.Features.DisableFeatures;
 import org.chromium.base.test.util.Features.EnableFeatures;
+import org.chromium.chrome.browser.feed.componentinterfaces.SurfaceCoordinator;
 import org.chromium.chrome.browser.feed.sections.OnSectionHeaderSelectedListener;
 import org.chromium.chrome.browser.feed.sections.SectionHeaderListProperties;
 import org.chromium.chrome.browser.feed.sections.SectionHeaderProperties;
@@ -78,13 +78,19 @@ import org.chromium.components.prefs.PrefChangeRegistrar;
 import org.chromium.components.prefs.PrefService;
 import org.chromium.components.search_engines.TemplateUrlService;
 import org.chromium.components.search_engines.TemplateUrlService.TemplateUrlServiceObserver;
+import org.chromium.components.signin.SigninFeatures;
 import org.chromium.components.signin.identitymanager.IdentityManager;
 import org.chromium.ui.modelutil.PropertyModel;
 
 /** Tests for {@link FeedSurfaceMediator}. */
 @RunWith(BaseRobolectricTestRunner.class)
 @Config(manifest = Config.NONE)
-@EnableFeatures({ChromeFeatureList.WEB_FEED_SORT, ChromeFeatureList.UNO_PHASE_2_FOLLOW_UP})
+@EnableFeatures({
+    ChromeFeatureList.WEB_FEED_SORT,
+    ChromeFeatureList.UNO_PHASE_2_FOLLOW_UP,
+    ChromeFeatureList.FEED_HEADER_REMOVAL,
+    SigninFeatures.ENABLE_SEAMLESS_SIGNIN
+})
 public class FeedSurfaceMediatorTest {
     static final @Px int TOOLBAR_HEIGHT = 10;
     @Rule public final MockitoRule mMockitoRule = MockitoJUnit.rule();
@@ -116,9 +122,9 @@ public class FeedSurfaceMediatorTest {
     private FeedSurfaceMediator mFeedSurfaceMediator;
 
     @Before
+    @SuppressWarnings("DirectInvocationOnMock")
     public void setUp() {
         // Print logs to stdout.
-        ShadowLog.stream = System.out;
 
         mActivity = Robolectric.buildActivity(Activity.class).get();
         FeedServiceBridgeJni.setInstanceForTesting(mFeedServiceBridgeJniMock);
@@ -1034,12 +1040,12 @@ public class FeedSurfaceMediatorTest {
     }
 
     private FeedSurfaceMediator createMediator(
-            @FeedSurfaceCoordinator.StreamTabId int tabId, PropertyModel sectionHeaderModel) {
+            @SurfaceCoordinator.StreamTabId int tabId, PropertyModel sectionHeaderModel) {
         return createMediator(tabId, sectionHeaderModel, /* uiConfig= */ null);
     }
 
     private FeedSurfaceMediator createMediator(
-            @FeedSurfaceCoordinator.StreamTabId int tabId,
+            @SurfaceCoordinator.StreamTabId int tabId,
             PropertyModel sectionHeaderModel,
             UiConfig uiConfig) {
         return new FeedSurfaceMediator(

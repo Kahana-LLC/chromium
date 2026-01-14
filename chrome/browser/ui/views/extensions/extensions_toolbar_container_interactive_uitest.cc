@@ -20,15 +20,14 @@
 #include "chrome/browser/extensions/extension_tab_util.h"
 #include "chrome/browser/extensions/extension_uninstall_dialog.h"
 #include "chrome/browser/extensions/extension_util.h"
-#include "chrome/browser/extensions/permissions/scripting_permissions_modifier.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_element_identifiers.h"
 #include "chrome/browser/ui/browser_tabstrip.h"
 #include "chrome/browser/ui/browser_window.h"
-#include "chrome/browser/ui/extensions/extension_install_ui_desktop.h"
+#include "chrome/browser/ui/extensions/extension_post_install_dialog.h"
 #include "chrome/browser/ui/test/test_browser_dialog.h"
-#include "chrome/browser/ui/toolbar/toolbar_action_view_controller.h"
+#include "chrome/browser/ui/toolbar/toolbar_action_view_model.h"
 #include "chrome/browser/ui/toolbar/toolbar_actions_model.h"
 #include "chrome/browser/ui/views/extensions/extensions_menu_coordinator.h"
 #include "chrome/browser/ui/views/extensions/extensions_request_access_button.h"
@@ -52,6 +51,7 @@
 #include "extensions/browser/extension_registrar.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_system.h"
+#include "extensions/browser/permissions/scripting_permissions_modifier.h"
 #include "extensions/browser/permissions_manager.h"
 #include "extensions/browser/process_manager.h"
 #include "extensions/browser/test_extension_registry_observer.h"
@@ -220,8 +220,8 @@ IN_PROC_BROWSER_TEST_F(ExtensionsToolbarContainerUITest, InvocationMetrics) {
 
   histogram_tester.ExpectTotalCount(kHistogramName, 1);
   histogram_tester.ExpectBucketCount(
-      kHistogramName,
-      ToolbarActionViewController::InvocationSource::kToolbarButton, 1);
+      kHistogramName, ToolbarActionViewModel::InvocationSource::kToolbarButton,
+      1);
 }
 
 IN_PROC_BROWSER_TEST_F(ExtensionsToolbarContainerUITest,
@@ -298,9 +298,9 @@ IN_PROC_BROWSER_TEST_F(ExtensionsToolbarContainerUITest,
   ASSERT_EQ(2u, toolbar_views.size());
 
   ToolbarActionView* const alpha_action = toolbar_views[0];
-  EXPECT_EQ(alpha->id(), alpha_action->view_controller()->GetId());
+  EXPECT_EQ(alpha->id(), alpha_action->view_model()->GetId());
   ToolbarActionView* const beta_action = toolbar_views[1];
-  EXPECT_EQ(beta->id(), beta_action->view_controller()->GetId());
+  EXPECT_EQ(beta->id(), beta_action->view_model()->GetId());
 
   extensions::ProcessManager* const process_manager =
       extensions::ProcessManager::Get(profile());
@@ -325,8 +325,8 @@ IN_PROC_BROWSER_TEST_F(ExtensionsToolbarContainerUITest,
   EXPECT_EQ(
       0u, process_manager->GetRenderFrameHostsForExtension(beta->id()).size());
   // And confirm this matches the underlying controller's state.
-  EXPECT_TRUE(alpha_action->view_controller()->IsShowingPopup());
-  EXPECT_FALSE(beta_action->view_controller()->IsShowingPopup());
+  EXPECT_TRUE(alpha_action->view_model()->IsShowingPopup());
+  EXPECT_FALSE(beta_action->view_model()->IsShowingPopup());
 
   {
     // Click on Beta. This should result in Beta's popup opening and Alpha's
@@ -346,8 +346,8 @@ IN_PROC_BROWSER_TEST_F(ExtensionsToolbarContainerUITest,
       0u, process_manager->GetRenderFrameHostsForExtension(alpha->id()).size());
   ASSERT_EQ(
       1u, process_manager->GetRenderFrameHostsForExtension(beta->id()).size());
-  EXPECT_FALSE(alpha_action->view_controller()->IsShowingPopup());
-  EXPECT_TRUE(beta_action->view_controller()->IsShowingPopup());
+  EXPECT_FALSE(alpha_action->view_model()->IsShowingPopup());
+  EXPECT_TRUE(beta_action->view_model()->IsShowingPopup());
 }
 
 // Tests that clicking an extension toolbar icon when the popup is open closes
@@ -376,24 +376,24 @@ IN_PROC_BROWSER_TEST_F(ExtensionsToolbarContainerUITest,
       ui_test_utils::GetCenterInScreenCoordinates(action_view)));
   EXPECT_TRUE(ui_controls::SendMouseClick(ui_controls::LEFT));
   EXPECT_TRUE(listener.WaitUntilSatisfied());
-  ToolbarActionViewController* const view_controller =
-      container->GetActionForId(extension->id());
-  EXPECT_TRUE(view_controller->IsShowingPopup());
-  EXPECT_EQ(view_controller, container->popup_owner_for_testing());
+  ToolbarActionViewModel* const view_model =
+      container->GetToolbarViewModel()->GetActionForId(extension->id());
+  EXPECT_TRUE(view_model->IsShowingPopup());
+  EXPECT_EQ(view_model, container->popup_owner_for_testing());
 
   extensions::ExtensionHostTestHelper host_helper(profile(), extension->id());
   EXPECT_TRUE(
       ui_test_utils::SendMouseEventsSync(ui_controls::LEFT, ui_controls::DOWN));
   host_helper.WaitForHostDestroyed();
 
-  EXPECT_FALSE(view_controller->IsShowingPopup());
+  EXPECT_FALSE(view_model->IsShowingPopup());
   EXPECT_EQ(nullptr, container->popup_owner_for_testing());
 
   // Releasing the mouse shouldn't result in the popup being shown again.
   EXPECT_TRUE(
       ui_test_utils::SendMouseEventsSync(ui_controls::LEFT, ui_controls::UP));
   base::RunLoop().RunUntilIdle();
-  EXPECT_FALSE(view_controller->IsShowingPopup());
+  EXPECT_FALSE(view_model->IsShowingPopup());
   EXPECT_EQ(nullptr, container->popup_owner_for_testing());
 }
 
@@ -411,7 +411,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionsToolbarContainerUITest,
 
   auto visible_actions = GetVisibleToolbarActionViews();
   ASSERT_EQ(1u, visible_actions.size());
-  EXPECT_EQ(extension->id(), visible_actions[0]->view_controller()->GetId());
+  EXPECT_EQ(extension->id(), visible_actions[0]->view_model()->GetId());
 
   views::Widget* bubble = CreateBubble(container->GetExtensionsButton());
   container->ShowWidgetForExtension(bubble, extension->id());
@@ -468,7 +468,8 @@ IN_PROC_BROWSER_TEST_F(ExtensionsToolbarContainerUITest,
       extension->id(), {extensions::disable_reason::DISABLE_USER_ACTION});
 
   ExtensionsToolbarContainer* const container = GetExtensionsToolbarContainer();
-  EXPECT_FALSE(container->GetActionForId(extension->id()));
+  EXPECT_FALSE(
+      container->GetToolbarViewModel()->GetActionForId(extension->id()));
 
   EXPECT_EQ(0u, GetVisibleToolbarActionViews().size());
 
@@ -502,7 +503,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionsToolbarContainerUITest,
 
   auto visible_actions = GetVisibleToolbarActionViews();
   ASSERT_EQ(1u, visible_actions.size());
-  EXPECT_EQ(extension->id(), visible_actions[0]->view_controller()->GetId());
+  EXPECT_EQ(extension->id(), visible_actions[0]->view_model()->GetId());
 
   views::Widget* bubble = CreateBubble(container->GetExtensionsButton());
   container->ShowWidgetForExtension(bubble, extension->id());
@@ -516,7 +517,8 @@ IN_PROC_BROWSER_TEST_F(ExtensionsToolbarContainerUITest,
       extension->id(), extensions::UNINSTALL_REASON_FOR_TESTING, nullptr);
 
   EXPECT_EQ(0u, GetVisibleToolbarActionViews().size());
-  EXPECT_FALSE(container->GetActionForId(extension->id()));
+  EXPECT_FALSE(
+      container->GetToolbarViewModel()->GetActionForId(extension->id()));
 
   // TODO(devlin): When the extension is removed, we don't currently remove any
   // widgets associated with it. This test ensures we don't crash (yay!), but we
@@ -558,14 +560,14 @@ IN_PROC_BROWSER_TEST_F(ExtensionsToolbarContainerUITest,
   std::vector<ToolbarActionView*> on_the_record_views = GetToolbarActionViews();
   ASSERT_EQ(1u, on_the_record_views.size());
   ToolbarActionView* on_the_record_view = on_the_record_views[0];
-  EXPECT_EQ(extension->id(), on_the_record_view->view_controller()->GetId());
+  EXPECT_EQ(extension->id(), on_the_record_view->view_model()->GetId());
   EXPECT_TRUE(on_the_record_view->GetVisible());
 
   std::vector<ToolbarActionView*> incognito_views =
       GetToolbarActionViewsForBrowser(incognito_browser);
   ASSERT_EQ(1u, incognito_views.size());
   ToolbarActionView* incognito_view = incognito_views[0];
-  EXPECT_EQ(extension->id(), incognito_view->view_controller()->GetId());
+  EXPECT_EQ(extension->id(), incognito_view->view_model()->GetId());
   EXPECT_TRUE(incognito_view->GetVisible());
 
   // Dragging should be enabled for the on-the-record view, but not the
@@ -596,17 +598,18 @@ IN_PROC_BROWSER_TEST_F(ExtensionsToolbarContainerUITest,
 
   // Execute the action, which results in the extension sliding out while we
   // get ready to show the popup.
-  ToolbarActionViewController* const view_controller =
-      container->GetActionForId(extension->id());
-  view_controller->ExecuteUserAction(
-      ToolbarActionViewController::InvocationSource::kMenuEntry);
+  ToolbarActionViewModel* const view_model =
+      container->GetToolbarViewModel()->GetActionForId(extension->id());
+  view_model->ExecuteUserAction(
+      ToolbarActionViewModel::InvocationSource::kMenuEntry);
 
   // Unload the extension (before the popup is ready). This results in the
   // toolbar action being removed. The pending popup will never be shown. This
   // shouldn't crash.
   RemoveExtension(ExtensionRemovalMethod::kDisable, extension->id());
 
-  EXPECT_EQ(nullptr, container->GetActionForId(extension->id()));
+  EXPECT_EQ(nullptr,
+            container->GetToolbarViewModel()->GetActionForId(extension->id()));
 }
 
 namespace {
@@ -712,11 +715,12 @@ class ExtensionsToolbarRuntimeHostPermissionsBrowserTest
   const extensions::Extension* extension() const { return extension_.get(); }
 
   extensions::ExtensionContextMenuModel* GetExtensionContextMenu() {
-    ToolbarActionViewController* const controller =
-        GetExtensionsToolbarContainer()->GetActionForId(extension_->id());
+    ToolbarActionViewModel* const model =
+        GetExtensionsToolbarContainer()->GetToolbarViewModel()->GetActionForId(
+            extension_->id());
     return static_cast<extensions::ExtensionContextMenuModel*>(
-        controller->GetContextMenu(extensions::ExtensionContextMenuModel::
-                                       ContextMenuSource::kToolbarAction));
+        model->GetContextMenu(extensions::ExtensionContextMenuModel::
+                                  ContextMenuSource::kToolbarAction));
   }
 
   std::u16string GetActionTooltip() {
@@ -974,6 +978,7 @@ class ExtensionsToolbarContainerFeatureUITest
       const extensions::ExtensionId& extension_id) {
     return static_cast<extensions::ExtensionContextMenuModel*>(
         GetExtensionsToolbarContainer()
+            ->GetToolbarViewModel()
             ->GetActionForId(extension_id)
             ->GetContextMenu(extensions::ExtensionContextMenuModel::
                                  ContextMenuSource::kMenuItem));
@@ -1051,8 +1056,9 @@ IN_PROC_BROWSER_TEST_P(
   auto* permissions_manager =
       extensions::PermissionsManager::Get(browser()->profile());
   EXPECT_TRUE(request_access_button()->GetVisible());
-  EXPECT_THAT(request_access_button()->GetExtensionIdsForTesting(),
-              testing::ElementsAre(extensionA->id(), extensionB->id()));
+  EXPECT_THAT(
+      request_access_button()->GetExtensionIdsForTesting(),
+      testing::UnorderedElementsAre(extensionA->id(), extensionB->id()));
 
   EXPECT_EQ(permissions_helper.GetSiteInteraction(*extensionA, web_contents),
             SiteInteraction::kWithheld);
@@ -1173,8 +1179,9 @@ IN_PROC_BROWSER_TEST_F(
   // Verify request access button is visible because extensions A and B have
   // site access requests.
   EXPECT_TRUE(request_access_button()->GetVisible());
-  EXPECT_THAT(request_access_button()->GetExtensionIdsForTesting(),
-              testing::ElementsAre(extensionA->id(), extensionB->id()));
+  EXPECT_THAT(
+      request_access_button()->GetExtensionIdsForTesting(),
+      testing::UnorderedElementsAre(extensionA->id(), extensionB->id()));
   extensions::SitePermissionsHelper permissions_helper(browser()->profile());
   auto* permissions_manager =
       extensions::PermissionsManager::Get(browser()->profile());
@@ -1291,7 +1298,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionsToolbarContainerFeatureUITest,
   EXPECT_EQ(visible_children.size(), 3u);
   EXPECT_TRUE(views::IsViewClass<ToolbarActionView>(visible_children[0]));
   EXPECT_EQ(views::AsViewClass<ToolbarActionView>(visible_children[0])
-                ->view_controller()
+                ->view_model()
                 ->GetActionName(),
             u"Extension A");
   EXPECT_TRUE(
@@ -1322,10 +1329,11 @@ IN_PROC_BROWSER_TEST_F(ExtensionsToolbarContainerFeatureUITest,
 
   // Trigger the extension B action.
   ExtensionTestMessageListener listener("popup opened");
-  ToolbarActionViewController* const view_controller =
-      GetExtensionsToolbarContainer()->GetActionForId(extensionB->id());
-  view_controller->ExecuteUserAction(
-      ToolbarActionViewController::InvocationSource::kMenuEntry);
+  ToolbarActionViewModel* const view_model =
+      GetExtensionsToolbarContainer()->GetToolbarViewModel()->GetActionForId(
+          extensionB->id());
+  view_model->ExecuteUserAction(
+      ToolbarActionViewModel::InvocationSource::kMenuEntry);
   EXPECT_TRUE(listener.WaitUntilSatisfied());
 
   // Verify order of visible items in container:
@@ -1334,12 +1342,12 @@ IN_PROC_BROWSER_TEST_F(ExtensionsToolbarContainerFeatureUITest,
   EXPECT_EQ(visible_children.size(), 4u);
   EXPECT_TRUE(views::IsViewClass<ToolbarActionView>(visible_children[0]));
   EXPECT_EQ(views::AsViewClass<ToolbarActionView>(visible_children[0])
-                ->view_controller()
+                ->view_model()
                 ->GetActionName(),
             u"Extension A");
   EXPECT_TRUE(views::IsViewClass<ToolbarActionView>(visible_children[1]));
   EXPECT_EQ(views::AsViewClass<ToolbarActionView>(visible_children[1])
-                ->view_controller()
+                ->view_model()
                 ->GetActionName(),
             u"Extension B");
   EXPECT_TRUE(
@@ -1349,8 +1357,16 @@ IN_PROC_BROWSER_TEST_F(ExtensionsToolbarContainerFeatureUITest,
 
 // Tests that the container hides its visible children in the correct order when
 // the window shrinks. Regression test for crbug.com/40887037.
+// TODO(crbug.com/450523412): Flaky on Linux Tests (dbg)(1) builder.
+#if BUILDFLAG(IS_LINUX) && !defined(NDEBUG)
+#define MAYBE_HidesInCorrectOrderAfterWindowShrinks \
+  DISABLED_HidesInCorrectOrderAfterWindowShrinks
+#else
+#define MAYBE_HidesInCorrectOrderAfterWindowShrinks \
+  HidesInCorrectOrderAfterWindowShrinks
+#endif
 IN_PROC_BROWSER_TEST_F(ExtensionsToolbarContainerFeatureUITest,
-                       HidesInCorrectOrderAfterWindowShrinks) {
+                       MAYBE_HidesInCorrectOrderAfterWindowShrinks) {
   // Install extension A and pin it.
   scoped_refptr<const extensions::Extension> extensionA =
       LoadTestExtension("extensions/ui/browser_action_popup");
@@ -1405,17 +1421,17 @@ IN_PROC_BROWSER_TEST_F(ExtensionsToolbarContainerFeatureUITest,
   EXPECT_EQ(visible_children.size(), 4u);
   EXPECT_TRUE(views::IsViewClass<ToolbarActionView>(visible_children[0]));
   EXPECT_EQ(views::AsViewClass<ToolbarActionView>(visible_children[0])
-                ->view_controller()
+                ->view_model()
                 ->GetActionName(),
             base::ASCIIToUTF16(extensionA->name()));
   EXPECT_TRUE(views::IsViewClass<ToolbarActionView>(visible_children[1]));
   EXPECT_EQ(views::AsViewClass<ToolbarActionView>(visible_children[1])
-                ->view_controller()
+                ->view_model()
                 ->GetActionName(),
             base::ASCIIToUTF16(extensionB->name()));
   EXPECT_TRUE(views::IsViewClass<ToolbarActionView>(visible_children[2]));
   EXPECT_EQ(views::AsViewClass<ToolbarActionView>(visible_children[2])
-                ->view_controller()
+                ->view_model()
                 ->GetActionName(),
             base::ASCIIToUTF16(extensionC->name()));
   EXPECT_TRUE(views::IsViewClass<ExtensionsToolbarButton>(visible_children[3]));
@@ -1438,12 +1454,12 @@ IN_PROC_BROWSER_TEST_F(ExtensionsToolbarContainerFeatureUITest,
   EXPECT_EQ(visible_children.size(), 3u);
   EXPECT_TRUE(views::IsViewClass<ToolbarActionView>(visible_children[0]));
   EXPECT_EQ(views::AsViewClass<ToolbarActionView>(visible_children[0])
-                ->view_controller()
+                ->view_model()
                 ->GetActionName(),
             base::ASCIIToUTF16(extensionA->name()));
   EXPECT_TRUE(views::IsViewClass<ToolbarActionView>(visible_children[1]));
   EXPECT_EQ(views::AsViewClass<ToolbarActionView>(visible_children[1])
-                ->view_controller()
+                ->view_model()
                 ->GetActionName(),
             base::ASCIIToUTF16(extensionB->name()));
   EXPECT_TRUE(views::IsViewClass<ExtensionsToolbarButton>(visible_children[2]));
@@ -1453,7 +1469,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionsToolbarContainerFeatureUITest,
 // feature is being rolled out.
 // TODO(crbug.com/40857680): Remove once feature is fully enabled.
 class ExtensionsToolbarContainerFeatureRolloutInteractiveTest
-    : public InteractiveBrowserTestT<extensions::ExtensionBrowserTest>,
+    : public InteractiveBrowserTestMixin<extensions::ExtensionBrowserTest>,
       public testing::WithParamInterface<bool> {
  public:
   ExtensionsToolbarContainerFeatureRolloutInteractiveTest() {
@@ -1505,7 +1521,13 @@ IN_PROC_BROWSER_TEST_P(ExtensionsToolbarContainerFeatureRolloutInteractiveTest,
       // Trigger post-install dialog. We do manually since loading an
       // extension in the test doesn't go through the full install flow.
       Do([&]() {
-        ExtensionInstallUIDesktop::ShowBubble(extension, browser(), SkBitmap());
+        extensions::TriggerPostInstallDialog(
+            browser()->profile(), extension, SkBitmap(),
+            base::BindOnce(
+                [](Browser* b) {
+                  return b->tab_strip_model()->GetActiveWebContents();
+                },
+                browser()));
       }),
       WaitForShow(kToolbarActionViewElementId));
 }

@@ -7,6 +7,7 @@
 
 #include "third_party/blink/renderer/core/style/gap_data.h"
 #include "third_party/blink/renderer/platform/geometry/length.h"
+#include "third_party/blink/renderer/platform/wtf/text/string_builder_stream.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 
 namespace blink {
@@ -77,27 +78,22 @@ class CORE_EXPORT GapDataList {
   }
 
   // TODO(javiercon): Specialize this for StyleColor, EBorderStyle, and int.
-  WTF::String ToString() const {
-    WTF::String result;
+  String ToString() const {
+    StringBuilder result;
     for (const auto& gap_data : gap_data_list_) {
       if (gap_data.IsRepeaterData()) {
-        result = result + "Repeater: ";
-        result =
-            result +
-            WTF::String::Number(gap_data.GetValueRepeater()->RepeatCount()) +
-            ", ";
+        result << "Repeater: " << gap_data.GetValueRepeater()->RepeatCount()
+               << ", ";
         for (const auto& value :
              gap_data.GetValueRepeater()->RepeatedValues()) {
-          result = result + WTF::String::Number(value);
-          result = result + " ";
+          result << value << " ";
         }
       } else {
-        result = result + "Value: ";
-        result = result + WTF::String::Number(gap_data.GetValue());
+        result << "Value: " << gap_data.GetValue();
       }
-      result = result + "; ";
+      result << "; ";
     }
-    return result;
+    return result.ReleaseString();
   }
 
   void Trace(Visitor* visitor) const {
@@ -117,8 +113,6 @@ class CORE_EXPORT GapDataList {
   bool operator==(const GapDataList& o) const {
     return gap_data_list_ == o.gap_data_list_;
   }
-
-  bool operator!=(const GapDataList& o) const { return !(*this == o); }
 
  private:
   GapDataVector gap_data_list_;

@@ -48,12 +48,6 @@
 
 using RenderFrameHost = content::RenderFrameHost;
 
-enum class PasskeyUpgradeRequestController::EnclaveState {
-  kUnknown,
-  kReady,
-  kError,
-};
-
 void RecordPasskeyUpgradeResultHistogram(PasskeyUpgradeResult result) {
   base::UmaHistogramEnumeration(
       "WebAuthentication.AutomaticPasskeyUpgrade.Result", result);
@@ -66,7 +60,7 @@ PasskeyUpgradeRequestController::PasskeyUpgradeRequestController(
       enclave_manager_(
           EnclaveManagerFactory::GetAsEnclaveManagerForProfile(profile())),
       enclave_request_callback_(enclave_request_callback) {
-  if (enclave_manager_->is_loaded()) {
+  if (enclave_manager_->IsLoaded()) {
     OnEnclaveLoaded();
     return;
   }
@@ -126,6 +120,8 @@ void PasskeyUpgradeRequestController::ContinuePendingUpgradeRequest() {
                          .get();
   } else if (password_manager::sync_util::
                  IsSyncFeatureEnabledIncludingPasswords(sync_service)) {
+    // TODO(crbug.com/40066949): Remove this codepath once
+    // `IsSyncFeatureEnabled()` is fully deprecated.
     password_store = ProfilePasswordStoreFactory::GetForProfile(
                          profile(), ServiceAccessType::EXPLICIT_ACCESS)
                          .get();
@@ -163,7 +159,11 @@ void PasskeyUpgradeRequestController::OnGetPasswordStoreResultsOrErrorFrom(
     if (password_form.username_value != username_) {
       continue;
     }
-    if (password_form.date_last_used < min_last_used) {
+    // Consider multiple last use attributes for robustness. N.B.
+    // `date_last_used` is updated after successful form submission on
+    // Desktop, while `date_last_filled` is updated during form filling.
+    if (std::max({password_form.date_created, password_form.date_last_filled,
+                  password_form.date_last_used}) < min_last_used) {
       match_not_recent = true;
       continue;
     }
@@ -233,9 +233,9 @@ Profile* PasskeyUpgradeRequestController::profile() const {
 }
 
 void PasskeyUpgradeRequestController::OnEnclaveLoaded() {
-  CHECK(enclave_manager_->is_loaded());
-  enclave_state_ = enclave_manager_->is_ready() ? EnclaveState::kReady
-                                                : EnclaveState::kError;
+  CHECK(enclave_manager_->IsLoaded());
+  enclave_state_ =
+      enclave_manager_->IsReady() ? EnclaveState::kReady : EnclaveState::kError;
   if (!pending_request_) {
     return;
   }

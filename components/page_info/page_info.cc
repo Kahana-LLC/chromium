@@ -44,6 +44,7 @@
 #include "components/permissions/features.h"
 #include "components/permissions/object_permission_context_base.h"
 #include "components/permissions/origin_keyed_permission_action_service.h"
+#include "components/permissions/permission_actions_history.h"
 #include "components/permissions/permission_decision_auto_blocker.h"
 #include "components/permissions/permission_manager.h"
 #include "components/permissions/permission_recovery_success_rate_tracker.h"
@@ -54,6 +55,7 @@
 #include "components/permissions/request_type.h"
 #include "components/privacy_sandbox/privacy_sandbox_features.h"
 #include "components/safe_browsing/buildflags.h"
+#include "components/safe_browsing/core/browser/safe_browsing_metrics_collector.h"
 #include "components/safe_browsing/core/common/proto/csd.pb.h"
 #include "components/security_interstitials/content/stateful_ssl_host_state_delegate.h"
 #include "components/ssl_errors/error_info.h"
@@ -66,6 +68,7 @@
 #include "content/public/browser/reload_type.h"
 #include "content/public/common/content_features.h"
 #include "content/public/common/url_constants.h"
+#include "media/base/media_switches.h"
 #include "net/base/features.h"
 #include "net/base/schemeful_site.h"
 #include "net/cert/cert_status_flags.h"
@@ -82,6 +85,8 @@
 
 #if BUILDFLAG(IS_ANDROID)
 #include "components/browser_ui/util/android/url_constants.h"
+#include "components/permissions/android/permissions_android_feature_map.h"
+#include "components/permissions/permission_request_manager.h"
 #include "components/resources/android/theme_resources.h"
 #include "components/strings/grit/components_branded_strings.h"
 #else
@@ -107,6 +112,7 @@ namespace {
 // propose changing it, email security-dev@chromium.org.
 ContentSettingsType kPermissionType[] = {
     ContentSettingsType::GEOLOCATION,
+    ContentSettingsType::GEOLOCATION_WITH_OPTIONS,
     ContentSettingsType::MEDIASTREAM_CAMERA,
     ContentSettingsType::CAMERA_PAN_TILT_ZOOM,
     ContentSettingsType::MEDIASTREAM_MIC,
@@ -146,8 +152,8 @@ ContentSettingsType kPermissionType[] = {
     ContentSettingsType::AR,
     ContentSettingsType::IDLE_DETECTION,
     ContentSettingsType::FEDERATED_IDENTITY_API,
-#if !BUILDFLAG(IS_ANDROID)
     ContentSettingsType::AUTO_PICTURE_IN_PICTURE,
+#if !BUILDFLAG(IS_ANDROID)
     ContentSettingsType::CAPTURED_SURFACE_CONTROL,
 #endif  // !BUILDFLAG(IS_ANDROID)
     ContentSettingsType::AUTOMATIC_FULLSCREEN,
@@ -160,6 +166,8 @@ ContentSettingsType kPermissionType[] = {
     ContentSettingsType::WEB_PRINTING,
 #endif  // BUILDFLAG(IS_CHROMEOS)
     ContentSettingsType::LOCAL_NETWORK_ACCESS,
+    ContentSettingsType::LOCAL_NETWORK,
+    ContentSettingsType::LOOPBACK_NETWORK,
 };
 
 // The list of setting types which request permission for a pair of requesting
@@ -322,12 +330,12 @@ PageInfo::PageInfo(std::unique_ptr<PageInfoDelegate> delegate,
 
 #if !BUILDFLAG(IS_ANDROID)
   if (web_contents) {
-    controller_ = delegate_->CreateCookieControlsController();
-    observation_.Observe(controller_.get());
+    cookie_controller_ = delegate_->CreateCookieControlsController();
+    cookie_observation_.Observe(cookie_controller_.get());
 
     // TODO(crbug.com/40901748): SetCookieInfo is called twice, once from here
     // and once from InitializeUiState. This should be cleaned up.
-    controller_->Update(web_contents);
+    cookie_controller_->Update(web_contents);
 
     auto* pscs = GetPageSpecificContentSettings();
     if (pscs) {
@@ -389,41 +397,23 @@ PageInfo::~PageInfo() {
 
 void PageInfo::OnStatusChanged(CookieControlsState controls_state,
                                CookieControlsEnforcement enforcement,
-                               CookieBlocking3pcdStatus blocking_status,
                                base::Time expiration) {
-  if (controls_state_ != controls_state || enforcement != enforcement_ ||
-      blocking_status != blocking_status_ ||
-      expiration != cookie_exception_expiration_) {
-    controls_state_ = controls_state;
-    enforcement_ = enforcement;
-    blocking_status_ = blocking_status;
+  if (cookie_controls_state_ != controls_state ||
+      cookie_enforcement_ != enforcement ||
+      cookie_exception_expiration_ != expiration) {
+    cookie_controls_state_ = controls_state;
+    cookie_enforcement_ = enforcement;
     cookie_exception_expiration_ = expiration;
     PresentSiteData(base::DoNothing());
   }
 }
 
 void PageInfo::OnThirdPartyToggleClicked(bool block_third_party_cookies) {
-  DCHECK(controls_state_ == CookieControlsState::kAllowed3pc ||
-         controls_state_ == CookieControlsState::kBlocked3pc);
   RecordPageInfoAction(block_third_party_cookies
                            ? page_info::PAGE_INFO_COOKIES_BLOCKED_FOR_SITE
                            : page_info::PAGE_INFO_COOKIES_ALLOWED_FOR_SITE);
-  controller_->OnCookieBlockingEnabledForSite(block_third_party_cookies);
+  cookie_controller_->OnCookieBlockingEnabledForSite(block_third_party_cookies);
   show_info_bar_ = true;
-}
-
-void PageInfo::OnTrackingProtectionButtonPressed() {
-  DCHECK(controls_state_ == CookieControlsState::kPausedTp ||
-         controls_state_ == CookieControlsState::kActiveTp);
-  // Check current controls state to record metrics before updates are made via
-  // `OnTrackingProtectionsChangedForSite`.
-  RecordPageInfoAction(
-      controls_state_ == CookieControlsState::kActiveTp
-          ? page_info::PAGE_INFO_PRIVACY_PAGE_TRACKING_PROTECTIONS_PAUSED
-          : page_info::PAGE_INFO_PRIVACY_PAGE_TRACKING_PROTECTIONS_REENABLED);
-  controller_->OnTrackingProtectionsChangedForSite();
-  show_info_bar_ = true;
-  info_bar_reload_type_ = content::ReloadType::BYPASSING_CACHE;
 }
 
 // static
@@ -636,18 +626,6 @@ void PageInfo::RecordPageInfoAction(page_info::PageInfoAction action) {
       base::RecordAction(base::UserMetricsAction(
           "PageInfo.CookiesSubpage.SyncSettingsLinkClicked"));
       break;
-    case page_info::PAGE_INFO_PRIVACY_PAGE_INCOGNITO_SETTINGS_OPENED:
-      base::RecordAction(base::UserMetricsAction(
-          "PageInfo.PrivacySubpage.IncognitoSettingsOpened"));
-      break;
-    case page_info::PAGE_INFO_PRIVACY_PAGE_TRACKING_PROTECTIONS_REENABLED:
-      base::RecordAction(base::UserMetricsAction(
-          "PageInfo.PrivacySubpage.TrackingProtectionsReenabled"));
-      break;
-    case page_info::PAGE_INFO_PRIVACY_PAGE_TRACKING_PROTECTIONS_PAUSED:
-      base::RecordAction(base::UserMetricsAction(
-          "PageInfo.PrivacySubpage.TrackingProtectionsPaused"));
-      break;
   }
 }
 
@@ -662,8 +640,7 @@ void PageInfo::OnSitePermissionChanged(
     std::optional<url::Origin> requesting_origin,
     bool is_one_time) {
   // Check that we are passing nullopt instead of CONTENT_SETTING_DEFAULT.
-  CHECK(!setting || !std::holds_alternative<ContentSetting>(*setting) ||
-        std::get<ContentSetting>(*setting) != CONTENT_SETTING_DEFAULT);
+  CHECK_NE(setting, PermissionSetting{CONTENT_SETTING_DEFAULT});
   ContentSettingChangedViaPageInfo(type);
 
   auto* info =
@@ -744,6 +721,17 @@ void PageInfo::OnSitePermissionChanged(
     delegate_->GetPermissionDecisionAutoblocker()->RemoveEmbargoAndResetCounts(
         site_url_, type);
   }
+
+  // Also clear heuristic grant data if user removes the granted state.
+  if (base::FeatureList::IsEnabled(
+          permissions::features::kPermissionHeuristicAutoGrant) &&
+      setting &&
+      (info->delegate().IsBlocked(*setting) ||
+       info->delegate().IsUndecided(*setting))) {
+    delegate_->GetPermissionActionsHistory()->ResetHeuristicData(site_url_,
+                                                                 type);
+  }
+
   using Constraints = content_settings::ContentSettingConstraints;
   Constraints constraints;
   if (is_one_time) {
@@ -756,6 +744,30 @@ void PageInfo::OnSitePermissionChanged(
   if (type == ContentSettingsType::STORAGE_ACCESS) {
     constraints.set_lifetime(
         permissions::kStorageAccessAPIExplicitPermissionLifetime);
+  }
+  // Enable last-visit tracking for eligible permissions granted from
+  // Site Settings UI. This allows Safety Hub to auto-revoke the permission
+  // if the site is not visited for a finite amount of time.
+  if (base::FeatureList::IsEnabled(
+          permissions::features::
+              kSafetyHubUnusedPermissionRevocationForAllSurfaces) &&
+      setting &&
+      content_settings::CanBeAutoRevokedAsUnusedPermission(
+          type, info->delegate().ToValue(*setting), is_one_time)) {
+    constraints.set_track_last_visit_for_autoexpiration(true);
+  }
+
+  // If notification permission changes from allowed to not allowed, log the
+  // histogram.
+  if (type == ContentSettingsType::NOTIFICATIONS &&
+      setting_old == CONTENT_SETTING_ALLOW &&
+      (!setting ||
+       ToContentSettingForMetrics(info, setting) == CONTENT_SETTING_ASK ||
+       ToContentSettingForMetrics(info, setting) == CONTENT_SETTING_BLOCK)) {
+    safe_browsing::SafeBrowsingMetricsCollector::
+        LogSafeBrowsingNotificationRevocationSourceHistogram(
+            safe_browsing::NotificationRevocationSource::
+                kUserManuallyChangedSiteSetting);
   }
 
   map->SetNarrowestContentSetting(primary_url, site_url_, type, setting,
@@ -828,8 +840,7 @@ void PageInfo::OnUIClosing(bool* reload_prompt) {
     *reload_prompt = false;
   }
   if (show_info_bar_ && web_contents_ && !web_contents_->IsBeingDestroyed()) {
-    if (delegate_->CreateInfoBarDelegate(info_bar_reload_type_) &&
-        reload_prompt) {
+    if (delegate_->CreateInfoBarDelegate() && reload_prompt) {
       *reload_prompt = true;
     }
   }
@@ -842,7 +853,7 @@ void PageInfo::OnRevokeSSLErrorBypassButtonPressed() {
       delegate_->GetStatefulSSLHostStateDelegate();
   DCHECK(stateful_ssl_host_state_delegate);
   stateful_ssl_host_state_delegate->RevokeUserAllowExceptionsHard(
-      site_url().host());
+      site_url_.GetHost());
   did_revoke_user_ssl_decisions_ = true;
   RecordPageInfoAction(page_info::PAGE_INFO_RESET_DECISIONS_CLICKED);
 }
@@ -856,7 +867,7 @@ void PageInfo::OpenSiteSettingsView() {
   NOTREACHED();
 #else
   RecordPageInfoAction(page_info::PAGE_INFO_SITE_SETTINGS_OPENED);
-  delegate_->ShowSiteSettings(site_url());
+  delegate_->ShowSiteSettings(site_url_);
 #endif
 }
 
@@ -866,16 +877,6 @@ void PageInfo::OpenCookiesSettingsView() {
 #else
   RecordPageInfoAction(page_info::PAGE_INFO_COOKIES_SETTINGS_OPENED);
   delegate_->ShowCookiesSettings();
-#endif
-}
-
-void PageInfo::OpenIncognitoSettingsView() {
-#if BUILDFLAG(IS_ANDROID)
-  NOTREACHED();
-#else
-  RecordPageInfoAction(
-      page_info::PAGE_INFO_PRIVACY_PAGE_INCOGNITO_SETTINGS_OPENED);
-  delegate_->ShowIncognitoSettings();
 #endif
 }
 
@@ -1253,9 +1254,11 @@ void PageInfo::ComputeUIInputs(const GURL& url) {
   DCHECK(delegate);
   DCHECK(web_contents_);
   bool has_cert_allow_exception = delegate->HasCertAllowException(
-      url.host(), web_contents_->GetPrimaryMainFrame()->GetStoragePartition());
+      url.GetHost(),
+      web_contents_->GetPrimaryMainFrame()->GetStoragePartition());
   bool has_http_allow_exception = delegate->IsHttpAllowedForHost(
-      url.host(), web_contents_->GetPrimaryMainFrame()->GetStoragePartition());
+      url.GetHost(),
+      web_contents_->GetPrimaryMainFrame()->GetStoragePartition());
 
   // HTTP allowlist entries can be added because of silent HTTPS-Upgrades
   // without the user proceeding through a warning. Only show a warning decision
@@ -1298,7 +1301,7 @@ void PageInfo::PopulatePermissionInfo(PermissionInfo& permission_info,
 
   auto* page_specific_content_settings = GetPageSpecificContentSettings();
   if (page_specific_content_settings &&
-      setting_info->delegate().IsAnyPermissionAllowed(CONTENT_SETTING_ALLOW)) {
+      setting_info->delegate().IsAnyPermissionAllowed(setting)) {
     permission_info.is_in_use =
         page_specific_content_settings->IsInUse(permission_info.type);
 
@@ -1319,36 +1322,39 @@ void PageInfo::PopulatePermissionInfo(PermissionInfo& permission_info,
   // Check embargo status if the content setting supports embargo.
   if (permissions::PermissionDecisionAutoBlocker::IsEnabledForContentSetting(
           permission_info.type) &&
-      !permission_info.setting &&
       permission_info.source == content_settings::SettingSource::kUser) {
-    content::PermissionResult permission_result(
-        PermissionStatus::ASK, content::PermissionStatusSource::UNSPECIFIED);
-    if (permissions::PermissionUtil::IsPermission(permission_info.type)) {
-      permission_result = delegate_->GetPermissionResult(
-          permissions::PermissionUtil::ContentSettingsTypeToPermissionType(
-              permission_info.type),
-          url::Origin::Create(site_url_), permission_info.requesting_origin);
-    } else if (permission_info.type ==
-               ContentSettingsType::FEDERATED_IDENTITY_API) {
-      std::optional<content::PermissionResult> embargo_result =
-          delegate_->GetPermissionDecisionAutoblocker()->GetEmbargoResult(
-              site_url_, permission_info.type);
-      if (embargo_result) {
-        permission_result = embargo_result.value();
-      }
+    if (delegate_->GetPermissionDecisionAutoblocker()->IsEmbargoed(
+            site_url_, permission_info.type)) {
+      permission_info.setting = setting_info->delegate().ApplyPermissionEmbargo(
+          permission_info.setting.value_or(permission_info.default_setting));
     }
-
-    // If under embargo, update |permission_info| to reflect that.
-    if (permission_result.status == PermissionStatus::DENIED &&
-        (permission_result.source ==
-             content::PermissionStatusSource::MULTIPLE_DISMISSALS ||
-         permission_result.source ==
-             content::PermissionStatusSource::MULTIPLE_IGNORES)) {
-      permission_info.setting =
-          permissions::PermissionUtil::PermissionStatusToContentSetting(
-              permission_result.status);
-    }
+    DCHECK(!permission_info.setting ||
+           setting_info->delegate().IsValid(*permission_info.setting))
+        << permission_info.setting;
+    DCHECK(setting_info->delegate().IsValid(permission_info.default_setting))
+        << permission_info.default_setting;
   }
+
+#if BUILDFLAG(IS_ANDROID)
+  if (base::FeatureList::IsEnabled(media::kAutoPictureInPictureAndroid) &&
+      permission_info.type == ContentSettingsType::AUTO_PICTURE_IN_PICTURE &&
+      delegate_->HasAutoPictureInPictureBeenRegistered()) {
+    // On Android, Auto-PiP does not have a prompt. For sites that have
+    // registered for Auto-PiP, set the effective default setting based on the
+    // profile type and global default. Auto-PiP is blocked in Incognito for
+    // privacy, or if turned off globally. The global default is already in
+    // permission_info.default_setting. This logic should be removed when a
+    // prompt is implemented for parity with desktop.
+    const ContentSetting global_default_setting =
+        std::get<ContentSetting>(permission_info.default_setting);
+    const ContentSetting effective_default_setting =
+        (delegate_->IsIncognitoProfile() ||
+         global_default_setting == CONTENT_SETTING_BLOCK)
+            ? CONTENT_SETTING_BLOCK
+            : CONTENT_SETTING_ALLOW;
+    permission_info.default_setting = effective_default_setting;
+  }
+#endif  // BUILDFLAG(IS_ANDROID)
 }
 
 // Determines whether to show permission |type| in the Page Info UI. Only
@@ -1360,6 +1366,31 @@ void PageInfo::PopulatePermissionInfo(PermissionInfo& permission_info,
 // via `HasContentSettingChangedViaPageInfo(type)`.
 bool PageInfo::ShouldShowPermission(
     const PageInfo::PermissionInfo& info) const {
+  // For the Clapper experiment Chrome should display NOTIFICATIONS
+  // permission while it is being requested.
+#if BUILDFLAG(IS_ANDROID)
+  if (info.type == ContentSettingsType::NOTIFICATIONS &&
+      (base::FeatureList::IsEnabled(
+           permissions::kPermissionsAndroidClapperLoud) ||
+       base::FeatureList::IsEnabled(
+           permissions::kPermissionsAndroidClapperQuiet)
+
+           ) &&
+      web_contents_) {
+    permissions::PermissionRequestManager* manager =
+        permissions::PermissionRequestManager::FromWebContents(
+            web_contents_.get());
+    if (manager && manager->IsRequestInProgress()) {
+      for (const auto& request : manager->Requests()) {
+        if (request->GetContentSettingsType() ==
+            ContentSettingsType::NOTIFICATIONS) {
+          return true;
+        }
+      }
+    }
+  }
+#endif  // BUILDFLAG(IS_ANDROID)
+
   // Note |ContentSettingsType::ADS| will show up regardless of its default
   // value when it has been activated on the current origin.
   if (info.type == ContentSettingsType::ADS) {
@@ -1371,6 +1402,20 @@ bool PageInfo::ShouldShowPermission(
     return delegate_->IsSubresourceFilterActivated(site_url_);
   }
 
+  if (info.type == ContentSettingsType::GEOLOCATION) {
+    if (base::FeatureList::IsEnabled(
+            content_settings::features::kApproximateGeolocationPermission)) {
+      return false;
+    }
+  }
+
+  if (info.type == ContentSettingsType::GEOLOCATION_WITH_OPTIONS) {
+    if (!base::FeatureList::IsEnabled(
+            content_settings::features::kApproximateGeolocationPermission)) {
+      return false;
+    }
+  }
+
   if (info.type == ContentSettingsType::SOUND) {
     // The sound content setting should always show up when the tab has played
     // audio.
@@ -1379,22 +1424,16 @@ bool PageInfo::ShouldShowPermission(
     }
   }
 
-#if !BUILDFLAG(IS_ANDROID)
   if (info.type == ContentSettingsType::AUTO_PICTURE_IN_PICTURE) {
-    if (!base::FeatureList::IsEnabled(
-            blink::features::kMediaSessionEnterPictureInPicture)) {
+#if BUILDFLAG(IS_ANDROID)
+    if (!base::FeatureList::IsEnabled(media::kAutoPictureInPictureAndroid)) {
       return false;
     }
+#endif  // BUILDFLAG(IS_ANDROID)
+
     if (delegate_->HasAutoPictureInPictureBeenRegistered()) {
       return true;
     }
-  }
-#endif  // !BUILDFLAG(IS_ANDROID)
-
-  if (info.type == ContentSettingsType::AUTOMATIC_FULLSCREEN &&
-      !base::FeatureList::IsEnabled(
-          features::kAutomaticFullscreenContentSetting)) {
-    return false;
   }
 
 #if BUILDFLAG(IS_CHROMEOS)
@@ -1410,7 +1449,8 @@ bool PageInfo::ShouldShowPermission(
   // Special geolocation DSE settings apply only on Android, so make sure it
   // gets checked there regardless of default setting on Desktop.
   // DSE settings don't apply to incognito mode.
-  if (info.type == ContentSettingsType::GEOLOCATION && !is_incognito) {
+  if (info.type == permissions::PermissionUtil::GetGeolocationType() &&
+      !is_incognito) {
     return true;
   }
 #else
@@ -1479,7 +1519,7 @@ void PageInfo::PresentSitePermissions() {
     permission_info.type = type;
 
     content_settings::SettingInfo info;
-    ContentSetting setting = content_settings->GetContentSetting(
+    PermissionSetting setting = content_settings->GetPermissionSetting(
         site_url_, site_url_, permission_info.type, &info);
     PopulatePermissionInfo(permission_info, content_settings, info, setting);
     if (ShouldShowPermission(permission_info)) {
@@ -1602,9 +1642,8 @@ void PageInfo::PresentSiteDataInternal(base::OnceClosure done) {
     cookies_info.rws_info->is_managed = delegate_->IsRwsManaged(site_url_);
   }
 #endif
-  cookies_info.controls_state = controls_state_;
-  cookies_info.enforcement = enforcement_;
-  cookies_info.blocking_status = blocking_status_;
+  cookies_info.controls_state = cookie_controls_state_;
+  cookies_info.enforcement = cookie_enforcement_;
   cookies_info.expiration = cookie_exception_expiration_;
   cookies_info.is_incognito = delegate_->IsIncognitoProfile();
   ui_->SetCookieInfo(cookies_info);
@@ -1808,16 +1847,6 @@ int PageInfo::GetSitesWithAllowedCookiesAccessCount() {
       *(settings->allowed_browsing_data_model()));
 }
 
-int PageInfo::GetThirdPartySitesWithBlockedCookiesAccessCount(
-    const GURL& site_url) {
-  auto* settings = GetPageSpecificContentSettings();
-  if (!settings) {
-    return 0;
-  }
-  return browsing_data::GetUniqueThirdPartyCookiesHostCount(
-      site_url, *(settings->blocked_browsing_data_model()));
-}
-
 bool PageInfo::IsIsolatedWebApp() const {
 #if !BUILDFLAG(IS_ANDROID)
   return delegate_->IsIsolatedWebApp();
@@ -1825,3 +1854,9 @@ bool PageInfo::IsIsolatedWebApp() const {
   return false;
 #endif  // !BUILDFLAG(IS_ANDROID)
 }
+
+#if BUILDFLAG(IS_CHROMEOS)
+bool PageInfo::ShouldSyncCookiesForCurrentUrl() {
+  return delegate_->ShouldSyncCookiesForUrl(site_url_);
+}
+#endif

@@ -241,6 +241,9 @@ void ProfileOAuth2TokenService::InvalidateAccessToken(
     const CoreAccountId& account_id,
     const OAuth2AccessTokenManager::ScopeSet& scopes,
     const std::string& access_token) {
+  CHECK(!account_id.empty(), base::NotFatalUntil::M145);
+  CHECK(!access_token.empty(), base::NotFatalUntil::M145);
+
   token_manager_->InvalidateAccessToken(account_id, scopes, access_token);
 }
 
@@ -352,6 +355,10 @@ std::vector<uint8_t> ProfileOAuth2TokenService::GetWrappedBindingKey(
     const CoreAccountId& account_id) const {
   return delegate_->GetWrappedBindingKey(account_id);
 }
+
+bool ProfileOAuth2TokenService::AllBoundTokensShareSameBindingKey() const {
+  return delegate_->AllBoundTokensShareSameBindingKey();
+}
 #endif  // BUILDFLAG(ENABLE_DICE_SUPPORT)
 
 void ProfileOAuth2TokenService::
@@ -394,7 +401,7 @@ void ProfileOAuth2TokenService::OnRefreshTokenRevokedNotified(
     const CoreAccountId& account_id) {
   token_manager_->CancelRequestsForAccount(
       account_id,
-      GoogleServiceAuthError(GoogleServiceAuthError::USER_NOT_SIGNED_UP));
+      GoogleServiceAuthError(GoogleServiceAuthError::ACCOUNT_NOT_FOUND));
 }
 
 void ProfileOAuth2TokenService::OnRefreshTokensLoaded() {

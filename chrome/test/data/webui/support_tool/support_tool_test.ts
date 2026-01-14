@@ -19,24 +19,13 @@ import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
 import {flush} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 import type {BrowserProxy, DataCollectorItem, IssueDetails, PiiDataItem, SupportTokenGenerationResult} from 'chrome://support-tool/browser_proxy.js';
 import {BrowserProxyImpl} from 'chrome://support-tool/browser_proxy.js';
-import type {ScreenshotElement} from 'chrome://support-tool/screenshot.js';
 import type {DataExportResult, SupportToolElement} from 'chrome://support-tool/support_tool.js';
 import {SupportToolPageIndex} from 'chrome://support-tool/support_tool.js';
 import type {UrlGeneratorElement} from 'chrome://support-tool/url_generator.js';
-import {assertEquals, assertFalse, assertNotEquals, assertTrue} from 'chrome://webui-test/chai_assert.js';
-import {track} from 'chrome://webui-test/mouse_mock_interactions.js';
+import {assertDeepEquals, assertEquals, assertFalse, assertTrue} from 'chrome://webui-test/chai_assert.js';
 import {waitAfterNextRender} from 'chrome://webui-test/polymer_test_util.js';
 import {TestBrowserProxy} from 'chrome://webui-test/test_browser_proxy.js';
-
-const SCREENSHOT_BASE64: string =
-    'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAMCAgMCAgMDAwME' +
-    'AwMEBQgFBQQEBQoHBwYIDAoMDAsKCwsNDhIQDQ4RDgsLEBYQERMUFRUVDA8XGBYUGBIUFRT' +
-    '/2wBDAQMEBAUEBQkFBQkUDQsNFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFB' +
-    'QUFBQUFBQUFBQUFBQUFBT/wAARCABkAGQDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAA' +
-    'AAAAAj/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFgEBAQEAAAAAAAAAAAAAAAAAAAcJ/8QA' +
-    'FBEBAAAAAAAAAAAAAAAAAAAAAP/aAAwDAQACEQMRAD8AnQBDGqYAAAAAAAAAAAAAAAAAAAA' +
-    'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' +
-    'AAAAD/2Q==';
+import {microtasksFinished} from 'chrome://webui-test/test_util.js';
 
 const EMAIL_ADDRESSES: string[] =
     ['testemail1@test.com', 'testemail2@test.com'];
@@ -101,7 +90,6 @@ class TestSupportToolBrowserProxy extends TestBrowserProxy implements
 
   constructor() {
     super([
-      'takeScreenshot',
       'getEmailAddresses',
       'getDataCollectors',
       'startDataCollection',
@@ -112,10 +100,6 @@ class TestSupportToolBrowserProxy extends TestBrowserProxy implements
       'generateCustomizedUrl',
       'generateSupportToken',
     ]);
-  }
-
-  takeScreenshot() {
-    this.methodCalled('takeScreenshot');
   }
 
   getEmailAddresses() {
@@ -137,11 +121,9 @@ class TestSupportToolBrowserProxy extends TestBrowserProxy implements
   }
 
   startDataCollection(
-      issueDetails: IssueDetails, selectedDataCollectors: DataCollectorItem[],
-      screenshot: string) {
+      issueDetails: IssueDetails, selectedDataCollectors: DataCollectorItem[]) {
     this.methodCalled(
-        'startDataCollection', issueDetails, selectedDataCollectors,
-        screenshot);
+        'startDataCollection', issueDetails, selectedDataCollectors);
     // Return result with success for testing.
     const result = {success: true, errorMessage: ''};
     return Promise.resolve(result);
@@ -228,7 +210,7 @@ suite('SupportToolTest', function() {
     await waitAfterNextRender(supportTool);
   });
 
-  test('support tool pages navigation', () => {
+  test('support tool pages navigation', async () => {
     const pages = supportTool.shadowRoot!.querySelector('cr-page-selector');
     assertTrue(!!pages);
 
@@ -244,22 +226,18 @@ suite('SupportToolTest', function() {
     assertEquals(pages.selected, SupportToolPageIndex.DATA_COLLECTOR_SELECTION);
     // Click on continue button to start data collection.
     supportTool.shadowRoot!.getElementById('continueButton')!.click();
-    browserProxy.whenCalled('startDataCollection').then(function([
-      issueDetails,
-      selectedDataCollectors,
-    ]) {
-      assertEquals(issueDetails.caseId, 'testcaseid');
-      assertEquals(selectedDataCollectors, DATA_COLLECTORS);
-    });
+    const [issueDetails, selectedDataCollectors] =
+        await browserProxy.whenCalled('startDataCollection');
+    assertEquals(issueDetails.caseId, 'testcaseid');
+    assertDeepEquals(selectedDataCollectors, DATA_COLLECTORS);
   });
 
   test('issue details page', () => {
     // Check the contents of data collectors page.
     const issueDetails = supportTool.$.issueDetails;
     assertEquals(
-        issueDetails.shadowRoot!.querySelector('cr-input')!.value,
-        'testcaseid');
-    const emailOptions = issueDetails.shadowRoot!.querySelectorAll('option');
+        issueDetails.shadowRoot.querySelector('cr-input')!.value, 'testcaseid');
+    const emailOptions = issueDetails.shadowRoot.querySelectorAll('option');
     // IssueDetailsElement adds DONT_INCLUDE_EMAIL string to the email addresses
     // options as for use to give the option to not include email address.
     assertEquals(EMAIL_ADDRESSES.length + 1, emailOptions.length);
@@ -267,117 +245,49 @@ suite('SupportToolTest', function() {
 
   test('data collector selection page', async () => {
     // Check the contents of data collectors page.
-    const ironListItems =
-        supportTool.$.dataCollectors.shadowRoot!.querySelector(
-                                                    'dom-repeat')!.items!;
-    assertEquals(ironListItems.length, DATA_COLLECTORS.length);
-    for (let i = 0; i < ironListItems.length; i++) {
-      const listItem = ironListItems[i];
-      assertEquals(listItem.name, DATA_COLLECTORS[i]!.name);
-      assertEquals(listItem.isIncluded, DATA_COLLECTORS[i]!.isIncluded);
-      assertEquals(listItem.protoEnum, DATA_COLLECTORS[i]!.protoEnum);
+    const dataCollectorsElement = supportTool.$.dataCollectors;
+    const checkboxElements =
+        dataCollectorsElement.shadowRoot.querySelectorAll<CrCheckboxElement>(
+            'cr-checkbox.data-collector-checkbox');
+    assertEquals(checkboxElements.length, DATA_COLLECTORS.length);
+
+    for (let i = 0; i < checkboxElements.length; i++) {
+      const checkbox = checkboxElements[i]!;
+      const dataCollector = DATA_COLLECTORS[i]!;
+      assertEquals(checkbox.textContent.trim(), dataCollector.name);
+      assertEquals(checkbox.checked, dataCollector.isIncluded);
     }
 
     const selectAllCheckbox =
-        supportTool.$.dataCollectors.shadowRoot!.getElementById(
-            'selectAllCheckbox')! as CrCheckboxElement;
+        dataCollectorsElement.shadowRoot.querySelector<CrCheckboxElement>(
+            '#selectAllCheckbox')!;
 
-    // Verify that the select all functionality works.
     selectAllCheckbox.click();
-    await selectAllCheckbox.updateComplete;
-    for (let i = 0; i < ironListItems.length; i++) {
-      assertTrue(ironListItems[i].isIncluded);
+    await microtasksFinished();
+    for (const checkbox of checkboxElements) {
+      assertTrue(checkbox.checked);
     }
 
     // Verify that the unselect all functionality works.
     selectAllCheckbox.click();
-    await selectAllCheckbox.updateComplete;
-    for (let i = 0; i < ironListItems.length; i++) {
-      assertFalse(ironListItems[i].isIncluded);
+    await microtasksFinished();
+    for (const checkbox of checkboxElements) {
+      assertFalse(checkbox.checked);
     }
   });
 
-  test('take and remove screenshot', async () => {
-    // Go to the data collector selection page.
-    supportTool.shadowRoot!.getElementById('continueButton')!.click();
-    assertEquals(
-        supportTool.shadowRoot!.querySelector('cr-page-selector')!.selected,
-        SupportToolPageIndex.DATA_COLLECTOR_SELECTION);
-    // Take screenshot.
-    const screenshot = supportTool.$.dataCollectors.shadowRoot!
-                           .querySelector<ScreenshotElement>('#screenshot')!;
-    const takeScreenshotButton =
-        screenshot.shadowRoot!.getElementById('takeScreenshot')!;
-    const removeButton =
-        screenshot.shadowRoot!.getElementById('removeScreenshot')!;
-    const hideInfoButton = screenshot.shadowRoot!.getElementById('hideInfo')!;
-    takeScreenshotButton.click();
-    await browserProxy.whenCalled('takeScreenshot');
-    webUIListenerCallback('screenshot-received', SCREENSHOT_BASE64);
-    assertFalse(removeButton.hidden);
-    assertFalse(hideInfoButton.hidden);
-    assertTrue(takeScreenshotButton.hidden);
-    assertNotEquals('', screenshot.getEditedScreenshotBase64());
-    // Remove screenshot.
-    screenshot.shadowRoot!.getElementById('removeScreenshot')!.click();
-    assertTrue(removeButton.hidden);
-    assertTrue(hideInfoButton.hidden);
-    assertFalse(takeScreenshotButton.hidden);
-    assertEquals('', screenshot.getEditedScreenshotBase64());
-  });
-
-  test('take and edit screenshot', async () => {
-    // Go to the data collector selection page.
-    supportTool.shadowRoot!.getElementById('continueButton')!.click();
-    assertEquals(
-        supportTool.shadowRoot!.querySelector('cr-page-selector')!.selected,
-        SupportToolPageIndex.DATA_COLLECTOR_SELECTION);
-    // Take a screenshot.
-    const screenshot = supportTool.$.dataCollectors.shadowRoot!
-                           .querySelector<ScreenshotElement>('#screenshot')!;
-    const takeScreenshotButton =
-        screenshot.shadowRoot!.getElementById('takeScreenshot')!;
-    const removeButton =
-        screenshot.shadowRoot!.getElementById('removeScreenshot')!;
-    const hideInfoButton = screenshot.shadowRoot!.getElementById('hideInfo')!;
-    takeScreenshotButton.click();
-    await browserProxy.whenCalled('takeScreenshot');
-    webUIListenerCallback('screenshot-received', SCREENSHOT_BASE64);
-    assertFalse(
-        screenshot.shadowRoot!.getElementById('screenshotPreview')!.hidden);
-    assertFalse(removeButton.hidden);
-    assertFalse(hideInfoButton.hidden);
-    assertTrue(takeScreenshotButton.hidden);
-    assertNotEquals('', screenshot.getEditedScreenshotBase64());
-    const originalScreenshot = screenshot.getOriginalScreenshotBase64();
-
-    // Edit the screenshot.
-    hideInfoButton.click();
-    await waitAfterNextRender(screenshot);
-    const canvas = screenshot.shadowRoot!.querySelector<HTMLCanvasElement>(
-        '#screenshotCanvas')!;
-    const confirmButton = screenshot.shadowRoot!.getElementById('confirmEdit')!;
-
-    // After clicking the confirm button, the image is changed.
-    track(canvas, canvas.width / 4, canvas.height / 4, 1);
-    confirmButton.click();
-    await waitAfterNextRender(screenshot);
-    assertNotEquals(originalScreenshot, screenshot.getEditedScreenshotBase64());
-  });
-
-  test('spinner page', () => {
+  test('spinner page', async () => {
     // Check the contents of spinner page.
     const spinner = supportTool.$.spinnerPage;
     spinner.shadowRoot!.getElementById('cancelButton')!.click();
-    browserProxy.whenCalled('cancelDataCollection').then(function() {
-      webUIListenerCallback('data-collection-cancelled');
-      flush();
-      // Make sure the issue details page is displayed after cancelling data
-      // collection.
-      assertEquals(
-          supportTool.shadowRoot!.querySelector('cr-page-selector')!.selected,
-          SupportToolPageIndex.ISSUE_DETAILS);
-    });
+    await browserProxy.whenCalled('cancelDataCollection');
+    webUIListenerCallback('data-collection-cancelled');
+    flush();
+    // Make sure the issue details page is displayed after cancelling data
+    // collection.
+    assertEquals(
+        supportTool.shadowRoot!.querySelector('cr-page-selector')!.selected,
+        SupportToolPageIndex.ISSUE_DETAILS);
     assertEquals(browserProxy.getCallCount('cancelDataCollection'), 1);
   });
 
@@ -392,15 +302,15 @@ suite('SupportToolTest', function() {
     supportTool.shadowRoot!.getElementById('continueButton')!.click();
     // Check the contents of PII selection page.
     const piiSelection = supportTool.$.piiSelection;
-    browserProxy.whenCalled('startDataCollection').then(function() {
-      webUIListenerCallback('data-collection-completed', PII_ITEMS);
-      flush();
-      const items =
-          piiSelection.shadowRoot!.querySelector('dom-repeat')!.items!;
-      assertEquals(items, PII_ITEMS);
-    });
+    await browserProxy.whenCalled('startDataCollection');
+    webUIListenerCallback('data-collection-completed', PII_ITEMS);
+    flush();
+    await microtasksFinished();
+    const items =
+        piiSelection.shadowRoot.querySelectorAll('.detected-pii-item');
+    assertEquals(items.length, PII_ITEMS.length);
     assertEquals(browserProxy.getCallCount('startDataCollection'), 1);
-    piiSelection.shadowRoot!.getElementById('exportButton')!.click();
+    piiSelection.shadowRoot.getElementById('exportButton')!.click();
     await browserProxy.whenCalled('startDataExport');
     webUIListenerCallback('support-data-export-started');
     flush();

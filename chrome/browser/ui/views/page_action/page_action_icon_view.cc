@@ -37,6 +37,7 @@
 #include "ui/views/cascading_property.h"
 #include "ui/views/controls/button/button_controller.h"
 #include "ui/views/controls/focus_ring.h"
+#include "ui/views/property_effects.h"
 #include "ui/views/style/platform_style.h"
 
 float PageActionIconView::Delegate::GetPageActionInkDropVisibleOpacity() const {
@@ -44,7 +45,7 @@ float PageActionIconView::Delegate::GetPageActionInkDropVisibleOpacity() const {
 }
 
 int PageActionIconView::Delegate::GetPageActionIconSize() const {
-  return GetLayoutConstant(LOCATION_BAR_TRAILING_ICON_SIZE);
+  return GetLayoutConstant(LayoutConstant::kLocationBarTrailingIconSize);
 }
 
 gfx::Insets PageActionIconView::Delegate::GetPageActionIconInsets(
@@ -57,7 +58,7 @@ bool PageActionIconView::Delegate::ShouldHidePageActionIcons() const {
 }
 
 bool PageActionIconView::Delegate::ShouldHidePageActionIcon(
-    PageActionIconView* icon_view) const {
+    const PageActionIconView* icon_view) const {
   return false;
 }
 
@@ -234,7 +235,7 @@ void PageActionIconView::SetIconColor(SkColor icon_color) {
   }
   icon_color_ = icon_color;
   UpdateIconImage();
-  OnPropertyChanged(&icon_color_, views::kPropertyEffectsNone);
+  OnPropertyChanged(&icon_color_, views::PropertyEffects::kNone);
 }
 
 SkColor PageActionIconView::GetIconColor() const {
@@ -247,7 +248,7 @@ void PageActionIconView::SetActive(bool active) {
   }
   active_ = active;
   UpdateIconImage();
-  OnPropertyChanged(&active_, views::kPropertyEffectsNone);
+  OnPropertyChanged(&active_, views::PropertyEffects::kNone);
   // For StarView
   UpdateTooltipText();
 }

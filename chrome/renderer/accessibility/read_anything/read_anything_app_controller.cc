@@ -2,13 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
-#pragma allow_unsafe_libc_calls
-#endif
-
 #include "chrome/renderer/accessibility/read_anything/read_anything_app_controller.h"
 
+#include <algorithm>
 #include <climits>
 #include <memory>
 #include <optional>
@@ -18,6 +14,7 @@
 #include <vector>
 
 #include "base/check_deref.h"
+#include "base/compiler_specific.h"
 #include "base/containers/fixed_flat_map.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/metrics_hashes.h"
@@ -26,7 +23,7 @@
 #include "base/strings/string_util.h"
 #include "base/strings/to_string.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/types/cxx23_to_underlying.h"
+#include "base/time/time.h"
 #include "build/build_config.h"
 #include "chrome/common/read_anything/read_anything_util.h"
 #include "chrome/renderer/accessibility/ax_tree_distiller.h"
@@ -386,8 +383,8 @@ template <typename T>
              T::kMaxValue;
            })
 std::optional<T> ToEnum(int value) {
-  if (value >= base::to_underlying(T::kMinValue) &&
-      value <= base::to_underlying(T::kMaxValue)) {
+  if (value >= std::to_underlying(T::kMinValue) &&
+      value <= std::to_underlying(T::kMaxValue)) {
     return static_cast<T>(value);
   }
   return std::nullopt;
@@ -457,7 +454,6 @@ ReadAnythingAppController::ReadAnythingAppController(
   }
 
   model_observer_.Observe(&model_);
-
   self_ = this;
 }
 
@@ -498,29 +494,32 @@ void ReadAnythingAppController::OnNodeWillBeDeleted(ui::AXTree* tree,
 
 void ReadAnythingAppController::OnNodeDeleted(ui::AXTree* tree,
                                               ui::AXNodeID node_id) {
-  if (displayed_nodes_pending_deletion_.contains(node_id)) {
-    displayed_nodes_pending_deletion_.erase(node_id);
+  if (!displayed_nodes_pending_deletion_.contains(node_id)) {
+    return;
+  }
 
-    // Instead of redrawing everything, we inform the webui that the node is
-    // being deleted and it will adjust on that side. See OnNodeWillBeDeleted.
-    if (IsReadAloudEnabled()) {
-      return;
-    }
+  displayed_nodes_pending_deletion_.erase(node_id);
 
-    // For Google Docs, we extract text from the "annotated canvas" element
-    // nodes, which hold the currently visible text on screen. As the user
-    // scrolls, these canvas elements are dynamically updated, resulting in
-    // frequent calls to OnNodeDeleted. We found that redrawing content in the
-    // Reading Model panel after node deletion during scrolling can lead to
-    // unexpected behavior (e.g., an empty side panel). Therefore, Google Docs
-    // require special handling to ensure correct text extraction and avoid
-    // these issues.
-    if (displayed_nodes_pending_deletion_.empty() && !IsGoogleDocs()) {
-      Draw(false);
-      if (model_.has_selection()) {
-        DrawSelection();
-      }
-    }
+  // For Google Docs, we extract text from the "annotated canvas" element
+  // nodes, which hold the currently visible text on screen. As the user
+  // scrolls, these canvas elements are dynamically updated, resulting in
+  // frequent calls to OnNodeDeleted. We found that redrawing content in the
+  // Reading Model panel after node deletion during scrolling can lead to
+  // unexpected behavior (e.g., an empty side panel). Therefore, Google Docs
+  // require special handling to ensure correct text extraction and avoid
+  // these issues.
+  if (!displayed_nodes_pending_deletion_.empty() || IsGoogleDocs()) {
+    return;
+  }
+
+  // Instead of redrawing everything when Read aloud is enabled, we inform
+  // the webui that the node is being deleted and it will adjust on that
+  // side. See OnNodeWillBeDeleted.
+  if (!IsReadAloudEnabled()) {
+    Draw(false);
+  }
+  if (model_.has_selection()) {
+    DrawSelection();
   }
 }
 
@@ -528,6 +527,9 @@ void ReadAnythingAppController::OnTreeDataChanged(
     ui::AXTree* tree,
     const ui::AXTreeData& old_data,
     const ui::AXTreeData& new_data) {
+  if (features::IsReadAnythingWithReadabilityEnabled()) {
+    return;
+  }
   VLOG(1) << "Tree data changed for tree ID: " << tree->GetAXTreeID()
           << "\n---- OLD DATA: " << old_data.tree_id << ": "
           << old_data.ToString() << "\n---- NEW DATA: " << new_data.tree_id
@@ -549,6 +551,11 @@ void ReadAnythingAppController::OnStringAttributeChanged(
     ax::mojom::StringAttribute attr,
     const std::string& old_value,
     const std::string& new_value) {
+  // Return early when the images flag is disabled to avoid potential crashes.
+  if (!features::IsReadAnythingImagesViaAlgorithmEnabled()) {
+    return;
+  }
+
   ui::AXNode* rm_node = model_.GetAXNode(node->id());
   if (!rm_node) {
     return;
@@ -556,8 +563,7 @@ void ReadAnythingAppController::OnStringAttributeChanged(
   // When the src for an image changes (e.g if an image was lazy loaded and
   // previously had a placeholder image), request the updated image. The info
   // will be returned via OnImageDataDownloaded.
-  if (features::IsReadAnythingImagesViaAlgorithmEnabled() &&
-      attr == ax::mojom::StringAttribute::kUrl &&
+  if (attr == ax::mojom::StringAttribute::kUrl &&
       rm_node->GetRole() == ax::mojom::Role::kImage) {
     RequestImageData(node->id());
   }
@@ -585,6 +591,9 @@ void ReadAnythingAppController::AccessibilityEventReceived(
 
 void ReadAnythingAppController::SendEventUpdates() {
   if (model_.requires_distillation()) {
+    if (features::IsReadAnythingWithReadabilityEnabled()) {
+      return;
+    }
     Distill();
   }
 
@@ -670,6 +679,7 @@ void ReadAnythingAppController::OnActiveAXTreeIDChanged(
   // seen), log the words that were seen on the previous tree.
   if (model_.active_tree_id() != ui::AXTreeIDUnknown()) {
     RecordEstimatedWordsSeen();
+    RecordEstimatedWordsHeard();
   }
 
   // Cancel any running draw timers.
@@ -691,6 +701,12 @@ void ReadAnythingAppController::OnActiveAXTreeIDChanged(
   model_.ClearPendingUpdates();
   model_.set_requires_distillation(false);
   model_.set_page_finished_loading(false);
+
+  // TODO(crbug.com/459144990): Handle showLoading scenario for readability
+  // path.
+  if (features::IsReadAnythingWithReadabilityEnabled()) {
+    return;
+  }
 
   ExecuteJavaScript("chrome.readingMode.showLoading();");
 
@@ -726,6 +742,8 @@ void ReadAnythingAppController::RecordDistillationSuccess() {
     distillationStatus = read_anything::mojom::DistillationStatus::kFailure;
   }
 
+  page_handler_->OnDistillationStatus(distillationStatus,
+                                      model_.words_distilled());
   ukm::builders::Accessibility_ReadAnything_Distillation(
       model_.GetUkmSourceId())
       .SetDistillationStatus(static_cast<int>(distillationStatus))
@@ -742,8 +760,19 @@ void ReadAnythingAppController::RecordNumSelections() {
 
 void ReadAnythingAppController::RecordEstimatedWordsSeen() {
   VLOG(1) << "Words seen: " << model_.words_seen();
-  base::UmaHistogramCounts100000(kWordsSeenHistogramName, model_.words_seen());
+  base::UmaHistogramCustomCounts(kWordsSeenHistogramName, model_.words_seen(),
+                                 1, kMaxWordsConsumed, kWordsConsumedBuckets);
   model_.set_words_seen(0);
+}
+
+void ReadAnythingAppController::RecordEstimatedWordsHeard() {
+  if (IsReadAloudEnabled()) {
+    VLOG(1) << "Words heard: " << model_.words_heard();
+    base::UmaHistogramCustomCounts(kWordsHeardHistogramName,
+                                   model_.words_heard(), 1, kMaxWordsConsumed,
+                                   kWordsConsumedBuckets);
+  }
+  model_.set_words_heard(0);
 }
 
 void ReadAnythingAppController::OnAXTreeDestroyed(const ui::AXTreeID& tree_id) {
@@ -929,6 +958,9 @@ void ReadAnythingAppController::OnAXTreeDistilled(
   // `requires_distillation()` state below).
   model_.UnserializePendingUpdates(tree_id);
   if (model_.requires_distillation()) {
+    if (features::IsReadAnythingWithReadabilityEnabled()) {
+      return;
+    }
     Distill();
   }
 }
@@ -1013,6 +1045,9 @@ void ReadAnythingAppController::DrawSelection() {
 
 void ReadAnythingAppController::DrawEmptyState() {
   ExecuteJavaScript("chrome.readingMode.showEmpty();");
+}
+
+void ReadAnythingAppController::LogEmptyState() {
   base::UmaHistogramEnumeration(ReadAnythingAppModel::kEmptyStateHistogramName,
                                 ReadAnythingAppModel::EmptyState::kShown);
 }
@@ -1028,13 +1063,14 @@ void ReadAnythingAppController::OnSettingsRestoredFromPrefs(
     double speech_rate,
     base::Value::Dict voices,
     base::Value::List languages_enabled_in_pref,
-    read_anything::mojom::HighlightGranularity granularity) {
+    read_anything::mojom::HighlightGranularity granularity,
+    read_anything::mojom::LineFocus line_focus) {
   read_aloud_model_.OnSettingsRestoredFromPrefs(
       speech_rate, &languages_enabled_in_pref, &voices, granularity);
   bool needs_redraw_for_links = model_.links_enabled() != links_enabled;
   model_.OnSettingsRestoredFromPrefs(line_spacing, letter_spacing, font,
                                      font_size, links_enabled, images_enabled,
-                                     color);
+                                     color, line_focus);
   ExecuteJavaScript("chrome.readingMode.restoreSettingsFromPrefs();");
   // Only redraw if there is an active tree.
   if (needs_redraw_for_links &&
@@ -1048,6 +1084,10 @@ void ReadAnythingAppController::ScreenAIServiceReady() {
     model_.SetScreenAIServiceReadyForDataCollection();
   }
   distiller_->ScreenAIServiceReady();
+}
+
+void ReadAnythingAppController::TogglePinState() {
+  page_handler_->TogglePinState();
 }
 
 const gin::WrapperInfo* ReadAnythingAppController::wrapper_info() const {
@@ -1086,11 +1126,19 @@ gin::ObjectTemplateBuilder ReadAnythingAppController::GetObjectTemplateBuilder(
       .SetProperty("colorTheme", &ReadAnythingAppController::ColorTheme)
       .SetProperty("highlightGranularity",
                    &ReadAnythingAppController::HighlightGranularity)
+      .SetProperty("lineFocus", &ReadAnythingAppController::LineFocus)
       .SetProperty("defaultTheme", &ReadAnythingAppController::DefaultTheme)
       .SetProperty("lightTheme", &ReadAnythingAppController::LightTheme)
       .SetProperty("darkTheme", &ReadAnythingAppController::DarkTheme)
       .SetProperty("yellowTheme", &ReadAnythingAppController::YellowTheme)
       .SetProperty("blueTheme", &ReadAnythingAppController::BlueTheme)
+      .SetProperty("highContrastTheme",
+                   &ReadAnythingAppController::HighContrastTheme)
+      .SetProperty("lowContrastTheme",
+                   &ReadAnythingAppController::LowContrastTheme)
+      .SetProperty("sepiaLightTheme",
+                   &ReadAnythingAppController::SepiaLightTheme)
+      .SetProperty("sepiaDarkTheme", &ReadAnythingAppController::SepiaDarkTheme)
       .SetProperty("autoHighlighting",
                    &ReadAnythingAppController::AutoHighlighting)
       .SetProperty("wordHighlighting",
@@ -1115,11 +1163,41 @@ gin::ObjectTemplateBuilder ReadAnythingAppController::GetObjectTemplateBuilder(
       .SetProperty(
           "unexpectedUpdateContentStopSource",
           &ReadAnythingAppController::UnexpectedUpdateContentStopSource)
+      .SetProperty("lineFocusOff", &ReadAnythingAppController::LineFocusOff)
+      .SetProperty("lineFocusSmallStaticWindow",
+                   &ReadAnythingAppController::LineFocusSmallStaticWindow)
+      .SetProperty("lineFocusMediumStaticWindow",
+                   &ReadAnythingAppController::LineFocusMediumStaticWindow)
+      .SetProperty("lineFocusLargeStaticWindow",
+                   &ReadAnythingAppController::LineFocusLargeStaticWindow)
+      .SetProperty("lineFocusSmallCursorWindow",
+                   &ReadAnythingAppController::LineFocusSmallCursorWindow)
+      .SetProperty("lineFocusMediumCursorWindow",
+                   &ReadAnythingAppController::LineFocusMediumCursorWindow)
+      .SetProperty("lineFocusLargeCursorWindow",
+                   &ReadAnythingAppController::LineFocusLargeCursorWindow)
+      .SetProperty("lineFocusStaticLine",
+                   &ReadAnythingAppController::LineFocusStaticLine)
+      .SetProperty("lineFocusCursorLine",
+                   &ReadAnythingAppController::LineFocusCursorLine)
       .SetProperty("maxLineWidth", &ReadAnythingAppController::MaxLineWidth)
+      .SetProperty("inSidePanelPresentationState",
+                   &ReadAnythingAppController::InSidePanelPresentationState)
+      .SetProperty(
+          "inImmersiveOverlayPresentationState",
+          &ReadAnythingAppController::InImmersiveOverlayPresentationState)
       .SetProperty("speechRate", &ReadAnythingAppController::SpeechRate)
       .SetProperty("isGoogleDocs", &ReadAnythingAppController::IsGoogleDocs)
       .SetProperty("isReadAloudEnabled",
                    &ReadAnythingAppController::IsReadAloudEnabled)
+      .SetProperty("isImmersiveEnabled",
+                   &ReadAnythingAppController::IsImmersiveEnabled)
+      .SetProperty("isTsTextSegmentationEnabled",
+                   &ReadAnythingAppController::IsTsTextSegmentationEnabled)
+      .SetProperty("isReadabilityEnabled",
+                   &ReadAnythingAppController::IsReadabilityEnabled)
+      .SetProperty("isLineFocusEnabled",
+                   &ReadAnythingAppController::IsLineFocusEnabled)
       .SetProperty("isChromeOsAsh", &ReadAnythingAppController::IsChromeOsAsh)
       .SetProperty("baseLanguageForSpeech",
                    &ReadAnythingAppController::GetLanguageCodeForSpeech)
@@ -1129,6 +1207,10 @@ gin::ObjectTemplateBuilder ReadAnythingAppController::GetObjectTemplateBuilder(
                    &ReadAnythingAppController::GetDefaultLanguageCodeForSpeech)
       .SetProperty("isPhraseHighlightingEnabled",
                    &ReadAnythingAppController::IsPhraseHighlightingEnabled)
+      .SetProperty("htmlTitle",
+                   &ReadAnythingAppController::GetDomDistillerTitle)
+      .SetProperty("htmlContent",
+                   &ReadAnythingAppController::GetDomDistillerContentHtml)
       .SetMethod("isHighlightOn", &ReadAnythingAppController::IsHighlightOn)
       .SetMethod("getChildren", &ReadAnythingAppController::GetChildren)
       .SetMethod("getTextDirection",
@@ -1136,6 +1218,7 @@ gin::ObjectTemplateBuilder ReadAnythingAppController::GetObjectTemplateBuilder(
       .SetMethod("getHtmlTag", &ReadAnythingAppController::GetHtmlTag)
       .SetMethod("getLanguage", &ReadAnythingAppController::GetLanguage)
       .SetMethod("getTextContent", &ReadAnythingAppController::GetTextContent)
+      .SetMethod("getPrefixText", &ReadAnythingAppController::GetPrefixText)
       .SetMethod("getUrl", &ReadAnythingAppController::GetUrl)
       .SetMethod("getAltText", &ReadAnythingAppController::GetAltText)
       .SetMethod("shouldBold", &ReadAnythingAppController::ShouldBold)
@@ -1145,6 +1228,9 @@ gin::ObjectTemplateBuilder ReadAnythingAppController::GetObjectTemplateBuilder(
       .SetMethod("onCopy", &ReadAnythingAppController::OnCopy)
       .SetMethod("onNoTextContent", &ReadAnythingAppController::OnNoTextContent)
       .SetMethod("updateWordsSeen", &ReadAnythingAppController::UpdateWordsSeen)
+      .SetMethod("logEmptyState", &ReadAnythingAppController::LogEmptyState)
+      .SetMethod("updateWordsHeard",
+                 &ReadAnythingAppController::UpdateWordsHeard)
       .SetMethod("onFontSizeChanged",
                  &ReadAnythingAppController::OnFontSizeChanged)
       .SetMethod("onFontSizeReset", &ReadAnythingAppController::OnFontSizeReset)
@@ -1164,12 +1250,16 @@ gin::ObjectTemplateBuilder ReadAnythingAppController::GetObjectTemplateBuilder(
                  &ReadAnythingAppController::OnSpeechRateChange)
       .SetMethod("getStoredVoice", &ReadAnythingAppController::GetStoredVoice)
       .SetMethod("onVoiceChange", &ReadAnythingAppController::OnVoiceChange)
+      .SetMethod("logExtensionState",
+                 &ReadAnythingAppController::LogExtensionState)
       .SetMethod("onLanguagePrefChange",
                  &ReadAnythingAppController::OnLanguagePrefChange)
       .SetMethod("getLanguagesEnabledInPref",
                  &ReadAnythingAppController::GetLanguagesEnabledInPref)
       .SetMethod("onHighlightGranularityChanged",
                  &ReadAnythingAppController::OnHighlightGranularityChanged)
+      .SetMethod("onLineFocusChanged",
+                 &ReadAnythingAppController::OnLineFocusChanged)
       .SetMethod("getLineSpacingValue",
                  &ReadAnythingAppController::GetLineSpacingValue)
       .SetMethod("getLetterSpacingValue",
@@ -1178,6 +1268,7 @@ gin::ObjectTemplateBuilder ReadAnythingAppController::GetObjectTemplateBuilder(
                  &ReadAnythingAppController::OnSelectionChange)
       .SetMethod("onCollapseSelection",
                  &ReadAnythingAppController::OnCollapseSelection)
+      .SetMethod("onDistilled", &ReadAnythingAppController::OnDistilled)
       .SetProperty("supportedFonts",
                    &ReadAnythingAppController::GetSupportedFonts)
       .SetProperty("allFonts", &ReadAnythingAppController::GetAllFonts)
@@ -1189,11 +1280,8 @@ gin::ObjectTemplateBuilder ReadAnythingAppController::GetObjectTemplateBuilder(
                  &ReadAnythingAppController::InitAXPositionWithNode)
       .SetMethod("resetGranularityIndex",
                  &ReadAnythingAppController::ResetGranularityIndex)
-      .SetMethod("getCurrentTextStartIndex",
-                 &ReadAnythingAppController::GetCurrentTextStartIndex)
-      .SetMethod("getCurrentTextEndIndex",
-                 &ReadAnythingAppController::GetCurrentTextEndIndex)
-      .SetMethod("getCurrentText", &ReadAnythingAppController::GetCurrentText)
+      .SetMethod("getCurrentTextContent",
+                 &ReadAnythingAppController::GetCurrentTextContent)
       .SetMethod("shouldShowUi", &ReadAnythingAppController::ShouldShowUI)
       .SetMethod("onIsSpeechActiveChanged",
                  &ReadAnythingAppController::OnIsSpeechActiveChanged)
@@ -1213,12 +1301,26 @@ gin::ObjectTemplateBuilder ReadAnythingAppController::GetObjectTemplateBuilder(
       .SetMethod("incrementMetricCount",
                  &ReadAnythingAppController::IncrementMetricCount)
       .SetMethod("logSpeechStop", &ReadAnythingAppController::LogSpeechStop)
+      .SetMethod("startLineFocusSession",
+                 &ReadAnythingAppController::StartLineFocusSession)
+      .SetMethod("logLineFocusSession",
+                 &ReadAnythingAppController::LogLineFocusSession)
+      .SetMethod("addLineFocusScrollDistance",
+                 &ReadAnythingAppController::AddLineFocusScrollDistance)
+      .SetMethod("addLineFocusMouseDistance",
+                 &ReadAnythingAppController::AddLineFocusMouseDistance)
+      .SetMethod("incrementLineFocusKeyboardLines",
+                 &ReadAnythingAppController::IncrementLineFocusKeyboardLines)
+      .SetMethod("incrementLineFocusSpeechLines",
+                 &ReadAnythingAppController::IncrementLineFocusSpeechLines)
       .SetMethod("sendGetVoicePackInfoRequest",
                  &ReadAnythingAppController::SendGetVoicePackInfoRequest)
       .SetMethod("sendInstallVoicePackRequest",
                  &ReadAnythingAppController::SendInstallVoicePackRequest)
       .SetMethod("sendUninstallVoiceRequest",
                  &ReadAnythingAppController::SendUninstallVoiceRequest)
+      .SetMethod("getCurrentTextSegments",
+                 &ReadAnythingAppController::GetCurrentTextSegments)
       .SetMethod("getHighlightForCurrentSegmentIndex",
                  &ReadAnythingAppController::GetHighlightForCurrentSegmentIndex)
       .SetMethod("getValidatedFontName",
@@ -1226,7 +1328,15 @@ gin::ObjectTemplateBuilder ReadAnythingAppController::GetObjectTemplateBuilder(
       .SetMethod("onScrolledToBottom",
                  &ReadAnythingAppController::OnScrolledToBottom)
       .SetProperty("isDocsLoadMoreButtonVisible",
-                   &ReadAnythingAppController::IsDocsLoadMoreButtonVisible);
+                   &ReadAnythingAppController::IsDocsLoadMoreButtonVisible)
+      .SetMethod("sendGetPresentationStateRequest",
+                 &ReadAnythingAppController::SendGetPresentationStateRequest)
+      .SetMethod("togglePresentation",
+                 &ReadAnythingAppController::TogglePresentation)
+      .SetMethod("close", &ReadAnythingAppController::CloseUI)
+      .SetMethod("togglePinState", &ReadAnythingAppController::TogglePinState)
+      .SetMethod("sendPinStateRequest",
+                 &ReadAnythingAppController::SendPinStateRequest);
 }
 
 ui::AXNodeID ReadAnythingAppController::RootId() const {
@@ -1280,16 +1390,21 @@ bool ReadAnythingAppController::IsPhraseHighlightingEnabled() const {
   return features::IsReadAnythingReadAloudPhraseHighlightingEnabled();
 }
 
+void ReadAnythingAppController::OnPinStatusReceived(bool pin_state) {
+  ExecuteJavaScript("chrome.readingMode.onPinStateReceived(" +
+                    base::ToString(pin_state) + ")");
+}
+
 int ReadAnythingAppController::LetterSpacing() const {
-  return base::to_underlying(model_.letter_spacing());
+  return std::to_underlying(model_.letter_spacing());
 }
 
 int ReadAnythingAppController::LineSpacing() const {
-  return base::to_underlying(model_.line_spacing());
+  return std::to_underlying(model_.line_spacing());
 }
 
 int ReadAnythingAppController::ColorTheme() const {
-  return base::to_underlying(model_.color_theme());
+  return std::to_underlying(model_.color_theme());
 }
 
 double ReadAnythingAppController::SpeechRate() const {
@@ -1316,48 +1431,70 @@ int ReadAnythingAppController::HighlightGranularity() const {
   return read_aloud_model_.highlight_granularity();
 }
 
+int ReadAnythingAppController::LineFocus() const {
+  return IsLineFocusEnabled()
+             ? std::to_underlying(model_.line_focus())
+             : std::to_underlying(read_anything::mojom::LineFocus::kOff);
+}
+
 int ReadAnythingAppController::StandardLineSpacing() const {
-  return base::to_underlying(read_anything::mojom::LineSpacing::kStandard);
+  return std::to_underlying(read_anything::mojom::LineSpacing::kStandard);
 }
 
 int ReadAnythingAppController::LooseLineSpacing() const {
-  return base::to_underlying(read_anything::mojom::LineSpacing::kLoose);
+  return std::to_underlying(read_anything::mojom::LineSpacing::kLoose);
 }
 
 int ReadAnythingAppController::VeryLooseLineSpacing() const {
-  return base::to_underlying(read_anything::mojom::LineSpacing::kVeryLoose);
+  return std::to_underlying(read_anything::mojom::LineSpacing::kVeryLoose);
 }
 
 int ReadAnythingAppController::StandardLetterSpacing() const {
-  return base::to_underlying(read_anything::mojom::LetterSpacing::kStandard);
+  return std::to_underlying(read_anything::mojom::LetterSpacing::kStandard);
 }
 
 int ReadAnythingAppController::WideLetterSpacing() const {
-  return base::to_underlying(read_anything::mojom::LetterSpacing::kWide);
+  return std::to_underlying(read_anything::mojom::LetterSpacing::kWide);
 }
 
 int ReadAnythingAppController::VeryWideLetterSpacing() const {
-  return base::to_underlying(read_anything::mojom::LetterSpacing::kVeryWide);
+  return std::to_underlying(read_anything::mojom::LetterSpacing::kVeryWide);
 }
 
 int ReadAnythingAppController::DefaultTheme() const {
-  return base::to_underlying(read_anything::mojom::Colors::kDefault);
+  return std::to_underlying(read_anything::mojom::Colors::kDefault);
 }
 
 int ReadAnythingAppController::LightTheme() const {
-  return base::to_underlying(read_anything::mojom::Colors::kLight);
+  return std::to_underlying(read_anything::mojom::Colors::kLight);
 }
 
 int ReadAnythingAppController::DarkTheme() const {
-  return base::to_underlying(read_anything::mojom::Colors::kDark);
+  return std::to_underlying(read_anything::mojom::Colors::kDark);
 }
 
 int ReadAnythingAppController::YellowTheme() const {
-  return base::to_underlying(read_anything::mojom::Colors::kYellow);
+  return std::to_underlying(read_anything::mojom::Colors::kYellow);
 }
 
 int ReadAnythingAppController::BlueTheme() const {
-  return base::to_underlying(read_anything::mojom::Colors::kBlue);
+  return std::to_underlying(read_anything::mojom::Colors::kBlue);
+}
+
+int ReadAnythingAppController::HighContrastTheme() const {
+  return std::to_underlying(read_anything::mojom::Colors::kHighContrast);
+}
+
+int ReadAnythingAppController::LowContrastTheme() const {
+  return std::to_underlying(read_anything::mojom::Colors::kLowContrast);
+}
+
+int ReadAnythingAppController::SepiaLightTheme() const {
+  return std::to_underlying(read_anything::mojom::Colors::kSepiaLight);
+}
+
+int ReadAnythingAppController::SepiaDarkTheme() const {
+  return std::to_underlying(read_anything::mojom::Colors::kSepiaDark);
 }
 
 bool ReadAnythingAppController::IsHighlightOn() {
@@ -1386,36 +1523,88 @@ int ReadAnythingAppController::NoHighlighting() const {
 }
 
 int ReadAnythingAppController::PauseButtonStopSource() const {
-  return base::to_underlying(ReadAloudAppModel::ReadAloudStopSource::kButton);
+  return std::to_underlying(ReadAloudAppModel::ReadAloudStopSource::kButton);
 }
 
 int ReadAnythingAppController::KeyboardShortcutStopSource() const {
-  return base::to_underlying(
+  return std::to_underlying(
       ReadAloudAppModel::ReadAloudStopSource::kKeyboardShortcut);
 }
 
 int ReadAnythingAppController::EngineInterruptStopSource() const {
-  return base::to_underlying(
+  return std::to_underlying(
       ReadAloudAppModel::ReadAloudStopSource::kEngineInterrupt);
 }
 
 int ReadAnythingAppController::EngineErrorStopSource() const {
-  return base::to_underlying(
+  return std::to_underlying(
       ReadAloudAppModel::ReadAloudStopSource::kEngineError);
 }
 
 int ReadAnythingAppController::ContentFinishedStopSource() const {
-  return base::to_underlying(
+  return std::to_underlying(
       ReadAloudAppModel::ReadAloudStopSource::kFinishContent);
 }
 
 int ReadAnythingAppController::UnexpectedUpdateContentStopSource() const {
-  return base::to_underlying(
+  return std::to_underlying(
       ReadAloudAppModel::ReadAloudStopSource::kUnexpectedUpdateContent);
+}
+
+int ReadAnythingAppController::LineFocusOff() const {
+  return std::to_underlying(read_anything::mojom::LineFocus::kOff);
+}
+
+int ReadAnythingAppController::LineFocusSmallStaticWindow() const {
+  return std::to_underlying(
+      read_anything::mojom::LineFocus::kSmallStaticWindow);
+}
+
+int ReadAnythingAppController::LineFocusMediumStaticWindow() const {
+  return std::to_underlying(
+      read_anything::mojom::LineFocus::kMediumStaticWindow);
+}
+
+int ReadAnythingAppController::LineFocusLargeStaticWindow() const {
+  return std::to_underlying(
+      read_anything::mojom::LineFocus::kLargeStaticWindow);
+}
+
+int ReadAnythingAppController::LineFocusSmallCursorWindow() const {
+  return std::to_underlying(
+      read_anything::mojom::LineFocus::kSmallCursorWindow);
+}
+
+int ReadAnythingAppController::LineFocusMediumCursorWindow() const {
+  return std::to_underlying(
+      read_anything::mojom::LineFocus::kMediumCursorWindow);
+}
+
+int ReadAnythingAppController::LineFocusLargeCursorWindow() const {
+  return std::to_underlying(
+      read_anything::mojom::LineFocus::kLargeCursorWindow);
+}
+
+int ReadAnythingAppController::LineFocusStaticLine() const {
+  return std::to_underlying(read_anything::mojom::LineFocus::kLineStatic);
+}
+
+int ReadAnythingAppController::LineFocusCursorLine() const {
+  return std::to_underlying(read_anything::mojom::LineFocus::kLineCursor);
 }
 
 int ReadAnythingAppController::MaxLineWidth() const {
   return a11y::kMaxLineWidth;
+}
+
+int ReadAnythingAppController::InSidePanelPresentationState() const {
+  return std::to_underlying(
+      read_anything::mojom::ReadAnythingPresentationState::kInSidePanel);
+}
+
+int ReadAnythingAppController::InImmersiveOverlayPresentationState() const {
+  return std::to_underlying(
+      read_anything::mojom::ReadAnythingPresentationState::kInImmersiveOverlay);
 }
 
 std::vector<ui::AXNodeID> ReadAnythingAppController::GetChildren(
@@ -1426,7 +1615,7 @@ std::vector<ui::AXNodeID> ReadAnythingAppController::GetChildren(
   const std::set<ui::AXNodeID>* node_ids = model_.GetCurrentlyVisibleNodes();
   for (auto it = ax_node->UnignoredChildrenBegin();
        it != ax_node->UnignoredChildrenEnd(); ++it) {
-    if (base::Contains(*node_ids, it->id())) {
+    if (node_ids->contains(it->id())) {
       child_ids.push_back(it->id());
     }
   }
@@ -1456,7 +1645,15 @@ std::u16string ReadAnythingAppController::GetTextContent(
   ui::AXNode* ax_node = model_.GetAXNode(ax_node_id);
   CHECK(ax_node);
 
-  return a11y::GetTextContent(ax_node, IsGoogleDocs(), model_.is_pdf());
+  return a11y::GetTextContent(ax_node, model_.is_pdf(), IsGoogleDocs());
+}
+
+std::u16string ReadAnythingAppController::GetPrefixText(
+    ui::AXNodeID ax_node_id) const {
+  ui::AXNode* ax_node = model_.GetAXNode(ax_node_id);
+  CHECK(ax_node);
+
+  return a11y::GetPrefixText(ax_node, model_.is_pdf(), IsGoogleDocs());
 }
 
 std::string ReadAnythingAppController::GetTextDirection(
@@ -1487,18 +1684,35 @@ std::string ReadAnythingAppController::GetTextDirection(
 std::string ReadAnythingAppController::GetUrl(ui::AXNodeID ax_node_id) const {
   ui::AXNode* ax_node = model_.GetAXNode(ax_node_id);
   DCHECK(ax_node);
-  const char* url =
-      ax_node->GetStringAttribute(ax::mojom::StringAttribute::kUrl).c_str();
+  const std::string& url =
+      ax_node->GetStringAttribute(ax::mojom::StringAttribute::kUrl);
 
   // Prevent XSS from href attribute, which could be set to a script instead
   // of a valid website.
-  if (url::FindAndCompareScheme(url, static_cast<int>(strlen(url)), "http",
-                                nullptr) ||
-      url::FindAndCompareScheme(url, static_cast<int>(strlen(url)), "https",
-                                nullptr)) {
+  if (url::FindAndCompareScheme(url, "http", nullptr) ||
+      url::FindAndCompareScheme(url, "https", nullptr)) {
     return url;
   }
   return "";
+}
+
+// TODO(crbug.com/463728166): Remove IsImmersiveReadAnythingEnabled flag when no
+// longer flag-guarded code.
+void ReadAnythingAppController::SendGetPresentationStateRequest() const {
+  if (features::IsImmersiveReadAnythingEnabled()) {
+    page_handler_->GetPresentationState();
+  }
+}
+
+void ReadAnythingAppController::OnGetPresentationState(
+    read_anything::mojom::ReadAnythingPresentationState presentation_state) {
+  ExecuteJavaScript("chrome.readingMode.onPresentationStateReceived(" +
+                    base::ToString(static_cast<int>(presentation_state)) +
+                    ");");
+}
+
+void ReadAnythingAppController::SendPinStateRequest() {
+  page_handler_->SendPinStateRequest();
 }
 
 void ReadAnythingAppController::SendGetVoicePackInfoRequest(
@@ -1569,6 +1783,24 @@ bool ReadAnythingAppController::IsReadAloudEnabled() const {
   return features::IsReadAnythingReadAloudEnabled();
 }
 
+bool ReadAnythingAppController::IsImmersiveEnabled() const {
+  return features::IsImmersiveReadAnythingEnabled();
+}
+
+bool ReadAnythingAppController::IsTsTextSegmentationEnabled() const {
+  return features::IsReadAnythingReadAloudTSTextSegmentationEnabled();
+}
+
+// Returns true if the experimental flag allowing testing with alternative
+// distillation methods such as Readability.js is enabled.
+bool ReadAnythingAppController::IsReadabilityEnabled() const {
+  return features::IsReadAnythingWithReadabilityEnabled();
+}
+
+bool ReadAnythingAppController::IsLineFocusEnabled() const {
+  return features::IsReadAnythingLineFocusEnabled();
+}
+
 bool ReadAnythingAppController::IsChromeOsAsh() const {
 #if BUILDFLAG(IS_CHROMEOS)
   return true;
@@ -1587,13 +1819,13 @@ std::vector<std::string> ReadAnythingAppController::GetSupportedFonts() {
 
 std::string ReadAnythingAppController::GetValidatedFontName(
     const std::string& font) const {
-  if (!base::Contains(GetAllFonts(), font)) {
+  if (!std::ranges::contains(GetAllFonts(), font)) {
     return GetAllFonts().front();
   }
   if (font == "Serif" || font == "Sans-serif") {
     return base::ToLowerASCII(font);
   }
-  return base::Contains(font, ' ') ? base::StrCat({"\"", font, "\""}) : font;
+  return font.contains(' ') ? base::StrCat({"\"", font, "\""}) : font;
 }
 
 std::vector<std::string> ReadAnythingAppController::GetAllFonts() const {
@@ -1648,7 +1880,8 @@ v8::Local<v8::Value> ReadAnythingAppController::GetImageBitmap(
     // Create an array buffer with the image bytes.
     v8::Local<v8::ArrayBuffer> buffer = v8::ArrayBuffer::New(isolate, size);
     // Copy the memory in.
-    memcpy(buffer->GetBackingStore()->Data(), pixmap.addr(), size);
+    pixmap.readPixels(pixmap.info(), buffer->GetBackingStore()->Data(),
+                      pixmap.rowBytes());
     // Create a clamped array so we can create an ImageData object on the
     // javascript side.
     v8::Local<v8::Uint8ClampedArray> array =
@@ -1716,6 +1949,10 @@ const std::string& ReadAnythingAppController::GetLanguageCodeForSpeech() const {
 }
 
 bool ReadAnythingAppController::RequiresDistillation() {
+  // DOM distiller distillation doesn't queue distillations so return false.
+  if (features::IsReadAnythingWithReadabilityEnabled()) {
+    return false;
+  }
   return model_.requires_distillation();
 }
 
@@ -1753,19 +1990,23 @@ void ReadAnythingAppController::OnCopy() const {
   page_handler_->OnCopy();
 }
 
-void ReadAnythingAppController::OnNoTextContent(bool previouslyHadContent) {
-  if (previouslyHadContent) {
-    Distill();
-  } else {
-    // If updateContent was called on a page with no valid content and
-    // reading mode previously didn't have content, ensure the empty state
-    // is now showing. Otherwise, the loading screen may never terminate.
-    DrawEmptyState();
+void ReadAnythingAppController::OnNoTextContent() {
+  if (features::IsReadAnythingWithReadabilityEnabled()) {
+    return;
   }
+  Distill();
+}
+
+void ReadAnythingAppController::OnDistilled(int word_count) {
+  model_.set_words_distilled(word_count);
 }
 
 void ReadAnythingAppController::UpdateWordsSeen(int words_seen) {
   model_.set_words_seen(words_seen);
+}
+
+void ReadAnythingAppController::UpdateWordsHeard(int words_heard) {
+  model_.set_words_heard(words_heard);
 }
 
 void ReadAnythingAppController::OnFontSizeChanged(bool increase) {
@@ -1848,6 +2089,12 @@ void ReadAnythingAppController::OnVoiceChange(const std::string& voice,
   read_aloud_model_.SetVoice(voice, base_lang);
 }
 
+void ReadAnythingAppController::LogExtensionState() {
+#if !BUILDFLAG(IS_CHROMEOS)
+  page_handler_->LogExtensionState();
+#endif
+}
+
 void ReadAnythingAppController::OnLanguagePrefChange(const std::string& lang,
                                                      bool enabled) {
   page_handler_->OnLanguagePrefChange(lang, enabled);
@@ -1859,6 +2106,18 @@ void ReadAnythingAppController::OnHighlightGranularityChanged(
   page_handler_->OnHighlightGranularityChanged(
       static_cast<read_anything::mojom::HighlightGranularity>(granularity));
   read_aloud_model_.set_highlight_granularity(granularity);
+}
+
+void ReadAnythingAppController::OnLineFocusChanged(int line_focus) {
+  if (!IsLineFocusEnabled()) {
+    return;
+  }
+
+  if (const auto maybe_enum =
+          ToEnum<read_anything::mojom::LineFocus>(line_focus)) {
+    page_handler_->OnLineFocusChanged(maybe_enum.value());
+    model_.set_line_focus(maybe_enum.value());
+  }
 }
 
 double ReadAnythingAppController::GetLineSpacingValue(int line_spacing) const {
@@ -1976,9 +2235,11 @@ bool ReadAnythingAppController::IsSpeechTreeInitialized() {
   return read_aloud_model_.speech_tree_initialized();
 }
 
-std::vector<ui::AXNodeID> ReadAnythingAppController::GetCurrentText() {
-  return read_aloud_model_.GetCurrentText(model_.is_pdf(), model_.IsDocs(),
-                                          model_.GetCurrentlyVisibleNodes());
+std::u16string ReadAnythingAppController::GetCurrentTextContent() {
+  return read_aloud_model_
+      .GetCurrentText(model_.is_pdf(), model_.IsDocs(),
+                      model_.GetCurrentlyVisibleNodes())
+      .text;
 }
 
 void ReadAnythingAppController::PreprocessTextForSpeech() {
@@ -1992,14 +2253,6 @@ void ReadAnythingAppController::MovePositionToNextGranularity() {
 
 void ReadAnythingAppController::MovePositionToPreviousGranularity() {
   read_aloud_model_.MovePositionToPreviousGranularity();
-}
-
-int ReadAnythingAppController::GetCurrentTextStartIndex(ui::AXNodeID node_id) {
-  return read_aloud_model_.GetCurrentTextStartIndex(node_id);
-}
-
-int ReadAnythingAppController::GetCurrentTextEndIndex(ui::AXNodeID node_id) {
-  return read_aloud_model_.GetCurrentTextEndIndex(node_id);
 }
 
 void ReadAnythingAppController::SetLanguageForTesting(
@@ -2020,31 +2273,74 @@ void ReadAnythingAppController::SetLanguageCode(const std::string& code) {
 
 #if BUILDFLAG(IS_CHROMEOS)
 void ReadAnythingAppController::OnDeviceLocked() {
-  read_aloud_model_.LogSpeechStop(
-      ReadAloudAppModel::ReadAloudStopSource::kLockChromeosDevice);
+  if (read_aloud_model_.speech_playing()) {
+    read_aloud_model_.LogSpeechStop(
+        ReadAloudAppModel::ReadAloudStopSource::kLockChromeosDevice);
+  }
+  LogLineFocusSession();
   RecordEstimatedWordsSeen();
+  RecordEstimatedWordsHeard();
   // Signal to the WebUI that the device has been locked. We'll only receive
   // this callback on ChromeOS.
   ExecuteJavaScript("chrome.readingMode.onLockScreen();");
 }
 #else
 void ReadAnythingAppController::OnTtsEngineInstalled() {
+  VLOG(1) << "OnTtsEngineInstalled";
   ExecuteJavaScript("chrome.readingMode.onTtsEngineInstalled()");
 }
 #endif
 
-void ReadAnythingAppController::OnReadingModeHidden() {
+void ReadAnythingAppController::OnReadingModeHidden(bool tab_active) {
+  page_handler_->AckReadingModeHidden();
   model_.set_will_hide(true);
-  read_aloud_model_.LogSpeechStop(
-      ReadAloudAppModel::ReadAloudStopSource::kCloseReadingMode);
+  // If the tab is not active but RM is hidden, then the tab was switched and
+  // speech was not stopped. If the tab is still active and RM is hidden, then
+  // RM was closed, so log the speech stopped.
+  if (read_aloud_model_.speech_playing() && tab_active) {
+    read_aloud_model_.LogSpeechStop(
+        ReadAloudAppModel::ReadAloudStopSource::kCloseReadingMode);
+    ReadingModeWillClose();
+  }
+  LogLineFocusSession();
   RecordEstimatedWordsSeen();
+  RecordEstimatedWordsHeard();
 }
 
 void ReadAnythingAppController::OnTabWillDetach() {
   model_.set_will_hide(true);
-  read_aloud_model_.LogSpeechStop(
-      ReadAloudAppModel::ReadAloudStopSource::kCloseTabOrWindow);
+  if (read_aloud_model_.speech_playing()) {
+    read_aloud_model_.LogSpeechStop(
+        ReadAloudAppModel::ReadAloudStopSource::kCloseTabOrWindow);
+    ReadingModeWillClose();
+  }
+  LogLineFocusSession();
   RecordEstimatedWordsSeen();
+  RecordEstimatedWordsHeard();
+}
+
+void ReadAnythingAppController::ReadingModeWillClose() {
+  if (!features::IsImmersiveReadAnythingEnabled()) {
+    return;
+  }
+
+  ExecuteJavaScript("chrome.readingMode.readingModeWillClose();");
+}
+
+void ReadAnythingAppController::CloseUI() {
+  // This CloseUI() method is only used for the immersive UI, so skip if flag is
+  // not enabled
+  if (!features::IsImmersiveReadAnythingEnabled()) {
+    return;
+  }
+  page_handler_->CloseUI();
+}
+
+void ReadAnythingAppController::TogglePresentation() {
+  if (!features::IsImmersiveReadAnythingEnabled()) {
+    return;
+  }
+  page_handler_->TogglePresentation();
 }
 
 void ReadAnythingAppController::OnTabMuteStateChange(bool muted) {
@@ -2138,6 +2434,32 @@ int ReadAnythingAppController::GetAccessibleBoundary(const std::u16string& text,
   return word_ends;
 }
 
+v8::Local<v8::Value> ReadAnythingAppController::GetCurrentTextSegments() {
+  v8::Isolate* isolate =
+      render_frame()->GetWebFrame()->GetAgentGroupScheduler()->Isolate();
+  auto context = isolate->GetCurrentContext();
+
+  std::vector<ReadAloudTextSegment> nodes =
+      read_aloud_model_.GetCurrentTextSegments(
+          model_.is_pdf(), model_.IsDocs(), model_.GetCurrentlyVisibleNodes());
+
+  v8::Local<v8::Array> highlight_array = v8::Array::New(isolate, nodes.size());
+  for (int i = 0; i < (int)nodes.size(); i++) {
+    v8::Local<v8::Object> obj = v8::Object::New(isolate);
+    auto checked = obj->DefineOwnProperty(
+        context, v8::String::NewFromUtf8(isolate, "nodeId").ToLocalChecked(),
+        v8::Number::New(isolate, nodes[i].id));
+    checked = obj->DefineOwnProperty(
+        context, v8::String::NewFromUtf8(isolate, "start").ToLocalChecked(),
+        v8::Number::New(isolate, nodes[i].text_start));
+    checked = obj->DefineOwnProperty(
+        context, v8::String::NewFromUtf8(isolate, "length").ToLocalChecked(),
+        v8::Number::New(isolate, (nodes[i].text_end - nodes[i].text_start)));
+    checked = highlight_array->Set(isolate->GetCurrentContext(), i, obj);
+  }
+  return highlight_array;
+}
+
 v8::Local<v8::Value>
 ReadAnythingAppController::GetHighlightForCurrentSegmentIndex(int index,
                                                               bool phrases) {
@@ -2184,6 +2506,62 @@ void ReadAnythingAppController::LogSpeechStop(int source) {
   if (const auto maybe_enum =
           ToEnum<ReadAloudAppModel::ReadAloudStopSource>(source)) {
     read_aloud_model_.LogSpeechStop(maybe_enum.value());
+  }
+}
+
+void ReadAnythingAppController::StartLineFocusSession() {
+  if (IsLineFocusEnabled()) {
+    model_.set_line_focus_session_start_time(base::TimeTicks::Now());
+  }
+}
+
+void ReadAnythingAppController::LogLineFocusSession() {
+  if (IsLineFocusEnabled() &&
+      model_.line_focus_session_start_time().has_value()) {
+    base::UmaHistogramLongTimes(
+        "Accessibility.ReadAnything.LineFocusSessionLength",
+        base::TimeTicks::Now() -
+            model_.line_focus_session_start_time().value());
+    base::UmaHistogramCounts1M(
+        "Accessibility.ReadAnything.LineFocusSessionMouseDistance",
+        model_.line_focus_mouse_distance());
+    base::UmaHistogramCounts1M(
+        "Accessibility.ReadAnything.LineFocusSessionScrollDistance",
+        model_.line_focus_scroll_distance());
+    base::UmaHistogramCounts100000(
+        "Accessibility.ReadAnything.LineFocusSessionKeyboardLines",
+        model_.line_focus_keyboard_lines());
+    base::UmaHistogramCounts100000(
+        "Accessibility.ReadAnything.LineFocusSessionSpeechLines",
+        model_.line_focus_speech_lines());
+    model_.ResetLineFocusSession();
+  }
+}
+
+void ReadAnythingAppController::AddLineFocusScrollDistance(int distance) {
+  if (IsLineFocusEnabled()) {
+    model_.set_line_focus_scroll_distance(model_.line_focus_scroll_distance() +
+                                          distance);
+  }
+}
+
+void ReadAnythingAppController::AddLineFocusMouseDistance(int distance) {
+  if (IsLineFocusEnabled()) {
+    model_.set_line_focus_mouse_distance(model_.line_focus_mouse_distance() +
+                                         distance);
+  }
+}
+
+void ReadAnythingAppController::IncrementLineFocusKeyboardLines() {
+  if (IsLineFocusEnabled()) {
+    model_.set_line_focus_keyboard_lines(model_.line_focus_keyboard_lines() +
+                                         1);
+  }
+}
+
+void ReadAnythingAppController::IncrementLineFocusSpeechLines() {
+  if (IsLineFocusEnabled()) {
+    model_.set_line_focus_speech_lines(model_.line_focus_speech_lines() + 1);
   }
 }
 
@@ -2234,4 +2612,28 @@ void ReadAnythingAppController::OnTreeRemoved(ui::AXTree* tree) {
   if (it != tree_observers_.end()) {
     tree_observers_.erase(it);
   }
+}
+
+std::string ReadAnythingAppController::GetDomDistillerTitle() const {
+  return dom_distiller_title_;
+}
+
+std::string ReadAnythingAppController::GetDomDistillerContentHtml() const {
+  return dom_distiller_content_html_;
+}
+
+void ReadAnythingAppController::UpdateContent(const std::string& title,
+                                              const std::string& content) {
+  if (!features::IsReadAnythingWithReadabilityEnabled()) {
+    return;
+  }
+  dom_distiller_title_ = title;
+  dom_distiller_content_html_ = content;
+
+  // For Google Docs, do not show any text before the doc finishing loading.
+  if (IsGoogleDocs() && !model_.page_finished_loading()) {
+    return;
+  }
+
+  ExecuteJavaScript("chrome.readingMode.updateContent();");
 }

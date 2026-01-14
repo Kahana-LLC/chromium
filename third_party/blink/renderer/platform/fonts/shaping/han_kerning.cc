@@ -288,7 +288,9 @@ bool HanKerning::AppendFontFeatures(const String& text,
     last_type = GetCharType(text, start, font_data);
   }
 
-  if (font_data.has_contextual_spacing && char_types_.empty()) {
+  if (font_data.has_contextual_spacing &&
+      (char_types_.empty() ||
+       RuntimeEnabledFeatures::TextSpacingTrimFallbackChwsEnabled())) {
     // The `chws` feature can handle characters in a run.
     // Compute the end edge if there are following runs.
     if (options.apply_end) [[unlikely]] {
@@ -376,6 +378,8 @@ void HanKerning::ApplyKerning(ShapeResult& result) {
   DCHECK(RuntimeEnabledFeatures::TextSpacingTrimFallback2Enabled());
 
   ShapeResultCursor cursor(&result);
+  const float font_size = cursor.FontData().PlatformData().size();
+  const auto advance_min = TextRunLayoutUnit::FromFloatFloor(font_size * .9);
   std::sort(changed_indexes_.begin(), changed_indexes_.end());
   wtf_size_t last_index = kNotFound;
   for (wtf_size_t i : changed_indexes_) {
@@ -385,8 +389,12 @@ void HanKerning::ApplyKerning(ShapeResult& result) {
     last_index = i;
 
     cursor.MoveToCharacter(i);
-    cursor.SetUnsafeToBreakBefore();
     const TextRunLayoutUnit advance = cursor.ClusterAdvance();
+    if (advance < advance_min) {
+      continue;
+    }
+
+    cursor.SetUnsafeToBreakBefore();
     switch (char_types_[i]) {
       case CharType::kOpen:
         cursor.AddSpaceToLeft(advance / -2);

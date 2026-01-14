@@ -5,6 +5,10 @@
 // Note: this code is made to conform to glic_api's Observable, but can also be
 // used independently.
 
+function assertNotReachedCase(_param: never, message?: string): never {
+  throw new Error('Assertion failed' + (message ? `: ${message}` : ''));
+}
+
 /** Allows control of a subscription to an ObservableValue. */
 export declare interface Subscriber {
   unsubscribe(): void;
@@ -57,6 +61,8 @@ class ObservableBase<T> {
       case 'complete':
       case 'error':
         throw new Error('Observable is not active');
+      default:
+        assertNotReachedCase(this.state_);
     }
     this.subscribers.forEach((sub) => {
       // Ignore if removed since forEach was called.
@@ -79,15 +85,25 @@ class ObservableBase<T> {
       case 'complete':
       case 'error':
         throw new Error('Observable is not active');
+      default:
+        assertNotReachedCase(this.state_);
     }
+    let loggedWarning = false;
     const hadSubscribers = this.hasActiveSubscription();
     this.subscribers.forEach((sub) => {
       // Ignore if removed since forEach was called.
       if (this.subscribers.has(sub)) {
-        try {
-          sub.observer.error?.(e);
-        } catch (e) {
-          console.warn(e);
+        if (sub.observer.error) {
+          try {
+            sub.observer.error(e);
+          } catch (e) {
+            console.warn(e);
+          }
+        } else {
+          if (!loggedWarning) {
+            console.warn('unhandled error: ', e);
+            loggedWarning = true;
+          }
         }
       }
     });
@@ -105,6 +121,8 @@ class ObservableBase<T> {
       case 'complete':
       case 'error':
         throw new Error('Observable is not active');
+      default:
+        assertNotReachedCase(this.state_);
     }
     const hadSubscribers = this.hasActiveSubscription();
     this.subscribers.forEach((sub) => {
@@ -157,6 +175,8 @@ class ObservableBase<T> {
       case 'error':
         observer.error?.(this.errorValue!);
         return {unsubscribe: () => {}};
+      default:
+        assertNotReachedCase(this.state_);
     }
     const newSub =
         new ObservableSubscription(observer, this.onUnsubscribe.bind(this));
@@ -186,7 +206,7 @@ class ObservableBase<T> {
 
   protected activeSubscriptionChanged(_hasActiveSubscription: boolean): void {}
 
-  protected hasActiveSubscription(): boolean {
+  hasActiveSubscription(): boolean {
     return this.subscribers.size > 0;
   }
 }

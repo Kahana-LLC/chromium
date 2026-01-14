@@ -6,6 +6,7 @@
 
 #include <memory>
 
+#include "base/command_line.h"
 #include "base/memory/raw_ptr.h"
 #include "base/task/current_thread.h"
 #include "base/test/mock_callback.h"
@@ -14,19 +15,18 @@
 #include "chrome/browser/ai/ai_test_utils.h"
 #include "chrome/browser/optimization_guide/mock_optimization_guide_keyed_service.h"
 #include "components/keyed_service/core/keyed_service.h"
-#include "components/optimization_guide/core/mock_optimization_guide_model_executor.h"
+#include "components/optimization_guide/core/model_execution/on_device_capability.h"
 #include "components/optimization_guide/core/model_execution/test/fake_model_broker.h"
-#include "components/optimization_guide/core/optimization_guide_model_executor.h"
+#include "components/optimization_guide/core/model_execution/test/mock_on_device_capability.h"
 #include "components/optimization_guide/core/optimization_guide_switches.h"
+#include "components/optimization_guide/public/mojom/model_broker.mojom-shared.h"
 #include "components/policy/core/common/policy_pref_names.h"
 #include "components/prefs/pref_service.h"
 #include "content/public/browser/web_contents.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/common/features_generated.h"
-#include "third_party/blink/public/mojom/ai/ai_common.mojom-forward.h"
 #include "third_party/blink/public/mojom/ai/ai_common.mojom.h"
 #include "third_party/blink/public/mojom/ai/ai_language_model.mojom.h"
-#include "third_party/blink/public/mojom/ai/ai_manager.mojom-shared.h"
 #include "third_party/blink/public/mojom/ai/ai_manager.mojom.h"
 #include "third_party/blink/public/mojom/ai/ai_rewriter.mojom.h"
 #include "third_party/blink/public/mojom/ai/ai_summarizer.mojom.h"
@@ -35,7 +35,6 @@
 using optimization_guide::MockSession;
 using testing::_;
 using testing::AtMost;
-using testing::Invoke;
 using testing::NiceMock;
 
 namespace {
@@ -51,73 +50,25 @@ std::vector<blink::mojom::AILanguageCodePtr> MakeLanguageCodeVector(
 
 class AIManagerTest : public AITestUtils::AITestBase {
  protected:
-  AIManagerTest()
-      : fake_broker_(optimization_guide::FakeAdaptationAsset({
-            .config =
-                [] {
-                  optimization_guide::proto::OnDeviceModelExecutionFeatureConfig
-                      config;
-                  config.set_can_skip_text_safety(true);
-                  config.set_feature(
-                      optimization_guide::proto::ModelExecutionFeature::
-                          MODEL_EXECUTION_FEATURE_PROMPT_API);
-                  return config;
-                }(),
-        })) {}
-
-  void SetUp() override {
-    AITestUtils::AITestBase::SetUp();
-    SetupMockOptimizationGuideKeyedService();
-    ai_manager_ =
-        std::make_unique<AIManager>(main_rfh()->GetBrowserContext(),
-                                    &component_update_service_, main_rfh());
-  }
-
-  void TearDown() override {
-    ai_manager_.reset();
-    AITestUtils::AITestBase::TearDown();
+  optimization_guide::proto::OnDeviceModelExecutionFeatureConfig CreateConfig()
+      override {
+    optimization_guide::proto::OnDeviceModelExecutionFeatureConfig config;
+    config.set_can_skip_text_safety(true);
+    config.set_feature(optimization_guide::proto::ModelExecutionFeature::
+                           MODEL_EXECUTION_FEATURE_PROMPT_API);
+    return config;
   }
 
   void SetupMockOptimizationGuideKeyedService() override {
     AITestUtils::AITestBase::SetupMockOptimizationGuideKeyedService();
-
-    ON_CALL(*mock_optimization_guide_keyed_service_, StartSession(_, _))
-        .WillByDefault(
-            [&] { return std::make_unique<NiceMock<MockSession>>(&session_); });
-    ON_CALL(session_, GetTokenLimits())
-        .WillByDefault(AITestUtils::GetFakeTokenLimits);
-    ON_CALL(session_, GetExecutionInputSizeInTokens(_, _))
-        .WillByDefault(
-            [&](optimization_guide::MultimodalMessageReadView request_metadata,
-                optimization_guide::OptimizationGuideModelSizeInTokenCallback
-                    callback) {
-              std::move(callback).Run(
-                  blink::mojom::kWritingAssistanceMaxInputTokenSize);
-            });
-    ON_CALL(session_, GetOnDeviceFeatureMetadata())
-        .WillByDefault(AITestUtils::GetFakeFeatureMetadata);
     ON_CALL(*mock_optimization_guide_keyed_service_, GetOnDeviceCapabilities())
         .WillByDefault(testing::Return(on_device_model::Capabilities()));
-    ON_CALL(*mock_optimization_guide_keyed_service_,
-            GetOnDeviceModelEligibility(_))
-        .WillByDefault(testing::Return(
-            optimization_guide::OnDeviceModelEligibilityReason::kSuccess));
-    ON_CALL(*mock_optimization_guide_keyed_service_, CreateModelBrokerClient())
-        .WillByDefault([&]() {
-          return std::make_unique<optimization_guide::ModelBrokerClient>(
-              fake_broker_.BindAndPassRemote(),
-              optimization_guide::CreateSessionArgs(nullptr, {}));
-        });
   }
 
   void SetBuildInAIAPIsEnterprisePolicy(bool value) {
     profile()->GetPrefs()->SetBoolean(
         policy::policy_prefs::kBuiltInAIAPIsEnabled, value);
   }
-
- private:
-  testing::NiceMock<MockSession> session_;
-  optimization_guide::FakeModelBroker fake_broker_;
 };
 
 // Tests that involve invalid on-device model file paths should not crash when
@@ -138,46 +89,6 @@ TEST_F(AIManagerTest, NoUAFWithInvalidOnDeviceModelPath) {
   DeleteContents();
 
   task_environment()->RunUntilIdle();
-}
-
-// Tests the `AIUserDataSet`'s behavior of managing the lifetime of
-// `AILanguageModel`s.
-TEST_F(AIManagerTest, AIContextBoundObjectSet) {
-  mojo::Remote<blink::mojom::AILanguageModel> mock_session;
-  AITestUtils::MockCreateLanguageModelClient mock_create_language_model_client;
-  base::RunLoop run_loop;
-  EXPECT_CALL(mock_create_language_model_client, OnResult(_, _))
-      .WillOnce(testing::Invoke(
-          [&](mojo::PendingRemote<blink::mojom::AILanguageModel> language_model,
-              blink::mojom::AILanguageModelInstanceInfoPtr info) {
-            EXPECT_TRUE(language_model);
-            mock_session = mojo::Remote<blink::mojom::AILanguageModel>(
-                std::move(language_model));
-            run_loop.Quit();
-          }));
-
-  mojo::Remote<blink::mojom::AIManager> mock_remote = GetAIManagerRemote();
-  // Initially the `AIContextBoundObjectSet` is empty.
-  ASSERT_EQ(0u, GetAIManagerContextBoundObjectSetSize());
-
-  // After creating one `AILanguageModel`, the `AIContextBoundObjectSet`
-  // contains 1 element.
-  mock_remote->CreateLanguageModel(
-      mock_create_language_model_client.BindNewPipeAndPassRemote(),
-      blink::mojom::AILanguageModelCreateOptions::New(
-          /*sampling_params=*/nullptr,
-          /*initial_prompts=*/
-          std::vector<blink::mojom::AILanguageModelPromptPtr>(),
-          /*expected_inputs=*/std::nullopt,
-          /*expected_outputs=*/std::nullopt));
-  run_loop.Run();
-  ASSERT_EQ(1u, GetAIManagerContextBoundObjectSetSize());
-
-  // After resetting the session, the size of `AIContextBoundObjectSet` becomes
-  // empty again.
-  mock_session.reset();
-  ASSERT_TRUE(base::test::RunUntil(
-      [&] { return GetAIManagerContextBoundObjectSetSize() == 0u; }));
 }
 
 TEST_F(AIManagerTest, CanCreate) {
@@ -219,8 +130,8 @@ TEST_F(AIManagerTest, CanCreateNotEnabled) {
 TEST_F(AIManagerTest, CanCreateSessionWithTextInputCapabilities) {
   base::MockCallback<blink::mojom::AIManager::CanCreateLanguageModelCallback>
       callback;
-  optimization_guide::ModelBasedCapabilityKey key =
-      optimization_guide::ModelBasedCapabilityKey::kPromptApi;
+  optimization_guide::mojom::OnDeviceFeature feature =
+      optimization_guide::mojom::OnDeviceFeature::kPromptApi;
   EXPECT_CALL(callback,
               Run(blink::mojom::ModelAvailabilityCheckResult::kAvailable))
       .Times(1);
@@ -228,12 +139,12 @@ TEST_F(AIManagerTest, CanCreateSessionWithTextInputCapabilities) {
                                 kUnavailableModelAdaptationNotAvailable))
       .Times(2);
   on_device_model::Capabilities capabilities;
-  ai_manager_->CanCreateSession(key, capabilities, callback.Get());
+  ai_manager_->CanCreateSession(feature, capabilities, callback.Get());
   capabilities.Put(on_device_model::CapabilityFlags::kImageInput);
-  ai_manager_->CanCreateSession(key, capabilities, callback.Get());
+  ai_manager_->CanCreateSession(feature, capabilities, callback.Get());
   capabilities.Clear();
   capabilities.Put(on_device_model::CapabilityFlags::kAudioInput);
-  ai_manager_->CanCreateSession(key, capabilities, callback.Get());
+  ai_manager_->CanCreateSession(feature, capabilities, callback.Get());
 }
 
 TEST_F(AIManagerTest, CanCreateSessionWithImageAndAudioInputCapabilities) {
@@ -247,17 +158,17 @@ TEST_F(AIManagerTest, CanCreateSessionWithImageAndAudioInputCapabilities) {
            on_device_model::CapabilityFlags::kAudioInput})));
   base::MockCallback<blink::mojom::AIManager::CanCreateLanguageModelCallback>
       callback;
-  optimization_guide::ModelBasedCapabilityKey key =
-      optimization_guide::ModelBasedCapabilityKey::kPromptApi;
+  optimization_guide::mojom::OnDeviceFeature feature =
+      optimization_guide::mojom::OnDeviceFeature::kPromptApi;
   EXPECT_CALL(callback,
               Run(blink::mojom::ModelAvailabilityCheckResult::kAvailable))
       .Times(3);
   on_device_model::Capabilities capabilities;
-  ai_manager_->CanCreateSession(key, capabilities, callback.Get());
+  ai_manager_->CanCreateSession(feature, capabilities, callback.Get());
   capabilities.Put(on_device_model::CapabilityFlags::kImageInput);
-  ai_manager_->CanCreateSession(key, capabilities, callback.Get());
+  ai_manager_->CanCreateSession(feature, capabilities, callback.Get());
   capabilities.Put(on_device_model::CapabilityFlags::kAudioInput);
-  ai_manager_->CanCreateSession(key, capabilities, callback.Get());
+  ai_manager_->CanCreateSession(feature, capabilities, callback.Get());
 }
 
 TEST_F(AIManagerTest, CanCreateEnterprisePolicyDisabled) {
@@ -362,6 +273,34 @@ TEST_F(AIManagerTest, CheckAndFixLanguagesProofreader) {
   EXPECT_EQ(options->correction_explanation_language->code, "en-UK");
   options = make_options({"en", "fr"}, "hi");
   EXPECT_FALSE(ai_manager_->CheckAndFixLanguages(options, "API", supported));
+}
+
+// Test that GetLanguageModelParams returns null when sampling config is
+// not available (model not downloaded yet).
+TEST_F(AIManagerTest, GetLanguageModelParamsReturnsNullWhenNotAvailable) {
+  ON_CALL(*mock_optimization_guide_keyed_service_,
+          GetSamplingParamsConfig(_))
+      .WillByDefault(testing::Return(std::nullopt));
+
+  EXPECT_TRUE(ai_manager_->GetLanguageModelParams().is_null());
+}
+
+// Test that GetLanguageModelParams returns params when config is available
+TEST_F(AIManagerTest, GetLanguageModelParamsReturnsValidParamsWhenAvailable) {
+  optimization_guide::SamplingParamsConfig config{
+      .default_top_k = 3,
+      .default_temperature = 1.0f,
+  };
+  ON_CALL(*mock_optimization_guide_keyed_service_,
+          GetSamplingParamsConfig(_))
+      .WillByDefault(testing::Return(config));
+
+  auto params = ai_manager_->GetLanguageModelParams();
+
+  ASSERT_TRUE(params);
+  ASSERT_TRUE(params->default_sampling_params);
+  EXPECT_EQ(3u, params->default_sampling_params->top_k);
+  EXPECT_FLOAT_EQ(1.0f, params->default_sampling_params->temperature);
 }
 
 }  // namespace

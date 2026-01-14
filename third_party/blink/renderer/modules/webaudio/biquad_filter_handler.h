@@ -11,12 +11,13 @@
 #include "base/task/single_thread_task_runner.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_biquad_filter_type.h"
 #include "third_party/blink/renderer/modules/webaudio/audio_handler.h"
+#include "third_party/blink/renderer/platform/audio/audio_array.h"
 
 namespace blink {
 
 class AudioNode;
 class AudioParamHandler;
-class BiquadProcessor;
+class Biquad;
 
 class BiquadFilterHandler final : public AudioHandler {
  public:
@@ -30,7 +31,7 @@ class BiquadFilterHandler final : public AudioHandler {
   BiquadFilterHandler(const BiquadFilterHandler&) = delete;
   BiquadFilterHandler& operator=(const BiquadFilterHandler&) = delete;
 
-  ~BiquadFilterHandler() override = default;
+  ~BiquadFilterHandler() override;
 
   // AudioHandler
   void Process(uint32_t frames_to_process) override;
@@ -43,9 +44,6 @@ class BiquadFilterHandler final : public AudioHandler {
   // have changed.
   void CheckNumberOfChannelsForInput(AudioNodeInput*) override;
 
-  // Returns the number of channels for both the input and the output.
-  unsigned NumberOfChannels();
-
   // Get the magnitude and phase response of the filter at the given
   // set of frequencies (in Hz). The phase response is in radians.
   void GetFrequencyResponse(base::span<const float> frequency_hz,
@@ -56,8 +54,7 @@ class BiquadFilterHandler final : public AudioHandler {
 
   // Expose HasConstantValues for unit testing
   MODULES_EXPORT static bool HasConstantValuesForTesting(
-      base::span<float> values,
-      int spanification_suspected_redundant_frames_to_process);
+      base::span<float> values);
 
  private:
   BiquadFilterHandler(AudioNode&,
@@ -69,25 +66,51 @@ class BiquadFilterHandler final : public AudioHandler {
 
   void NotifyBadState() const;
 
-  // Returns true if the first output sample of any channel is non-finite.  This
-  // is a proxy for determining if the filter state is bad.  For
-  // BiquadFilterNodes and IIRFilterNodes, if the internal state has non-finite
-  // values, the non-finite value propagates pretty much forever in the output.
-  // This is because infinities and NaNs are sticky.
-  bool HasNonFiniteOutput() const;
-
   bool RequiresTailProcessing() const override;
   double TailTime() const override;
   double LatencyTime() const override;
 
-  // Only notify the user of the once.  No need to spam the console with
-  // messages, because once we're in a bad state, it usually stays that way
-  // forever.  Only accessed from audio thread.
+  // Only notify the user once.  No need to spam the console with messages,
+  // because once we're in a bad state, it usually stays that way forever.  Only
+  // accessed from audio thread.
   bool did_warn_bad_filter_state_ = false;
 
   scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
 
-  std::unique_ptr<BiquadProcessor> processor_;
+  V8BiquadFilterType::Enum type_ = V8BiquadFilterType::Enum::kLowpass;
+
+  scoped_refptr<AudioParamHandler> parameter_cutoff_frequency_;
+  scoped_refptr<AudioParamHandler> parameter_q_;
+  scoped_refptr<AudioParamHandler> parameter_gain_;
+  scoped_refptr<AudioParamHandler> parameter_detune_;
+
+  bool has_just_reset_ GUARDED_BY(process_lock_) = true;
+
+  // Cache previous parameter values to allow us to skip recomputing filter
+  // coefficients when parameters are not changing
+  float previous_parameter_cutoff_frequency_ =
+      std::numeric_limits<float>::quiet_NaN();
+  float previous_parameter_q_ = std::numeric_limits<float>::quiet_NaN();
+  float previous_parameter_gain_ = std::numeric_limits<float>::quiet_NaN();
+  float previous_parameter_detune_ = std::numeric_limits<float>::quiet_NaN();
+
+  const double sample_rate_;
+  const double nyquist_;
+  const unsigned render_quantum_frames_;
+
+  double tail_time_ GUARDED_BY(process_lock_) =
+      std::numeric_limits<double>::infinity();
+
+  Vector<std::unique_ptr<Biquad>> biquads_ GUARDED_BY(process_lock_);
+
+  // Temporary storage for parameter calculations.
+  AudioFloatArray cutoff_frequency_sample_accurate_values_;
+  AudioFloatArray q_sample_accurate_values_;
+  AudioFloatArray gain_sample_accurate_values_;
+  AudioFloatArray detune_sample_accurate_values_;
+
+  // Synchronize process() with getting and setting the filter coefficients.
+  mutable base::Lock process_lock_;
 
   base::WeakPtrFactory<BiquadFilterHandler> weak_ptr_factory_{this};
 };

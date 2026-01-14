@@ -21,8 +21,8 @@
 #include "chrome/grit/generated_resources.h"
 #include "components/google/core/common/google_util.h"
 #include "components/live_caption/caption_util.h"
-#include "components/plus_addresses/features.h"
-#include "components/plus_addresses/grit/plus_addresses_strings.h"
+#include "components/plus_addresses/core/browser/grit/plus_addresses_strings.h"
+#include "components/plus_addresses/core/common/features.h"
 #include "components/soda/constants.h"
 #include "components/strings/grit/components_strings.h"
 #include "components/sync/base/features.h"
@@ -132,12 +132,6 @@ void AddCaptionSubpageStrings(content::WebUIDataSource* html_source) {
   AddLiveCaptionSectionStrings(html_source);
 }
 
-// Live Caption subtitle depends on whether multi-language is supported.
-int GetLiveCaptionSubtitle(const bool multi_language) {
-  return multi_language
-             ? IDS_SETTINGS_CAPTIONS_ENABLE_LIVE_CAPTION_SUBTITLE
-             : IDS_SETTINGS_CAPTIONS_ENABLE_LIVE_CAPTION_SUBTITLE_ENGLISH_ONLY;
-}
 
 void AddLiveCaptionSectionStrings(content::WebUIDataSource* html_source) {
   html_source->AddLocalizedString(
@@ -153,20 +147,14 @@ void AddLiveCaptionSectionStrings(content::WebUIDataSource* html_source) {
       "captionsMaskOffensiveWordsTitle",
       IDS_SETTINGS_CAPTIONS_MASK_OFFENSIVE_WORDS_TITLE);
 
-  const bool liveCaptionMultiLanguageEnabled =
-      base::FeatureList::IsEnabled(media::kLiveCaptionMultiLanguage);
-
   const bool liveTranslateEnabled = media::IsLiveTranslateEnabled();
 
-  const int live_caption_subtitle_message =
-      GetLiveCaptionSubtitle(liveCaptionMultiLanguageEnabled);
-
-  html_source->AddLocalizedString("captionsEnableLiveCaptionSubtitle",
-                                  live_caption_subtitle_message);
+  html_source->AddLocalizedString(
+      "captionsEnableLiveCaptionSubtitle",
+      IDS_SETTINGS_CAPTIONS_ENABLE_LIVE_CAPTION_SUBTITLE);
   html_source->AddBoolean("enableLiveCaption",
                           captions::IsLiveCaptionFeatureSupported());
-  html_source->AddBoolean("enableLiveCaptionMultiLanguage",
-                          liveCaptionMultiLanguageEnabled);
+  html_source->AddBoolean("enableLiveCaptionMultiLanguage", true);
 
   html_source->AddBoolean("enableLiveTranslate", liveTranslateEnabled);
 }
@@ -211,7 +199,10 @@ void AddSharedSyncPageStrings(content::WebUIDataSource* html_source) {
 
   std::string sync_dashboard_url =
       google_util::AppendGoogleLocaleParam(
-          GURL(chrome::kSyncGoogleDashboardURL),
+          GURL(base::FeatureList::IsEnabled(
+                   syncer::kSyncEnableNewSyncDashboardUrl)
+                   ? chrome::kNewSyncGoogleDashboardURL
+                   : chrome::kLegacySyncGoogleDashboardURL),
           g_browser_process->GetApplicationLocale())
           .spec();
 

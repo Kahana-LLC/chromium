@@ -8,11 +8,11 @@ import android.app.Activity;
 import android.content.Intent;
 
 import org.chromium.base.supplier.OneshotSupplier;
-import org.chromium.base.supplier.Supplier;
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
+import org.chromium.chrome.browser.IntentHandler;
 import org.chromium.chrome.browser.compositor.CompositorViewHolder;
-import org.chromium.chrome.browser.multiwindow.MultiInstanceManager;
+import org.chromium.chrome.browser.multiwindow.MultiInstanceManager.NewWindowAppSource;
 import org.chromium.chrome.browser.multiwindow.MultiWindowUtils;
 import org.chromium.chrome.browser.profiles.ProfileProvider;
 import org.chromium.chrome.browser.tab.Tab;
@@ -23,6 +23,8 @@ import org.chromium.components.url_formatter.UrlFormatter;
 import org.chromium.content_public.browser.LoadUrlParams;
 import org.chromium.ui.base.WindowAndroid;
 import org.chromium.url.GURL;
+
+import java.util.function.Supplier;
 
 /** This class creates various kinds of new tabs in another window. */
 @NullMarked
@@ -35,8 +37,7 @@ public class RedirectTabCreator extends ChromeTabCreator {
             boolean incognito,
             AsyncTabParamsManager asyncTabParamsManager,
             Supplier<TabModelSelector> tabModelSelectorSupplier,
-            Supplier<CompositorViewHolder> compositorViewHolderSupplier,
-            MultiInstanceManager multiInstanceManager) {
+            Supplier<CompositorViewHolder> compositorViewHolderSupplier) {
         super(
                 activity,
                 nativeWindow,
@@ -45,8 +46,7 @@ public class RedirectTabCreator extends ChromeTabCreator {
                 incognito,
                 asyncTabParamsManager,
                 tabModelSelectorSupplier,
-                compositorViewHolderSupplier,
-                multiInstanceManager);
+                compositorViewHolderSupplier);
     }
 
     @SuppressWarnings("WrongConstant")
@@ -59,6 +59,9 @@ public class RedirectTabCreator extends ChromeTabCreator {
             int position,
             @Nullable Intent intent,
             boolean copyHistory) {
+        // Clean up AsyncTabParams with the tab to reparent if any.
+        mAsyncTabParamsManager.remove(IntentHandler.getTabId(intent));
+
         // Sanitize the url.
         GURL url = UrlFormatter.fixupUrl(loadUrlParams.getUrl());
         loadUrlParams.setUrl(url.getValidSpecOrEmpty());
@@ -69,7 +72,12 @@ public class RedirectTabCreator extends ChromeTabCreator {
         Activity otherActivity =
                 MultiWindowUtils.getForegroundWindowActivityWithProfileType(mActivity, mIncognito);
         chromeAsyncTabLauncher.launchTabInOtherWindow(
-                loadUrlParams, mActivity, Tab.INVALID_TAB_ID, otherActivity);
+                loadUrlParams,
+                mActivity,
+                Tab.INVALID_TAB_ID,
+                otherActivity,
+                NewWindowAppSource.OTHER,
+                /* preferNew= */ false);
         return null;
     }
 }

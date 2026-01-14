@@ -2,22 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
-#pragma allow_unsafe_libc_calls
-#endif
-
 #include "base/system/sys_info.h"
 
 #include <stddef.h>
 #include <stdint.h>
 
-#include <algorithm>
 #include <limits>
 #include <sstream>
 #include <type_traits>
 
-#include "base/byte_count.h"
+#include "base/byte_size.h"
 #include "base/check.h"
 #include "base/files/file_util.h"
 #include "base/notreached.h"
@@ -31,53 +25,55 @@
 
 namespace {
 
-uint64_t AmountOfMemory(int pages_name) {
+base::ByteSize AmountOfMemory(int pages_name) {
   long pages = sysconf(pages_name);
   long page_size = sysconf(_SC_PAGESIZE);
   if (pages < 0 || page_size < 0) {
-    return 0;
+    return base::ByteSize(0);
   }
-  return static_cast<uint64_t>(pages) * static_cast<uint64_t>(page_size);
+  return base::ByteSize(base::checked_cast<unsigned long>(page_size)) * pages;
 }
 
-uint64_t AmountOfPhysicalMemory() {
+base::ByteSize AmountOfPhysicalMemory() {
   return AmountOfMemory(_SC_PHYS_PAGES);
 }
 using LazyPhysicalMemory =
-    base::internal::LazySysInfoValue<uint64_t, AmountOfPhysicalMemory>;
+    base::internal::LazySysInfoValue<base::ByteSize, AmountOfPhysicalMemory>;
 
 }  // namespace
 
 namespace base {
 
 // static
-uint64_t SysInfo::AmountOfPhysicalMemoryImpl() {
+ByteSize SysInfo::AmountOfTotalPhysicalMemoryImpl() {
   static_assert(std::is_trivially_destructible<LazyPhysicalMemory>::value);
   static LazyPhysicalMemory physical_memory;
   return physical_memory.value();
 }
 
 // static
-uint64_t SysInfo::AmountOfAvailablePhysicalMemoryImpl() {
+ByteSize SysInfo::AmountOfAvailablePhysicalMemoryImpl() {
   SystemMemoryInfo info;
   if (!GetSystemMemoryInfo(&info)) {
-    return 0;
+    return ByteSize(0);
   }
   return AmountOfAvailablePhysicalMemory(info);
 }
 
 // static
-uint64_t SysInfo::AmountOfAvailablePhysicalMemory(
+ByteSize SysInfo::AmountOfAvailablePhysicalMemory(
     const SystemMemoryInfo& info) {
   // See details here:
   // https://git.kernel.org/cgit/linux/kernel/git/torvalds/linux.git/commit/?id=34e431b0ae398fc54ea69ff85ec700722c9da773
   // The fallback logic (when there is no MemAvailable) would be more precise
   // if we had info about zones watermarks (/proc/zoneinfo).
-  ByteCount res =
-      !info.available.is_zero()
-          ? std::max(info.available - info.active_file, ByteCount(0))
-          : info.free + info.reclaimable + info.inactive_file;
-  return res.InBytesUnsigned();
+  if (info.available.is_zero()) {
+    return info.free + info.reclaimable + info.inactive_file;
+  } else if (info.available > info.active_file) {
+    return ByteSize::FromByteSizeDelta(info.available - info.active_file);
+  } else {
+    return ByteSize(0);
+  }
 }
 
 // static

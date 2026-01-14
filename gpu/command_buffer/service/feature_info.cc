@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "gpu/command_buffer/service/feature_info.h"
 
 #include <stddef.h>
@@ -18,7 +13,6 @@
 #include <vector>
 
 #include "base/command_line.h"
-#include "base/containers/contains.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/string_number_conversions.h"
@@ -38,8 +32,7 @@
 #include "ui/gl/gl_fence_egl.h"
 #endif
 
-namespace gpu {
-namespace gles2 {
+namespace gpu::gles2 {
 
 namespace {
 
@@ -176,6 +169,12 @@ bool IsWebGLDrawBuffersSupported(bool webglCompatibilityContext,
   return result;
 }
 
+size_t GetNumAttachments(GLenum attachment) {
+  GLint max_color_attachments = 0;
+  glGetIntegerv(attachment, &max_color_attachments);
+  return base::checked_cast<size_t>(max_color_attachments);
+}
+
 }  // anonymous namespace.
 
 FeatureInfo::FeatureFlags::FeatureFlags() = default;
@@ -195,17 +194,15 @@ FeatureInfo::FeatureInfo(
                            : nullptr);
 
 #if BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_FUCHSIA)
-  feature_flags_.chromium_image_ycbcr_420v = base::Contains(
-      gpu_feature_info.supported_buffer_formats_for_allocation_and_texturing,
-      gfx::BufferFormat::YUV_420_BIPLANAR);
+  feature_flags_.chromium_image_ycbcr_420v =
+      gpu_feature_info.supports_nv12_for_allocation_and_texturing;
 #elif BUILDFLAG(IS_APPLE)
   feature_flags_.chromium_image_ycbcr_420v = true;
 #endif
 
 #if BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_FUCHSIA)
-  feature_flags_.chromium_image_ycbcr_p010 = base::Contains(
-      gpu_feature_info.supported_buffer_formats_for_allocation_and_texturing,
-      gfx::BufferFormat::P010);
+  feature_flags_.chromium_image_ycbcr_p010 =
+      gpu_feature_info.supports_p010_for_allocation_and_texturing;
 #elif BUILDFLAG(IS_APPLE)
   feature_flags_.chromium_image_ycbcr_p010 = true;
 #endif
@@ -237,14 +234,12 @@ void FeatureInfo::InitializeBasicState(const base::CommandLine* command_line) {
 
 void FeatureInfo::Initialize(ContextType context_type,
                              bool is_passthrough_cmd_decoder,
-                             const DisallowedFeatures& disallowed_features,
-                             bool force_reinitialize) {
+                             const DisallowedFeatures& disallowed_features) {
   if (initialized_) {
     DCHECK_EQ(context_type, context_type_);
     DCHECK_EQ(is_passthrough_cmd_decoder, is_passthrough_cmd_decoder_);
     DCHECK(disallowed_features == disallowed_features_);
-    if (!force_reinitialize)
-      return;
+    return;
   }
 
   disallowed_features_ = disallowed_features;
@@ -252,6 +247,12 @@ void FeatureInfo::Initialize(ContextType context_type,
   is_passthrough_cmd_decoder_ = is_passthrough_cmd_decoder;
   InitializeFeatures();
   initialized_ = true;
+}
+
+void FeatureInfo::ForceReinitialize() {
+  CHECK(initialized_);
+  CHECK(is_passthrough_cmd_decoder_);
+  InitializeFeatures();
 }
 
 void FeatureInfo::InitializeForTesting(
@@ -924,7 +925,6 @@ void FeatureInfo::InitializeFeatures() {
         break;
       case CONTEXT_TYPE_WEBGL1:
       case CONTEXT_TYPE_WEBGL2:
-      case CONTEXT_TYPE_WEBGPU:
         break;
     }
   }
@@ -1998,9 +1998,6 @@ void FeatureInfo::EnableES3Validators() {
   DCHECK(IsES3Capable());
   validators_.UpdateValuesES3();
 
-  GLint max_color_attachments = 0;
-  glGetIntegerv(GL_MAX_COLOR_ATTACHMENTS, &max_color_attachments);
-  const int kTotalColorAttachmentEnums = 16;
   const GLenum kColorAttachments[] = {
     GL_COLOR_ATTACHMENT0,
     GL_COLOR_ATTACHMENT1,
@@ -2019,21 +2016,16 @@ void FeatureInfo::EnableES3Validators() {
     GL_COLOR_ATTACHMENT14,
     GL_COLOR_ATTACHMENT15,
   };
-  if (max_color_attachments < kTotalColorAttachmentEnums) {
-    validators_.attachment.RemoveValues(
-        kColorAttachments + max_color_attachments,
-        kTotalColorAttachmentEnums - max_color_attachments);
-    validators_.attachment_query.RemoveValues(
-        kColorAttachments + max_color_attachments,
-        kTotalColorAttachmentEnums - max_color_attachments);
-    validators_.read_buffer.RemoveValues(
-        kColorAttachments + max_color_attachments,
-        kTotalColorAttachmentEnums - max_color_attachments);
+  const size_t num_color_attachments =
+      GetNumAttachments(GL_MAX_COLOR_ATTACHMENTS);
+  if (num_color_attachments < std::size(kColorAttachments)) {
+    auto color_attachments_subspan =
+        base::span(kColorAttachments).subspan(num_color_attachments);
+    validators_.attachment.RemoveValues(color_attachments_subspan);
+    validators_.attachment_query.RemoveValues(color_attachments_subspan);
+    validators_.read_buffer.RemoveValues(color_attachments_subspan);
   }
 
-  GLint max_draw_buffers = 0;
-  glGetIntegerv(GL_MAX_DRAW_BUFFERS, &max_draw_buffers);
-  const int kTotalDrawBufferEnums = 16;
   const GLenum kDrawBuffers[] = {
     GL_DRAW_BUFFER0,
     GL_DRAW_BUFFER1,
@@ -2052,10 +2044,10 @@ void FeatureInfo::EnableES3Validators() {
     GL_DRAW_BUFFER14,
     GL_DRAW_BUFFER15,
   };
-  if (max_draw_buffers < kTotalDrawBufferEnums) {
+  const size_t num_draw_buffers = GetNumAttachments(GL_MAX_DRAW_BUFFERS);
+  if (num_draw_buffers < std::size(kDrawBuffers)) {
     validators_.g_l_state.RemoveValues(
-        kDrawBuffers + max_draw_buffers,
-        kTotalDrawBufferEnums - max_draw_buffers);
+        base::span(kDrawBuffers).subspan(num_draw_buffers));
   }
 
   if (feature_flags_.ext_texture_format_bgra8888) {
@@ -2100,5 +2092,4 @@ void FeatureInfo::AddExtensionString(std::string_view extension) {
 
 FeatureInfo::~FeatureInfo() = default;
 
-}  // namespace gles2
-}  // namespace gpu
+}  // namespace gpu::gles2

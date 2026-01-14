@@ -33,45 +33,15 @@ using AccessTokenInfo = DeviceAccountsProvider::AccessTokenInfo;
 using AccessTokenResult = DeviceAccountsProvider::AccessTokenResult;
 using TokenResponseBuilder = OAuth2AccessTokenConsumer::TokenResponse::Builder;
 
-// Match the way Chromium handles authentication errors in
-// google_apis/gaia/oauth2_access_token_fetcher.cc:
-GoogleServiceAuthError GetGoogleServiceAuthErrorFromAuthenticationErrorCategory(
-    AuthenticationErrorCategory error) {
-  switch (error) {
-    case kAuthenticationErrorCategoryUnknownErrors:
-      // Treat all unknown error as unexpected service response errors.
-      // This may be too general and may require a finer grain filtering.
-      return GoogleServiceAuthError(
-          GoogleServiceAuthError::UNEXPECTED_SERVICE_RESPONSE);
-    case kAuthenticationErrorCategoryAuthorizationErrors:
-      return GoogleServiceAuthError::FromInvalidGaiaCredentialsReason(
-          GoogleServiceAuthError::InvalidGaiaCredentialsReason::
-              CREDENTIALS_REJECTED_BY_SERVER);
-    case kAuthenticationErrorCategoryAuthorizationForbiddenErrors:
-      // HTTP_FORBIDDEN (403) is treated as temporary error, because it may be
-      // '403 Rate Limit Exceeded.' (for more details, see
-      // google_apis/gaia/oauth2_access_token_fetcher.cc).
-      return GoogleServiceAuthError(
-          GoogleServiceAuthError::SERVICE_UNAVAILABLE);
-    case kAuthenticationErrorCategoryNetworkServerErrors:
-      // Just set the connection error state to FAILED.
-      return GoogleServiceAuthError::FromConnectionError(net::ERR_FAILED);
-    case kAuthenticationErrorCategoryUserCancellationErrors:
-      return GoogleServiceAuthError(GoogleServiceAuthError::REQUEST_CANCELED);
-    case kAuthenticationErrorCategoryUnknownIdentityErrors:
-      return GoogleServiceAuthError(GoogleServiceAuthError::USER_NOT_SIGNED_UP);
-  }
-  NOTREACHED() << "unsupported error: " << static_cast<int>(error);
-}
-
 // Converts a DeviceAccountsProvider::AccountInfo to an AccountInfo.
 AccountInfo AccountInfoFromDeviceAccount(
     const DeviceAccountsProvider::AccountInfo& account) {
-  AccountInfo account_info;
-  account_info.email = account.GetEmail();
-  account_info.gaia = account.GetGaiaId();
-  account_info.hosted_domain = account.GetHostedDomain();
-  return account_info;
+  AccountInfo::Builder builder(account.GetGaiaId(), account.GetEmail());
+  if (std::string hosted_domain = account.GetHostedDomain();
+      !hosted_domain.empty()) {
+    builder.SetHostedDomain(hosted_domain);
+  }
+  return builder.Build();
 }
 
 GoogleServiceAuthError GoogleServiceAuthErrorFromDeviceAccount(
@@ -151,9 +121,7 @@ void SSOAccessTokenFetcher::OnAccessTokenResponse(AccessTokenResult result) {
                               .WithExpirationTime(info.expiration_time)
                               .build());
   } else {
-    FireOnGetTokenFailure(
-        GetGoogleServiceAuthErrorFromAuthenticationErrorCategory(
-            result.error()));
+    FireOnGetTokenFailure(result.error());
   }
 }
 
@@ -274,12 +242,8 @@ void ProfileOAuth2TokenServiceIOSDelegate::ReloadCredentials(
 
   // Load all new_accounts.
   for (const auto& account_to_add : accounts_to_add) {
-    GoogleServiceAuthError error = GoogleServiceAuthError::AuthErrorNone();
-    if (base::FeatureList::IsEnabled(switches::kEnableIdentityInAuthError)) {
-      error = GoogleServiceAuthErrorFromDeviceAccount(
-          new_accounts.at(account_to_add));
-    }
-    AddOrUpdateAccount(account_to_add, error);
+    AddOrUpdateAccount(account_to_add, GoogleServiceAuthErrorFromDeviceAccount(
+                                           new_accounts.at(account_to_add)));
   }
 }
 
@@ -315,14 +279,12 @@ void ProfileOAuth2TokenServiceIOSDelegate::ReloadAccountFromSystem(
     const CoreAccountId& account_id) {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   GoogleServiceAuthError error = GoogleServiceAuthError::AuthErrorNone();
-  if (base::FeatureList::IsEnabled(switches::kEnableIdentityInAuthError)) {
-    for (const auto& account : provider_->GetAccountsForProfile()) {
-      if (account_id != CoreAccountId::FromGaiaId(account.GetGaiaId())) {
-        continue;
-      }
-      error = GoogleServiceAuthErrorFromDeviceAccount(account);
-      break;
+  for (const auto& account : provider_->GetAccountsForProfile()) {
+    if (account_id != CoreAccountId::FromGaiaId(account.GetGaiaId())) {
+      continue;
     }
+    error = GoogleServiceAuthErrorFromDeviceAccount(account);
+    break;
   }
 
   AddOrUpdateAccount(account_id, error);
@@ -360,10 +322,8 @@ void ProfileOAuth2TokenServiceIOSDelegate::GetRefreshTokenFromDevice(
                   signin::AccessTokenInfo(info.token, info.expiration_time,
                                           std::string()));
             } else {
-              std::move(callback).Run(
-                  GetGoogleServiceAuthErrorFromAuthenticationErrorCategory(
-                      result.error()),
-                  signin::AccessTokenInfo());
+              std::move(callback).Run(result.error(),
+                                      signin::AccessTokenInfo());
             }
           },
           std::move(callback)));
@@ -384,14 +344,15 @@ ProfileOAuth2TokenServiceIOSDelegate::GetAccountsOnDevice() const {
   // separate AccountTrackerService instance.
   std::vector<AccountInfo> account_infos;
   for (const auto& account : provider_->GetAccountsOnDevice()) {
-    AccountInfo account_info;
-    account_info.account_id = CoreAccountId::FromGaiaId(account.GetGaiaId());
-    account_info.gaia = account.GetGaiaId();
-    account_info.email = account.GetEmail();
-    account_info.hosted_domain = account.GetHostedDomain();
+    AccountInfo::Builder builder(account.GetGaiaId(), account.GetEmail());
+    builder.SetAccountId(CoreAccountId::FromGaiaId(account.GetGaiaId()));
+    if (std::string hosted_domain = account.GetHostedDomain();
+        !hosted_domain.empty()) {
+      builder.SetHostedDomain(hosted_domain);
+    }
     // TODO(crbug.com/368409110): Find a way to determine the full AccountInfo
     // for these accounts, not only the "core" fields.
-    account_infos.push_back(std::move(account_info));
+    account_infos.push_back(builder.Build());
   }
   return account_infos;
 }

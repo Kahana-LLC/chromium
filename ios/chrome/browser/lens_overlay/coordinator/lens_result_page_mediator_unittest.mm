@@ -11,8 +11,8 @@
 #import "ios/chrome/browser/lens_overlay/coordinator/lens_result_page_mediator_delegate.h"
 #import "ios/chrome/browser/lens_overlay/ui/lens_result_page_consumer.h"
 #import "ios/chrome/browser/shared/model/profile/test/test_profile_ios.h"
-#import "ios/chrome/browser/shared/public/commands/application_commands.h"
 #import "ios/chrome/browser/shared/public/commands/command_dispatcher.h"
+#import "ios/chrome/browser/shared/public/commands/scene_commands.h"
 #import "ios/chrome/browser/shared/public/features/features.h"
 #import "ios/chrome/browser/signin/model/authentication_service_factory.h"
 #import "ios/chrome/browser/signin/model/fake_authentication_service_delegate.h"
@@ -52,8 +52,17 @@
   // NO-OP
 }
 
-- (void)lensResultPageOpenURLInNewTabRequsted:(GURL)URL {
+- (void)lensResultPageOpenURLInNewTabRequested:(GURL)URL {
   _openInNewTabRequested = YES;
+}
+
+- (void)lensResultPageWebStateShown {
+  // NO-OP
+}
+
+- (void)lensResultPageWebViewDidSwipeWithDirection:
+    (UISwipeGestureRecognizerDirection)direction {
+  // NO-OP
 }
 
 @end
@@ -86,11 +95,11 @@ class LensResultPageMediatorTest : public PlatformTest {
     mock_consumer_ =
         [OCMockObject niceMockForProtocol:@protocol(LensResultPageConsumer)];
     mock_application_handler_ =
-        [OCMockObject mockForProtocol:@protocol(ApplicationCommands)];
+        [OCMockObject mockForProtocol:@protocol(SceneCommands)];
     fake_delegate_ = [[FakeLensResultPageMediatorDelegate alloc] init];
     mediator_.delegate = fake_delegate_;
     mediator_.consumer = mock_consumer_;
-    mediator_.applicationHandler = mock_application_handler_;
+    mediator_.sceneHandler = mock_application_handler_;
   }
 
   ~LensResultPageMediatorTest() override {
@@ -158,25 +167,27 @@ class LensResultPageMediatorTest : public PlatformTest {
  protected:
   web::WebTaskEnvironment task_environment_;
   IOSChromeScopedTestingLocalState scoped_testing_local_state_;
-  variations::ScopedVariationsIdsProvider scoped_variations_ids_provider_{
+  variations::test::ScopedVariationsIdsProvider scoped_variations_ids_provider_{
       variations::VariationsIdsProvider::Mode::kUseSignedInState};
 
   LensResultPageMediator* mediator_;
   std::unique_ptr<TestProfileIOS> profile_;
   web::FakeWebStateDelegate browser_web_state_delegate_;
   OCMockObject<LensResultPageConsumer>* mock_consumer_;
-  OCMockObject<ApplicationCommands>* mock_application_handler_;
+  OCMockObject<SceneCommands>* mock_application_handler_;
   FakeLensResultPageMediatorDelegate* fake_delegate_;
 
   // Call `AttachFakeWebState()` to use `fake_web_state_`.
-  raw_ptr<web::FakeWebState> fake_web_state_;
+  raw_ptr<web::FakeWebState, DanglingUntriaged> fake_web_state_;
 };
 
 // Tests that the mediator starts a navigation when loadResultsURL is called.
 TEST_F(LensResultPageMediatorTest, ShouldStartNavigationWhenLoadingResultsURL) {
-  ASSERT_EQ(variations::VariationsIdsProvider::ForceIdsResult::SUCCESS,
-            variations::VariationsIdsProvider::GetInstance()->ForceVariationIds(
-                /*variation_ids=*/{"100"}, /*command_line_variation_ids=*/""));
+  ASSERT_EQ(
+      variations::VariationsIdsProvider::ForceIdsResult::SUCCESS,
+      variations::VariationsIdsProvider::GetInstance()
+          ->ForceVariationIdsForTesting(
+              /*variation_ids=*/{"100"}, /*command_line_variation_ids=*/""));
   AttachFakeWebState();
   GURL result_url = GURL("https://www.google.com");
   NSDictionary<NSString*, NSString*>* http_headers =

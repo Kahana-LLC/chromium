@@ -8,7 +8,6 @@ import static org.chromium.support_lib_glue.SupportLibWebViewChromiumFactory.rec
 
 import android.webkit.WebSettings;
 
-import org.chromium.android_webview.AwBackForwardCacheSettings;
 import org.chromium.android_webview.AwDarkMode;
 import org.chromium.android_webview.AwSettings;
 import org.chromium.android_webview.common.MediaIntegrityApiStatus;
@@ -24,14 +23,13 @@ import org.chromium.support_lib_glue.SupportLibWebViewChromiumFactory.ApiCall;
 import java.lang.reflect.InvocationHandler;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.Set;
 
 /** Adapter between WebSettingsBoundaryInterface and AwSettings. */
 class SupportLibWebSettingsAdapter implements WebSettingsBoundaryInterface {
     private static final String TAG = "SupportWebSettings";
     private final AwSettings mAwSettings;
 
-    public SupportLibWebSettingsAdapter(AwSettings awSettings) {
+    /*package*/ SupportLibWebSettingsAdapter(AwSettings awSettings) {
         mAwSettings = awSettings;
     }
 
@@ -197,7 +195,7 @@ class SupportLibWebSettingsAdapter implements WebSettingsBoundaryInterface {
                 Log.w(
                         TAG,
                         "setAlgorithmicDarkeningAllowed() is a no-op in an app with"
-                                + "targetSdkVersion<T");
+                                + " targetSdkVersion<T");
                 return;
             }
             mAwSettings.setAlgorithmicDarkeningAllowed(allow);
@@ -258,26 +256,6 @@ class SupportLibWebSettingsAdapter implements WebSettingsBoundaryInterface {
                 default:
                     return WebauthnSupport.NONE;
             }
-        }
-    }
-
-    @Override
-    public void setRequestedWithHeaderOriginAllowList(Set<String> allowedOriginRules) {
-        try (TraceEvent event =
-                TraceEvent.scoped(
-                        "WebView.APICall.AndroidX.WEB_SETTINGS_SET_REQUESTED_WITH_HEADER_ORIGIN_ALLOWLIST")) {
-            recordApiCall(ApiCall.WEB_SETTINGS_SET_REQUESTED_WITH_HEADER_ORIGIN_ALLOWLIST);
-            mAwSettings.setRequestedWithHeaderOriginAllowList(allowedOriginRules);
-        }
-    }
-
-    @Override
-    public Set<String> getRequestedWithHeaderOriginAllowList() {
-        try (TraceEvent event =
-                TraceEvent.scoped(
-                        "WebView.APICall.AndroidX.WEB_SETTINGS_GET_REQUESTED_WITH_HEADER_ORIGIN_ALLOWLIST")) {
-            recordApiCall(ApiCall.WEB_SETTINGS_GET_REQUESTED_WITH_HEADER_ORIGIN_ALLOWLIST);
-            return mAwSettings.getRequestedWithHeaderOriginAllowList();
         }
     }
 
@@ -503,10 +481,9 @@ class SupportLibWebSettingsAdapter implements WebSettingsBoundaryInterface {
                     BoundaryInterfaceReflectionUtil.castToSuppLibClass(
                             WebViewBackForwardCacheSettingsBoundaryInterface.class,
                             backForwardCacheSettings);
-            mAwSettings.setBackForwardCacheSettings(
-                    new AwBackForwardCacheSettings(
-                            boundaryInterface.getTimeoutInSeconds(),
-                            boundaryInterface.getMaxPagesInCache()));
+            mAwSettings.setBackForwardCacheMaxPagesInCache(boundaryInterface.getMaxPagesInCache());
+            mAwSettings.setBackForwardCacheTimeoutInSeconds(
+                    boundaryInterface.getTimeoutInSeconds());
         }
     }
 
@@ -517,7 +494,8 @@ class SupportLibWebSettingsAdapter implements WebSettingsBoundaryInterface {
             recordApiCall(ApiCall.GET_BACK_FORWARD_CACHE_SETTINGS);
             return BoundaryInterfaceReflectionUtil.createInvocationHandlerFor(
                     new SupportLibWebViewBackForwardCacheSettingsAdapter(
-                            mAwSettings.getBackForwardCacheSettings()));
+                            mAwSettings.getBackForwardCacheSettingsMaxPagesInCache(),
+                            mAwSettings.getBackForwardCacheSettingsTimeout()));
         }
     }
 
@@ -594,6 +572,26 @@ class SupportLibWebSettingsAdapter implements WebSettingsBoundaryInterface {
             }
 
             mAwSettings.setHyperlinkContextMenuItems(awMenuItems);
+        }
+    }
+
+    @Override
+    public void setBackForwardCacheSettingsTimeout(int timeout) {
+        try (TraceEvent ignored =
+                TraceEvent.scoped(
+                        "WebView.APICall.AndroidX.BACK_FORWARD_CACHE_SETTINGS_SET_TIMEOUT_IN_SECONDS")) {
+            recordApiCall(ApiCall.BACK_FORWARD_CACHE_SETTINGS_SET_TIMEOUT_IN_SECONDS);
+            mAwSettings.setBackForwardCacheTimeoutInSeconds(timeout);
+        }
+    }
+
+    @Override
+    public void setBackForwardCacheSettingsMaxPagesInCache(int pagesInCache) {
+        try (TraceEvent ignored =
+                TraceEvent.scoped(
+                        "WebView.APICall.AndroidX.BACK_FORWARD_CACHE_SETTINGS_SET_MAX_PAGES_IN_CACHE")) {
+            recordApiCall(ApiCall.BACK_FORWARD_CACHE_SETTINGS_SET_MAX_PAGES_IN_CACHE);
+            mAwSettings.setBackForwardCacheMaxPagesInCache(pagesInCache);
         }
     }
 }

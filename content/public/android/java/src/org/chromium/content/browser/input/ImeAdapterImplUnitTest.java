@@ -115,7 +115,8 @@ public class ImeAdapterImplUnitTest {
                 /* compositionEnd= */ 0,
                 /* replyToRequest= */ false,
                 /* lastVkVisibilityRequest= */ 0,
-                /* vkPolicy= */ 0);
+                /* vkPolicy= */ 0,
+                /* imeTextSpans= */ null);
     }
 
     @Test
@@ -221,5 +222,25 @@ public class ImeAdapterImplUnitTest {
                         eq(false),
                         eq(event4.getUnicodeChar()));
         verify(mImeAdapterImplJni, never()).commitText(anyLong(), any(), any(), any(), anyInt());
+    }
+
+    @Test
+    public void testCommitContent() {
+        ImeAdapterImpl adapter = new ImeAdapterImpl(mWebContentsImpl);
+        adapter.onConnectedToRenderProcess();
+
+        adapter.commitContent(/* dataUrl= */ "atestingdataurl");
+
+        verify(mImeAdapterImplJni).insertMediaFromURL(anyLong(), eq("atestingdataurl"));
+    }
+
+    @Test
+    public void testPerformSpellCheck() {
+        ImeAdapterImpl adapter = new ImeAdapterImpl(mWebContentsImpl);
+        adapter.onConnectedToRenderProcess();
+
+        adapter.performSpellCheck();
+
+        verify(mImeAdapterImplJni).performSpellCheck(anyLong());
     }
 }

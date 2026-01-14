@@ -91,6 +91,8 @@ class CORE_EXPORT ShadowRoot final : public DocumentFragment,
   bool clonable() const { return clonable_; }
   void setClonable(bool clonable) { clonable_ = clonable; }
 
+  void ProcessAdoptedStylesheetAttribute(AtomicString value);
+
   InsertionNotificationRequest InsertedInto(ContainerNode&) override;
   void RemovedFrom(ContainerNode&) override;
 
@@ -135,6 +137,7 @@ class CORE_EXPORT ShadowRoot final : public DocumentFragment,
   Node* Clone(Document& factory,
               NodeCloningData& data,
               ContainerNode* append_to,
+              CustomElementRegistry* fallback_registry,
               ExceptionState& append_exception_state) const override;
 
   void SetDelegatesFocus(bool flag) { delegates_focus_ = flag; }
@@ -187,6 +190,9 @@ class CORE_EXPORT ShadowRoot final : public DocumentFragment,
  private:
   friend class ReferenceTargetIdObserver;
 
+  HeapVector<Member<CSSStyleSheet>> GetFetchedStyleSheetsFromModuleMap(
+      const AtomicString& shadowrootadoptedstylesheets_attribute_value);
+
   void ChildrenChanged(const ChildrenChange&) override;
 
   SlotAssignment& EnsureSlotAssignment();
@@ -218,10 +224,7 @@ inline bool Node::IsInUserAgentShadowRoot() const {
 }
 
 inline ShadowRoot* Node::GetShadowRoot() const {
-  auto* this_element = DynamicTo<Element>(this);
-  if (!this_element)
-    return nullptr;
-  return this_element->GetShadowRoot();
+  return HasShadowRoot() ? To<Element>(this)->GetShadowRoot() : nullptr;
 }
 
 inline bool IsShadowHost(const Node* node) {

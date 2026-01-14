@@ -57,7 +57,7 @@ void IIRFilterHandler::GetFrequencyResponse(
   // Convert from frequency in Hz to normalized frequency (0 -> 1),
   // with 1 equal to the Nyquist frequency.
   for (size_t k = 0; k < frequency_hz.size(); ++k) {
-    UNSAFE_TODO(frequency[k] = frequency_hz[k] / nyquist_frequency_);
+    frequency[k] = frequency_hz[k] / nyquist_frequency_;
   }
 
   response_kernel_->GetFrequencyResponse(frequency, mag_response,
@@ -119,9 +119,8 @@ IIRFilterHandler::IIRFilterHandler(AudioNode& node,
   }
 
   response_kernel_ = std::make_unique<IIRFilter>(&feedforward_, &feedback_);
-  tail_time_ = response_kernel_->TailTime(
-      sample_rate, is_filter_stable,
-      node.context()->GetDeferredTaskHandler().RenderQuantumFrames());
+  tail_time_ = response_kernel_->TailTime(sample_rate, is_filter_stable,
+                                          node.context()->renderQuantumSize());
 }
 
 void IIRFilterHandler::Process(uint32_t frames_to_process) {

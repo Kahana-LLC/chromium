@@ -35,6 +35,7 @@
 #include "ui/gfx/geometry/size.h"
 #include "ui/gfx/geometry/test/geometry_util.h"
 #include "ui/gfx/geometry/transform.h"
+#include "ui/gfx/geometry/transform_util.h"
 #include "ui/gfx/geometry/vector2d_conversions.h"
 #include "ui/gfx/geometry/vector2d_f.h"
 #include "ui/gfx/overlay_layer_id.h"
@@ -71,9 +72,6 @@ void PrintTo(const SwapResult& swap_result, ::std::ostream* os) {
     case SwapResult::SWAP_NAK_RECREATE_BUFFERS:
       *os << "SWAP_NAK_RECREATE_BUFFERS";
       return;
-    case SwapResult::SWAP_NON_SIMPLE_OVERLAYS_FAILED:
-      *os << "SWAP_NON_SIMPLE_OVERLAYS_FAILED";
-      return;
   }
   NOTREACHED();
 }
@@ -99,7 +97,27 @@ class TestPlatformDelegate : public ui::PlatformWindowDelegate {
   void OnWillDestroyAcceleratedWidget() override {}
   void OnAcceleratedWidgetDestroyed() override {}
   void OnActivationChanged(bool active) override {}
-  void OnMouseEnter() override {}
+  void OnCursorUpdate() override {}
+};
+
+class MockDCOMPSurfaceProxy : public gl::DCOMPSurfaceProxy {
+ public:
+  MockDCOMPSurfaceProxy()
+      : scoped_handle_(
+            gl::SwapChainPresenter::CreateDCompSurfaceHandleForTesting()) {}
+  MOCK_METHOD(gfx::Size&, GetSize, (), (const, override));
+  MOCK_METHOD(void,
+              SetRect,
+              (const gfx::Rect& window_relative_rect),
+              (override));
+  MOCK_METHOD(void, SetParentWindow, (HWND parent), (override));
+
+  HANDLE GetSurfaceHandle() override { return scoped_handle_.Get(); }
+
+ private:
+  ~MockDCOMPSurfaceProxy() override = default;
+
+  const base::win::ScopedHandle scoped_handle_;
 };
 
 void RunPendingTasks(scoped_refptr<base::TaskRunner> task_runner) {
@@ -942,9 +960,8 @@ TEST_P(DCompPresenterTest, VisualsReused) {
           gfx::OverlayLayerId::MakeForTesting(0));
 
   // Frame 2:
-  // overlay 0: root dcomp surface
-  // overlay 1: swapchain z-order = -1 (underlay)
-  InitializeRootAndScheduleRootSurface(window_size, SkColors::kBlue);
+  // overlay 0: swapchain z-order = -1 (underlay)
+  // overlay 1: root dcomp surface
   {
     DCLayerOverlayParams params;
     params.overlay_image.emplace(texture_size, texture);
@@ -956,6 +973,7 @@ TEST_P(DCompPresenterTest, VisualsReused) {
     params.layer_id = gfx::OverlayLayerId::MakeForTesting(0);
     ScheduleOverlay(std::move(params));
   }
+  InitializeRootAndScheduleRootSurface(window_size, SkColors::kBlue);
 
   ASSERT_EQ(PresentAndGetSwapResult(), gfx::SwapResult::SWAP_ACK);
   EXPECT_EQ(2u, dcLayerTree->GetDcompLayerCountForTesting());
@@ -1235,6 +1253,116 @@ INSTANTIATE_TEST_SUITE_P(,
                          DCompPresenterTest,
                          DCompPresenterTest::GetValues(),
                          &DCompPresenterTest::GetParamName);
+
+class DCompPresenterMFLargeOnscreenSizeTest : public DCompPresenterTest {
+ protected:
+  void RunTest(const gfx::Size& monitor_size,
+               const gfx::Size& video_resource_size,
+               const gfx::Rect& onscreen_rect,
+               const gfx::Rect& expected_set_rect) {
+    SetDirectCompositionMonitorInfoForTesting(1, monitor_size);
+
+    auto dcomp_surface_proxy = base::MakeRefCounted<MockDCOMPSurfaceProxy>();
+    EXPECT_CALL(*dcomp_surface_proxy, SetParentWindow(testing::_))
+        .Times(testing::AnyNumber());
+    EXPECT_CALL(*dcomp_surface_proxy, GetSize())
+        .WillRepeatedly(::testing::ReturnRefOfCopy(video_resource_size));
+
+    // We expect the onscreen size (set below) to be scaled down to enclose the
+    // monitor size while maintaining the onscreen aspect ratio.
+    EXPECT_CALL(*dcomp_surface_proxy, SetRect(testing::Eq(expected_set_rect)))
+        .Times(testing::AnyNumber());
+
+    {
+      auto params = CreateParamsFromImage(
+          DCLayerOverlayImage(video_resource_size, dcomp_surface_proxy));
+      params.quad_rect = onscreen_rect;
+      params.layer_id = gfx::OverlayLayerId::MakeForTesting(0);
+      params.video_params.color_space = gfx::ColorSpace::CreateREC709();
+      ScheduleOverlay(std::move(params));
+    }
+
+    ASSERT_EQ(PresentAndGetSwapResult(), gfx::SwapResult::SWAP_ACK);
+  }
+};
+
+// The video resolution is smaller than the monitor size so we're limited by
+// the monitor size.
+TEST_P(DCompPresenterMFLargeOnscreenSizeTest, ScaleDownToMonitorSize) {
+  const gfx::Size monitor_size = gfx::Size(20, 10);
+  const gfx::Size video_resource_size = gfx::Size(1, 1);
+  const gfx::Rect onscreen_rect = gfx::Rect(100, 100);
+  const gfx::Rect expected_set_rect = gfx::Rect(20, 20);
+  RunTest(monitor_size, video_resource_size, onscreen_rect, expected_set_rect);
+}
+
+// The video resolution is larger than the monitor size so we're limited by
+// the video resolution.
+TEST_P(DCompPresenterMFLargeOnscreenSizeTest, ScaleDownToVideoSize) {
+  const gfx::Size monitor_size = gfx::Size(20, 10);
+  const gfx::Size video_resource_size = gfx::Size(50, 50);
+  const gfx::Rect onscreen_rect = gfx::Rect(100, 100);
+  const gfx::Rect expected_set_rect = gfx::Rect(50, 50);
+  RunTest(monitor_size, video_resource_size, onscreen_rect, expected_set_rect);
+}
+
+// When the onscreen rect is smaller than the monitor or video size, the scale
+// factor is not limited.
+TEST_P(DCompPresenterMFLargeOnscreenSizeTest,
+       OnscreenRectIsSmallerThanMonitorOrVideoSize) {
+  const gfx::Size monitor_size = gfx::Size(20, 10);
+  const gfx::Size video_resource_size = gfx::Size(50, 50);
+  const gfx::Rect onscreen_rect = gfx::Rect(1, 1);
+  const gfx::Rect expected_set_rect = gfx::Rect(1, 1);
+  RunTest(monitor_size, video_resource_size, onscreen_rect, expected_set_rect);
+}
+
+// When the monitor and video size are larger than each other in different
+// dimensions, take the max of both to ensure that we'll at least either fill
+// the screen fully or max out the video resolution.
+TEST_P(DCompPresenterMFLargeOnscreenSizeTest,
+       ScaleDownToMaxOfMonitorAndVideoSize) {
+  // The max swap chain size will be 20x30.
+  {
+    const gfx::Size monitor_size = gfx::Size(20, 10);
+    const gfx::Size video_resource_size = gfx::Size(10, 30);
+    const gfx::Rect onscreen_rect = gfx::Rect(40, 60);
+    const gfx::Rect expected_set_rect = gfx::Rect(20, 30);
+    RunTest(monitor_size, video_resource_size, onscreen_rect,
+            expected_set_rect);
+  }
+
+  // The max swap chain size will be 80x20 (30x20 expanded to meet the 4:1
+  // aspect ratio).
+  {
+    const gfx::Size monitor_size = gfx::Size(30, 10);
+    const gfx::Size video_resource_size = gfx::Size(10, 20);
+    const gfx::Rect onscreen_rect =
+        gfx::Rect(gfx::ScaleToRoundedSize(gfx::Size(4, 1), 100));
+    const gfx::Rect expected_set_rect = gfx::Rect(80, 20);
+    RunTest(monitor_size, video_resource_size, onscreen_rect,
+            expected_set_rect);
+  }
+}
+
+// Even in extreme aspect ratio cases we will still limit the swap chain size.
+// In these extreme cases, we are still wasteful with pixels, though not as
+// wasteful as not being limited.
+TEST_P(DCompPresenterMFLargeOnscreenSizeTest, ExtremeAspectRatioCase) {
+  // The max swap chain size will be 2500x50 (50x50 expanded to meet the 50:1
+  // aspect ratio).
+  const gfx::Size monitor_size = gfx::Size(50, 1);
+  const gfx::Size video_resource_size = gfx::Size(1, 50);
+  const gfx::Rect onscreen_rect =
+      gfx::Rect(gfx::ScaleToRoundedSize(gfx::Size(50, 1), 100));
+  const gfx::Rect expected_set_rect = gfx::Rect(2500, 50);
+  RunTest(monitor_size, video_resource_size, onscreen_rect, expected_set_rect);
+}
+
+INSTANTIATE_TEST_SUITE_P(,
+                         DCompPresenterMFLargeOnscreenSizeTest,
+                         DCompPresenterMFLargeOnscreenSizeTest::GetValues(),
+                         &DCompPresenterMFLargeOnscreenSizeTest::GetParamName);
 
 template <class Param = std::monostate>
 class DCompPresenterPixelTestBase : public DCompPresenterTestBase<Param> {
@@ -3055,50 +3183,6 @@ TEST_P(DCompPresenterSkiaGoldTest,
   PresentAndCheckScreenshot();
 }
 
-// Check that DCLayerTree sorts overlays by their z-order instead of using the
-// schedule order.
-TEST_P(DCompPresenterSkiaGoldTest, OverlaysAreSortedByZOrder) {
-  InitializeTest(gfx::Size(100, 100));
-
-  // Insert overlays out of order with respect to z-ordering
-  std::vector<std::pair<SkColor4f, int>> color_and_z_order = {
-      {SkColors::kGreen, 2},
-      {SkColors::kGreen, -1},
-      {SkColors::kRed, -2},
-      {SkColors::kRed, 1},
-  };
-
-  for (const auto& [color, z_order] : color_and_z_order) {
-    gfx::Rect quad_rect = gfx::Rect(15 + z_order * 5, 15 + z_order * 5, 30, 30);
-    auto overlay =
-        CreateParamsFromImage(CreateDCompSurface(quad_rect.size(), color));
-    overlay.quad_rect = quad_rect;
-    overlay.z_order = z_order;
-    overlay.layer_id = gfx::OverlayLayerId::MakeForTesting(z_order);
-
-    ScheduleOverlay(std::move(overlay));
-  }
-
-  // Insert a translucent root plane so that we can easily see underlays
-  SkColor4f translucent_blue = SkColors::kBlue;
-  translucent_blue.fA = 0.5;
-  InitializeRootAndScheduleRootSurface(current_window_size(), translucent_blue);
-
-  {
-    // Insert a black backdrop since our root surface is not opaque. This is not
-    // strictly required, but it ensures that we explicitly make all pixels in
-    // our output opaque.
-    auto overlay = CreateParamsFromImage(
-        CreateDCompSurface(current_window_size(), SkColors::kBlack));
-    overlay.quad_rect = gfx::Rect(current_window_size());
-    overlay.z_order = INT_MIN;
-    overlay.layer_id = gfx::OverlayLayerId::MakeForTesting(0);
-    ScheduleOverlay(std::move(overlay));
-  }
-
-  PresentAndCheckScreenshot();
-}
-
 // Check that an overlay with a non-opaque image can show a background color.
 TEST_P(DCompPresenterSkiaGoldTest, ImageWithBackgroundColor) {
   InitializeTest(gfx::Size(100, 100));
@@ -3633,21 +3717,6 @@ class DCompPresenterLetterboxingTest
     }
   }
 
-  class MockDCOMPSurfaceProxy : public gl::DCOMPSurfaceProxy {
-   public:
-    MockDCOMPSurfaceProxy() = default;
-    MOCK_METHOD(gfx::Size&, GetSize, (), (const, override));
-    MOCK_METHOD(HANDLE, GetSurfaceHandle, (), (override));
-    MOCK_METHOD(void,
-                SetRect,
-                (const gfx::Rect& window_relative_rect),
-                (override));
-    MOCK_METHOD(void, SetParentWindow, (HWND parent), (override));
-
-   private:
-    ~MockDCOMPSurfaceProxy() override = default;
-  };
-
   void ScheduleFullScreenOverlay(DCLayerOverlayParams overlay) {
     if (GetTestParam().use_letterbox_video_optimization &&
         base::FeatureList::IsEnabled(
@@ -3698,11 +3767,6 @@ class DCompPresenterLetterboxingTest
       const gfx::Rect& clip_rect,
       std::optional<gfx::Rect> dcomp_surface_set_rect_override = std::nullopt) {
     auto dcomp_surface_proxy = base::MakeRefCounted<MockDCOMPSurfaceProxy>();
-    HANDLE handle = INVALID_HANDLE_VALUE;
-    EXPECT_TRUE(
-        gl::SwapChainPresenter::CreateSurfaceHandleHelperForTesting(&handle));
-    EXPECT_CALL(*dcomp_surface_proxy, GetSurfaceHandle())
-        .WillRepeatedly(::testing::Return(handle));
     EXPECT_CALL(*dcomp_surface_proxy, SetParentWindow(testing::_))
         .Times(testing::AnyNumber());
     EXPECT_CALL(*dcomp_surface_proxy, GetSize())

@@ -13,6 +13,7 @@ import static org.junit.Assert.assertTrue;
 
 import static org.chromium.base.test.util.Restriction.RESTRICTION_TYPE_LOW_END_DEVICE;
 import static org.chromium.base.test.util.Restriction.RESTRICTION_TYPE_NON_LOW_END_DEVICE;
+import static org.chromium.chrome.test.util.ChromeTabUtils.getTabCountOnUiThread;
 
 import android.content.Intent;
 
@@ -25,7 +26,7 @@ import org.junit.runner.RunWith;
 
 import org.chromium.base.IntentUtils;
 import org.chromium.base.ThreadUtils;
-import org.chromium.base.supplier.ObservableSupplier;
+import org.chromium.base.supplier.NullableObservableSupplier;
 import org.chromium.base.test.util.Batch;
 import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.base.test.util.CommandLineFlags;
@@ -35,9 +36,10 @@ import org.chromium.base.test.util.RequiresRestart;
 import org.chromium.base.test.util.Restriction;
 import org.chromium.chrome.browser.ChromeTabbedActivity;
 import org.chromium.chrome.browser.IntentHandler;
-import org.chromium.chrome.browser.WarmupManager;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
+import org.chromium.chrome.browser.multiwindow.MultiInstanceManager.PersistedInstanceType;
 import org.chromium.chrome.browser.multiwindow.MultiWindowUtils;
+import org.chromium.chrome.browser.tab.InterceptNavigationDelegateClientImpl;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tab.TabCreationState;
 import org.chromium.chrome.browser.tab.TabLaunchType;
@@ -83,7 +85,7 @@ public class ChromeTabCreatorTest {
     @MediumTest
     @Feature({"Browser"})
     public void testCreateNewTabInBackgroundLowEnd() {
-        final Tab fgTab = mPage.loadedTabElement.get();
+        final Tab fgTab = mPage.loadedTabElement.value();
         final Tab bgTab =
                 ThreadUtils.runOnUiThreadBlocking(
                         () -> {
@@ -120,7 +122,7 @@ public class ChromeTabCreatorTest {
     @MediumTest
     @Feature({"Browser"})
     public void testCreateNewTabInBackground() {
-        final Tab fgTab = mPage.loadedTabElement.get();
+        final Tab fgTab = mPage.loadedTabElement.value();
         Tab bgTab =
                 ThreadUtils.runOnUiThreadBlocking(
                         () -> {
@@ -144,28 +146,6 @@ public class ChromeTabCreatorTest {
         assertFalse(
                 "Should not request desktop sites by default.",
                 bgTab.getWebContents().getNavigationController().getUseDesktopUserAgent());
-    }
-
-    /** Verify that the spare WebContents is used. */
-    @Test
-    @MediumTest
-    @Feature({"Browser"})
-    public void testCreateNewTabTakesSpareWebContents() {
-        ThreadUtils.runOnUiThreadBlocking(
-                () -> {
-                    Tab currentTab = mActivityTestRule.getActivity().getActivityTab();
-                    WarmupManager.getInstance()
-                            .createSpareWebContents(mActivityTestRule.getProfile(false));
-                    assertTrue(WarmupManager.getInstance().hasSpareWebContents());
-                    mActivityTestRule
-                            .getActivity()
-                            .getCurrentTabCreator()
-                            .createNewTab(
-                                    new LoadUrlParams(mTestServer.getURL(TEST_PATH)),
-                                    TabLaunchType.FROM_EXTERNAL_APP,
-                                    currentTab);
-                    assertFalse(WarmupManager.getInstance().hasSpareWebContents());
-                });
     }
 
     /** Verify that the tab position is set using the intent. */
@@ -262,7 +242,7 @@ public class ChromeTabCreatorTest {
         mPage = mPage.loadWebPageProgrammatically(url2);
         final ChromeTabbedActivity activity = mPage.getActivity();
         final TabModel tabModel = activity.getCurrentTabModel();
-        final ObservableSupplier<Tab> currentTabSupplier = tabModel.getCurrentTabSupplier();
+        final NullableObservableSupplier<Tab> currentTabSupplier = tabModel.getCurrentTabSupplier();
         final CallbackHelper createdCallback = new CallbackHelper();
         final AtomicReference<Boolean> wasSelected = new AtomicReference<>(false);
         ThreadUtils.runOnUiThreadBlocking(
@@ -352,7 +332,7 @@ public class ChromeTabCreatorTest {
         final String url2 = mTestServer.getURL(TEST_PATH_2);
         mPage = mPage.loadWebPageProgrammatically(url);
         mPage = mPage.loadWebPageProgrammatically(url2);
-        final Tab parentTab = mPage.loadedTabElement.get();
+        final Tab parentTab = mPage.loadedTabElement.value();
         final Tab fgTab =
                 ThreadUtils.runOnUiThreadBlocking(
                         () ->
@@ -362,7 +342,7 @@ public class ChromeTabCreatorTest {
                                         .createTabWithHistory(
                                                 parentTab,
                                                 TabLaunchType.FROM_HISTORY_NAVIGATION_FOREGROUND));
-        ObservableSupplier<Tab> currentTabSupplier =
+        NullableObservableSupplier<Tab> currentTabSupplier =
                 mActivityTestRule.getActivity().getCurrentTabModel().getCurrentTabSupplier();
         assertEquals(
                 "Expected TabLaunchType.FROM_HISTORY_NAVIGATION_FOREGROUND to launch tab in fg",
@@ -533,7 +513,11 @@ public class ChromeTabCreatorTest {
     @Feature({"Browser"})
     @RequiresRestart // Avoid having multiple windows mess up the other tests
     public void testCreateNewTabInNewWindow() {
-        Tab currentTab = mActivityTestRule.getActivity().getActivityTab();
+        final boolean expectReparent = MultiWindowUtils.isMultiInstanceApi31Enabled();
+        if (expectReparent) {
+            InterceptNavigationDelegateClientImpl.setIsDesktopWindowingModeForTesting(true);
+        }
+        Tab currentTab = mActivityTestRule.getActivityTab();
         String testPath = mTestServer.getURL(TEST_PATH);
         ThreadUtils.runOnUiThreadBlocking(
                 () ->
@@ -545,15 +529,18 @@ public class ChromeTabCreatorTest {
                                         TabLaunchType.FROM_LINK_CREATING_NEW_WINDOW,
                                         currentTab));
 
-        if (MultiWindowUtils.isMultiInstanceApi31Enabled()) {
+        if (expectReparent) {
             CriteriaHelper.pollUiThread(
-                    () -> MultiWindowUtils.getInstanceCount() == 2,
+                    () ->
+                            MultiWindowUtils.getInstanceCountWithFallback(
+                                            PersistedInstanceType.ANY)
+                                    == 2,
                     "Expected a new window to be created");
         } else {
             assertEquals(
                     "Expected a new tab to be created",
                     2,
-                    mActivityTestRule.getActivity().getCurrentTabModel().getCount());
+                    getTabCountOnUiThread(mActivityTestRule.getActivity().getCurrentTabModel()));
         }
     }
 

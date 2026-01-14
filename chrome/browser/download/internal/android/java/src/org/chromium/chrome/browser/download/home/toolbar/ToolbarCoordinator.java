@@ -10,8 +10,9 @@ import android.view.MenuItem;
 import android.view.View;
 import android.view.ViewGroup;
 
-import org.chromium.base.supplier.ObservableSupplier;
-import org.chromium.base.supplier.ObservableSupplierImpl;
+import org.chromium.base.supplier.NonNullObservableSupplier;
+import org.chromium.base.supplier.ObservableSuppliers;
+import org.chromium.base.supplier.SettableNonNullObservableSupplier;
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.download.home.DownloadManagerUiConfig;
@@ -71,8 +72,8 @@ public class ToolbarCoordinator implements SelectionObserver<ListItem>, BackPres
     private final ViewGroup mView;
     private final DownloadHomeToolbar mToolbar;
     private final FadingShadowView mShadow;
-    private final ObservableSupplierImpl<Boolean> mBackPressStateSupplier =
-            new ObservableSupplierImpl<>();
+    private final SettableNonNullObservableSupplier<Boolean> mBackPressStateSupplier =
+            ObservableSuppliers.createNonNull(false);
 
     private boolean mShowToolbarShadow;
 
@@ -121,7 +122,6 @@ public class ToolbarCoordinator implements SelectionObserver<ListItem>, BackPres
             mToolbar.removeMenuItem(R.id.search_menu_id);
         }
 
-        // TODO(crbug.com/41412009): Pass the visible group to the toolbar during initialization.
         mToolbar.initializeSearchView(
                 mSearchDelegate, R.string.download_manager_search, R.id.search_menu_id);
 
@@ -185,7 +185,7 @@ public class ToolbarCoordinator implements SelectionObserver<ListItem>, BackPres
     }
 
     @Override
-    public ObservableSupplier<Boolean> getHandleBackPressChangedSupplier() {
+    public NonNullObservableSupplier<Boolean> getHandleBackPressChangedSupplier() {
         return mBackPressStateSupplier;
     }
 

@@ -19,7 +19,10 @@
 #include "chrome/browser/actor/tools/tool_request.h"
 #include "chrome/common/actor.mojom-forward.h"
 #include "chrome/common/actor/action_result.h"
+#include "chrome/common/actor/journal_details_builder.h"
 #include "chrome/common/chrome_features.h"
+#include "components/tabs/public/tab_interface.h"
+#include "content/public/browser/web_contents.h"
 #include "third_party/abseil-cpp/absl/strings/str_format.h"
 #include "url/gurl.h"
 
@@ -48,10 +51,11 @@ ToolController::~ToolController() = default;
 
 void ToolController::SetState(State state) {
   journal().Log(active_state_ ? active_state_->tool->JournalURL() : GURL(),
-                task_->id(), mojom::JournalTrack::kActor,
-                "ToolControllerStateChange",
-                absl::StrFormat("State: %s -> %s", StateToString(state_),
-                                StateToString(state)));
+                task_->id(), "ToolControllerStateChange",
+                JournalDetailsBuilder()
+                    .Add("current_state", StateToString(state_))
+                    .Add("new_state", StateToString(state))
+                    .Build());
 #if DCHECK_IS_ON()
   static const base::NoDestructor<base::StateTransitions<State>> transitions(
       base::StateTransitions<State>({
@@ -109,20 +113,25 @@ void ToolController::CreateToolAndValidate(
   if (!IsOk(*create_result.result)) {
     CHECK(!create_result.tool);
     journal().Log(request.GetURLForJournal(), task_->id(),
-                  mojom::JournalTrack::kActor,
                   "ToolController CreateToolAndValidate Failed",
-                  create_result.result->message);
+                  JournalDetailsBuilder()
+                      .AddError(create_result.result->message)
+                      .Build());
     PostResponseTask(std::move(result_callback),
                      std::move(create_result.result));
     return;
   }
 
+  observation_page_stability_config_ =
+      request.GetObservationPageStabilityConfig();
+
   std::unique_ptr<Tool>& tool = create_result.tool;
   CHECK(tool);
 
   auto journal_event = journal().CreatePendingAsyncEntry(
-      tool->JournalURL(), task_->id(), mojom::JournalTrack::kActor,
-      tool->JournalEvent(), tool->DebugString());
+      tool->JournalURL(), task_->id(), MakeBrowserTrackUUID(task_->id()),
+      tool->JournalEvent(),
+      JournalDetailsBuilder().Add("tool", tool->DebugString()).Build());
   active_state_.emplace(std::move(tool), std::move(result_callback),
                         std::move(journal_event));
 
@@ -133,7 +142,22 @@ void ToolController::CreateToolAndValidate(
 
 void ToolController::PostValidate(mojom::ActionResultPtr result) {
   if (!IsOk(*result)) {
-    CompleteToolRequest(std::move(result));
+    // TODO(b/455139841): Ensure that even if a tool fails validation it gets
+    // the change to update the controlled tab set so an observation can be
+    // removed. This is band-aid fix but we'll need to rethink how tab-adding
+    // works since clients rely on observations always being available.
+    active_state_->tool->UpdateTaskBeforeInvoke(
+        *task_, base::BindOnce(
+                    [](base::WeakPtr<ToolController> tool_controller_this,
+                       mojom::ActionResultPtr validate_result,
+                       mojom::ActionResultPtr update_task_result_unused) {
+                      if (!tool_controller_this) {
+                        return;
+                      }
+                      tool_controller_this->CompleteToolRequest(
+                          std::move(validate_result));
+                    },
+                    weak_ptr_factory_.GetWeakPtr(), std::move(result)));
     return;
   }
   SetState(State::kPostValidate);
@@ -158,23 +182,25 @@ void ToolController::Invoke(ResultCallback result_callback) {
   SetState(State::kPreInvoke);
   active_state_->completion_callback = std::move(result_callback);
 
+  Tool& tool = *active_state_->tool;
+
   const optimization_guide::proto::AnnotatedPageContent*
       last_observed_page_content = nullptr;
-  // Not all tools require a tab.
-  if (!task_->GetTabs().empty()) {
-    // TODO(crbug.com/389739308): The last tab observation should be fetched
-    // from the tool if it requires one.
-    if (auto* tab_data = ActorTabData::From(task_->GetTabForObservation())) {
+
+  // Not all tools operate on a tab.
+  if (tabs::TabInterface* tab = tool.GetTargetTab().Get()) {
+    if (auto* tab_data = ActorTabData::From(tab)) {
       last_observed_page_content = tab_data->GetLastObservedPageContent();
     }
   }
 
   mojom::ActionResultPtr toctou_result =
-      active_state_->tool->TimeOfUseValidation(last_observed_page_content);
+      tool.TimeOfUseValidation(last_observed_page_content);
   if (!IsOk(*toctou_result)) {
-    journal().Log(active_state_->tool->JournalURL(), task_->id(),
-                  mojom::JournalTrack::kActor, "TOCTOU Check Failed",
-                  ToDebugString(*toctou_result));
+    journal().Log(tool.JournalURL(), task_->id(), "TOCTOU Check Failed",
+                  JournalDetailsBuilder()
+                      .AddError(ToDebugString(*toctou_result))
+                      .Build());
     CompleteToolRequest(std::move(toctou_result));
     return;
   }
@@ -183,20 +209,81 @@ void ToolController::Invoke(ResultCallback result_callback) {
   // alive and focused), return error otherwise.
 
   SetState(State::kInvoking);
-  observation_delayer_ = active_state_->tool->GetObservationDelayer();
-  active_state_->tool->Invoke(base::BindOnce(
-      &ToolController::DidFinishToolInvoke, weak_ptr_factory_.GetWeakPtr()));
+  observation_delayer_ =
+      tool.GetObservationDelayer(observation_page_stability_config_);
+  tool.Invoke(base::BindOnce(&ToolController::DidFinishToolInvoke,
+                             weak_ptr_factory_.GetWeakPtr()));
+}
+
+void ToolController::Cancel() {
+  // Only cancel callbacks and states if the tool has been created.
+  if (state_ != State::kInit && state_ != State::kReady) {
+    weak_ptr_factory_.InvalidateWeakPtrs();
+    observation_delayer_.reset();
+    if (active_state_) {
+      active_state_->tool->Cancel();
+    }
+    active_state_.reset();
+    SetState(State::kReady);
+  }
 }
 
 void ToolController::DidFinishToolInvoke(mojom::ActionResultPtr result) {
   CHECK(active_state_);
-  if (observation_delayer_ && IsOk(*result)) {
+
+  // Renderers will mark end of execution time.
+  if (!result->execution_end_time) {
+    result->execution_end_time = base::TimeTicks::Now();
+  }
+
+  if (!RequiresPageStabilization(*result) || !observation_delayer_) {
+    PostInvokeTool(std::move(result));
+    return;
+  }
+
+  WaitForObservation(std::move(result));
+}
+
+void ToolController::WaitForObservation(mojom::ActionResultPtr result) {
+  if (tabs::TabInterface* target_tab =
+          active_state_->tool->GetTargetTab().Get()) {
     observation_delayer_->Wait(
-        *active_state_->journal_entry,
-        base::BindOnce(&ToolController::PostInvokeTool,
+        *target_tab,
+        base::BindOnce(&ToolController::ObservationDelayComplete,
                        weak_ptr_factory_.GetWeakPtr(), std::move(result)));
   } else {
+    journal().Log(active_state_->tool->JournalURL(), task_->id(),
+                  "ToolController DidFinishToolInvoke",
+                  JournalDetailsBuilder()
+                      .AddError("Tab is gone when tool finishes successfully")
+                      .Build());
     PostInvokeTool(std::move(result));
+  }
+}
+
+void ToolController::ObservationDelayComplete(
+    mojom::ActionResultPtr action_result,
+    ObservationDelayController::Result observation_result) {
+  switch (observation_result) {
+    case ObservationDelayController::Result::kOk:
+      PostInvokeTool(std::move(action_result));
+      break;
+    case ObservationDelayController::Result::kPageNavigated: {
+      if (tabs::TabInterface* tab = active_state_->tool->GetTargetTab().Get()) {
+        size_t last_navigation_count = observation_delayer_->NavigationCount();
+        // The page navigated, restart the observation.
+        journal().Log(active_state_->tool->JournalURL(), task_->id(),
+                      "ToolController Restarting Observation", {});
+        observation_delayer_ = std::make_unique<ObservationDelayController>(
+            *tab->GetContents()->GetPrimaryMainFrame(), task_->id(), journal(),
+            observation_page_stability_config_);
+        observation_delayer_->SetNavigationCount(last_navigation_count + 1);
+        WaitForObservation(std::move(action_result));
+      } else {
+        PostInvokeTool(std::move(action_result));
+      }
+      break;
+    }
   }
 }
 
@@ -208,8 +295,9 @@ void ToolController::PostInvokeTool(mojom::ActionResultPtr result) {
 
   SetState(State::kPostInvoke);
   active_state_->tool->UpdateTaskAfterInvoke(
-      *task_, base::BindOnce(&ToolController::CompleteToolRequest,
-                             weak_ptr_factory_.GetWeakPtr()));
+      *task_, std::move(result),
+      base::BindOnce(&ToolController::CompleteToolRequest,
+                     weak_ptr_factory_.GetWeakPtr()));
 }
 
 void ToolController::CompleteToolRequest(mojom::ActionResultPtr result) {
@@ -217,7 +305,13 @@ void ToolController::CompleteToolRequest(mojom::ActionResultPtr result) {
 
   SetState(State::kReady);
   observation_delayer_.reset();
-  active_state_->journal_entry->EndEntry(ToDebugString(*result));
+  if (IsOk(*result)) {
+    active_state_->journal_entry->EndEntry(
+        JournalDetailsBuilder().Add("result", "success").Build());
+  } else {
+    active_state_->journal_entry->EndEntry(
+        JournalDetailsBuilder().AddError(ToDebugString(*result)).Build());
+  }
   PostResponseTask(std::move(active_state_->completion_callback),
                    std::move(result));
   active_state_.reset();

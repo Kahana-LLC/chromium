@@ -15,6 +15,7 @@
 #include "components/autofill/core/browser/data_model/payments/bank_account.h"
 #include "components/autofill/core/browser/data_model/payments/ewallet.h"
 #include "components/facilitated_payments/core/browser/facilitated_payments_app_info_list.h"
+#include "components/facilitated_payments/core/browser/payment_link_manager.h"
 #include "components/facilitated_payments/core/utils/facilitated_payments_ui_utils.h"
 
 // Must come after all headers that specialize FromJniType() / ToJniType().
@@ -51,9 +52,8 @@ void FacilitatedPaymentsController::ShowForPaymentLink(
     base::span<const autofill::Ewallet> ewallet_suggestions,
     std::unique_ptr<payments::facilitated::FacilitatedPaymentsAppInfoList>
         app_suggestions,
-    base::OnceCallback<void(int64_t)> on_payment_account_selected,
-    base::OnceCallback<void(std::string_view, std::string_view)>
-        on_payment_app_selected) {
+    base::OnceCallback<void(payments::facilitated::SelectedFopData)>
+        on_fop_selected) {
   // Abort if there are no eWallets and no payment apps.
   if (ewallet_suggestions.empty() &&
       (app_suggestions == nullptr || app_suggestions->Size() == 0)) {
@@ -62,8 +62,7 @@ void FacilitatedPaymentsController::ShowForPaymentLink(
 
   view_->RequestShowContentForPaymentLink(std::move(ewallet_suggestions),
                                           std::move(app_suggestions));
-  on_payment_account_selected_ = std::move(on_payment_account_selected);
-  on_payment_app_selected_ = std::move(on_payment_app_selected);
+  on_fop_selected_ = std::move(on_fop_selected);
 }
 
 void FacilitatedPaymentsController::ShowProgressScreen() {
@@ -84,10 +83,11 @@ void FacilitatedPaymentsController::SetUiEventListener(
   ui_event_listener_ = std::move(ui_event_listener);
 }
 
-void FacilitatedPaymentsController::OnUiEvent(JNIEnv* env, jint event) {
-  CHECK(event >= static_cast<jint>(
+void FacilitatedPaymentsController::OnUiEvent(JNIEnv* env, int32_t event) {
+  CHECK(event >= static_cast<int32_t>(
                      payments::facilitated::UiEvent::kNewScreenShown) &&
-        event <= static_cast<jint>(payments::facilitated::UiEvent::kMaxValue))
+        event <=
+            static_cast<int32_t>(payments::facilitated::UiEvent::kMaxValue))
       << "Invalid payments::facilitated::UiEvent value: " << event;
 
   // `payments::facilitated::UiEvent` is synced to the Java side.
@@ -116,19 +116,21 @@ void FacilitatedPaymentsController::OnBankAccountSelected(JNIEnv* env,
 
 void FacilitatedPaymentsController::OnEwalletSelected(JNIEnv* env,
                                                       jlong instrument_id) {
-  if (on_payment_account_selected_) {
-    std::move(on_payment_account_selected_).Run(instrument_id);
+  if (on_fop_selected_) {
+    std::move(on_fop_selected_)
+        .Run(payments::facilitated::SelectedFopData(instrument_id));
   }
 }
 
 void FacilitatedPaymentsController::OnPaymentAppSelected(
     JNIEnv* env,
-    const base::android::JavaParamRef<jstring>& j_package_name,
-    const base::android::JavaParamRef<jstring>& j_activity_name) {
-  if (on_payment_app_selected_) {
-    std::move(on_payment_app_selected_)
-        .Run(base::android::ConvertJavaStringToUTF8(env, j_package_name),
-             base::android::ConvertJavaStringToUTF8(env, j_activity_name));
+    const base::android::JavaRef<jstring>& j_package_name,
+    const base::android::JavaRef<jstring>& j_activity_name) {
+  if (on_fop_selected_) {
+    std::move(on_fop_selected_)
+        .Run(payments::facilitated::SelectedFopData(
+            base::android::ConvertJavaStringToUTF8(env, j_package_name),
+            base::android::ConvertJavaStringToUTF8(env, j_activity_name)));
   }
 }
 
@@ -180,3 +182,5 @@ void FacilitatedPaymentsController::ClearJavaViewComponents() {
   }
   java_object_.Reset();
 }
+
+DEFINE_JNI(FacilitatedPaymentsPaymentMethodsControllerBridge)

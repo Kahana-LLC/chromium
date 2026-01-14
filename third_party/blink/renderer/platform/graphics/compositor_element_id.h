@@ -38,10 +38,9 @@ enum class CompositorElementIdNamespace {
   kVerticalScrollbar,
   kHorizontalScrollbar,
   kScrollCorner,
-  kViewTransitionSubframeRoot,
+  kViewTransitionScopeRoot,
   kViewTransitionElement,
   kElementCapture,
-  kPlaceElement,
   kDOMNodeId,
   // The following values are for internal usage only.
   kMax = kDOMNodeId,

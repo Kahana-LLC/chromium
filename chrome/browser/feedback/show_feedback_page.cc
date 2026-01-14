@@ -13,7 +13,6 @@
 #include "build/build_config.h"
 #include "chrome/browser/feedback/feedback_dialog_utils.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/ui_features.h"
@@ -124,8 +123,8 @@ GURL BuildFeedbackUrl(const std::string& extra_diagnostics,
     query_params.emplace_back(
         StrCatQueryParam(kFromAutofillQueryParam, kFromAutofillParamValue));
 
-    std::string autofill_metadata_json;
-    base::JSONWriter::Write(autofill_metadata, &autofill_metadata_json);
+    std::string autofill_metadata_json =
+        base::WriteJson(autofill_metadata).value_or("");
     query_params.emplace_back(
         StrCatQueryParam(kAutofillMetadataQueryParam, autofill_metadata_json));
   }
@@ -216,8 +215,6 @@ void RequestFeedbackFlow(const GURL& page_url,
     }
 
     if (!chromeos::IsKioskSession()) {
-      // TODO(crbug.com/40253237): Include autofill metadata into CrOS new
-      // feedback tool.
       ash::SystemAppLaunchParams params;
       params.url = BuildFeedbackUrl(
           extra_diagnostics, description_template, description_placeholder_text,
@@ -254,8 +251,7 @@ void ShowFeedbackPage(BrowserWindowInterface* bwi,
                       base::Value::Dict ai_metadata) {
   GURL page_url;
   if (bwi) {
-    page_url = GetTargetTabUrl(bwi->GetSessionID(),
-                               bwi->GetTabStripModel()->active_index());
+    page_url = GetTargetTabUrl(bwi, bwi->GetTabStripModel()->active_index());
   }
 
   Profile* profile = GetFeedbackProfile(bwi);

@@ -27,6 +27,7 @@
 #include "ash/wm/snap_group/snap_group.h"
 #include "ash/wm/snap_group/snap_group_controller.h"
 #include "ash/wm/splitview/split_view_utils.h"
+#include "ash/wm/tablet_mode/tablet_mode_window_resizer.h"
 #include "ash/wm/tile_group/window_splitter.h"
 #include "ash/wm/toplevel_window_event_handler.h"
 #include "ash/wm/window_animations.h"
@@ -306,14 +307,23 @@ std::unique_ptr<WindowResizer> CreateWindowResizerForTabletMode(
   WindowState* window_state = WindowState::Get(window);
 
   // Dragging floated windows in tablet mode is allowed.
-  // TODO(crbug.com/1338715): Investigate if we need to wrap the resizer in a
-  // DragWindowResizer.
   if (window_state->IsFloated() && window_component == HTCAPTION) {
     window_state->CreateDragDetails(point_in_parent, HTCAPTION, source);
     return std::make_unique<TabletModeFloatWindowResizer>(window_state);
   }
 
-  return nullptr;
+  // Don't allow dragging non-browser windows.
+  chromeos::AppType app_type = static_cast<chromeos::AppType>(
+      window->GetProperty(chromeos::kAppTypeKey));
+  if (app_type != chromeos::AppType::BROWSER) {
+    return nullptr;
+  }
+
+  window_state->CreateDragDetails(point_in_parent, window_component, source);
+  auto resizer = std::make_unique<TabletModeWindowResizer>(
+      window_state, std::make_unique<TabletModeWindowDragDelegate>());
+  window_state->OnDragStarted(window_component);
+  return resizer;
 }
 
 // When dragging, drags events have to moved pass this threshold before the
@@ -528,7 +538,11 @@ std::unique_ptr<WindowResizer> CreateWindowResizer(
     }
   }
 
-  if (display::Screen::GetScreen()->InTabletMode()) {
+  // For windows in always-top-container, allow for default resizing/dragging in
+  // tablet-mode.
+  const auto* parent = window->parent();
+  if (display::Screen::Get()->InTabletMode() && parent &&
+      parent->GetId() != kShellWindowId_AlwaysOnTopContainer) {
     return CreateWindowResizerForTabletMode(window, point_in_parent,
                                             window_component, source);
   }
@@ -572,7 +586,6 @@ std::unique_ptr<WindowResizer> CreateWindowResizer(
   // layout manager that a drag has started or stopped. It may be possible to
   // refactor and eliminate chaining.
   std::unique_ptr<WindowResizer> window_resizer;
-  const auto* parent = window->parent();
   if (parent &&
       // TODO(afakhry): Maybe use switchable containers?
       (desks_util::IsDeskContainer(parent) ||
@@ -787,9 +800,8 @@ void WorkspaceWindowResizer::Drag(const gfx::PointF& location_in_parent,
         kSnapTriggerVerticalMoveThreshold;
   }
 
-  display::Display display =
-      display::Screen::GetScreen()->GetDisplayNearestPoint(
-          gfx::ToRoundedPoint(location_in_screen));
+  display::Display display = display::Screen::Get()->GetDisplayNearestPoint(
+      gfx::ToRoundedPoint(location_in_screen));
   const SnapType snap_type = GetSnapType(display, location_in_screen);
   // Start dwell countdown if move window to the top of screen.
   if (IsSnapTopOrMaximize(snap_type, display)) {
@@ -1421,8 +1433,7 @@ void WorkspaceWindowResizer::AdjustBoundsForMainWindow(int sticky_size,
   gfx::Point last_location_in_screen =
       gfx::ToRoundedPoint(last_location_in_screen_);
   display::Display display =
-      display::Screen::GetScreen()->GetDisplayNearestPoint(
-          last_location_in_screen);
+      display::Screen::Get()->GetDisplayNearestPoint(last_location_in_screen);
   gfx::Rect work_area = display.work_area();
   wm::ConvertRectFromScreen(GetTarget()->parent(), &work_area);
   if (details().window_component == HTCAPTION) {
@@ -1715,7 +1726,7 @@ bool WorkspaceWindowResizer::AreBoundsValidSnappedBounds(
       state->snap_ratio().value_or(chromeos::kDefaultSnapRatio);
   gfx::Rect snapped_bounds = GetSnappedWindowBounds(
       screen_util::GetDisplayWorkAreaBoundsInParent(window),
-      display::Screen::GetScreen()->GetDisplayNearestWindow(window), window,
+      display::Screen::Get()->GetDisplayNearestWindow(window), window,
       snapped_type, snap_ratio);
   return bounds_in_parent.ApproximatelyEqual(snapped_bounds, 1);
 }

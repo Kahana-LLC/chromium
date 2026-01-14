@@ -9,7 +9,6 @@
 
 #include "ash/constants/ash_paths.h"
 #include "base/files/file_path.h"
-#include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/notreached.h"
 #include "base/path_service.h"
@@ -18,9 +17,7 @@
 #include "base/test/scoped_path_override.h"
 #include "base/test/task_environment.h"
 #include "base/test/test_future.h"
-#include "base/version.h"
 #include "chrome/browser/profiles/profile_test_util.h"
-#include "chrome/browser/web_applications/isolated_web_apps/test/test_signed_web_bundle_builder.h"
 #include "chrome/common/chrome_features.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "chromeos/components/kiosk/kiosk_test_utils.h"

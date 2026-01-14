@@ -113,6 +113,7 @@ class CONTENT_EXPORT BrowserAccessibilityAndroid
 
   bool HasCharacterLocations() const;
   bool HasImage() const;
+  bool HasLayoutBasedActions() const;
 
   const char* GetClassName() const;
   bool IsChildOfLeaf() const override;
@@ -159,8 +160,6 @@ class CONTENT_EXPORT BrowserAccessibilityAndroid
   std::string GetRoleString() const;
 
   std::u16string GetPaneTitle() const;
-
-  std::u16string GetDialogModalMessageText() const;
 
   std::u16string GetContentInvalidErrorMessage() const;
 
@@ -233,6 +232,22 @@ class CONTENT_EXPORT BrowserAccessibilityAndroid
   int ColumnIndex() const;
   int ColumnSpan() const;
 
+  // These are enums from
+  // android.view.accessibility.AccessibilityNodeInfo.CollectionItemInfo in
+  // Java:
+  enum AndroidSortDirection {
+    ANDROID_SORT_DIRECTION_NONE = 0,
+    ANDROID_SORT_DIRECTION_ASCENDING = 1,
+    ANDROID_SORT_DIRECTION_DESCENDING = 2,
+    ANDROID_SORT_DIRECTION_OTHER = 3
+  };
+
+  // This method converts from ax::mojom::IntAttribute::kSortDirection to
+  // android values. If this node is not a table header, it will return
+  // ANDROID_SORT_DIRECTION_NONE as Android only can set the sort direction on
+  // this kind of node.
+  AndroidSortDirection GetSortDirection() const;
+
   float RangeMin() const;
   float RangeMax() const;
   float RangeCurrentValue() const;
@@ -248,10 +263,11 @@ class CONTENT_EXPORT BrowserAccessibilityAndroid
   // Android accessibility properties.
   enum class AndroidNameTo {
     kUnset = 0,
-    kText,
-    kContentDescription,
-    kSupplementalDescription,
     kContainerTitle,
+    kContentDescription,
+    kLabeledBy,
+    kSupplementalDescription,
+    kText,
   };
 
   // Append line start and end indices for the text of this node
@@ -284,6 +300,10 @@ class CONTENT_EXPORT BrowserAccessibilityAndroid
   // Used to determine paint order to see in what order nodes are drawn.
   // Used by Android XR.
   int GetPaintOrder() const;
+
+  // Returns a list of Android IDs that were set on the node using
+  // aria-labelledby.
+  const std::vector<int> GetLabelledByAndroidIds() const;
 
  protected:
   BrowserAccessibilityAndroid(ui::BrowserAccessibilityManager* manager,

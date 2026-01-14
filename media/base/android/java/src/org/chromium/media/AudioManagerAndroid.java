@@ -133,6 +133,8 @@ class AudioManagerAndroid {
 
     private @Nullable AudioDeviceListener mDeviceListener;
 
+    private @Nullable ScoStateListener mScoStateListener;
+
     private final CommunicationDeviceSelector mCommunicationDeviceSelector;
 
     /** Construction */
@@ -180,6 +182,7 @@ class AudioManagerAndroid {
         }
 
         mCommunicationDeviceSelector.init();
+
         mIsInitialized = true;
     }
 
@@ -190,7 +193,22 @@ class AudioManagerAndroid {
     @CalledByNative
     private void initDeviceListener() {
         mDeviceListener =
-                new AudioDeviceListener(() -> AudioManagerAndroidJni.get().onDevicesChanged());
+                new AudioDeviceListener(
+                        added -> AudioManagerAndroidJni.get().onDevicesChanged(added));
+    }
+
+    /**
+     * Initializes the SCO state listener, which listens for changes to the SCO state reported by
+     * the OS.
+     */
+    @CalledByNative
+    private void initScoStateListener() {
+        mScoStateListener =
+                new ScoStateListener(
+                        state -> {
+                            AudioManagerAndroidJni.get()
+                                    .onScoStateChanged(mNativeAudioManagerAndroid, state);
+                        });
     }
 
     /**
@@ -207,6 +225,10 @@ class AudioManagerAndroid {
 
         if (mDeviceListener != null) {
             mDeviceListener.destroy();
+        }
+
+        if (mScoStateListener != null) {
+            mScoStateListener.destroy();
         }
 
         mCommunicationDeviceSelector.close();
@@ -406,7 +428,7 @@ class AudioManagerAndroid {
      * @param channels number of channels
      */
     @CalledByNative
-    private static int getMinInputFrameSize(int sampleRate, int channels) {
+    private static int getMinInputFramesPerBuffer(int sampleRate, int channels) {
         int channelConfig;
         if (channels == 1) {
             channelConfig = AudioFormat.CHANNEL_IN_MONO;
@@ -428,7 +450,7 @@ class AudioManagerAndroid {
      * @param channels number of channels
      */
     @CalledByNative
-    private static int getMinOutputFrameSize(int sampleRate, int channels) {
+    private static int getMinOutputFramesPerBuffer(int sampleRate, int channels) {
         int channelConfig;
         if (channels == 1) {
             channelConfig = AudioFormat.CHANNEL_OUT_MONO;
@@ -451,7 +473,7 @@ class AudioManagerAndroid {
     }
 
     @CalledByNative
-    private int getAudioLowLatencyOutputFrameSize() {
+    private int getAudioLowLatencyOutputFramesPerBuffer() {
         String framesPerBuffer =
                 mAudioManager.getProperty(AudioManager.PROPERTY_OUTPUT_FRAMES_PER_BUFFER);
         return framesPerBuffer == null ? 0 : Integer.parseInt(framesPerBuffer);
@@ -756,8 +778,10 @@ class AudioManagerAndroid {
 
     @NativeMethods
     interface Natives {
-        void onDevicesChanged();
+        void onDevicesChanged(boolean added);
 
         void setMute(long nativeAudioManagerAndroid, boolean muted);
+
+        void onScoStateChanged(long nativeAudioManagerAndroid, boolean state);
     }
 }

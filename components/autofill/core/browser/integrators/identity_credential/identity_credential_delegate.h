@@ -13,6 +13,8 @@
 namespace autofill {
 
 struct Suggestion;
+class AutofillClient;
+class SuggestionGenerator;
 
 // The interface for communication from //components/autofill to
 // //content/browser/webid.
@@ -40,8 +42,9 @@ class IdentityCredentialDelegate {
   using OnFederatedTokenReceivedCallback = base::OnceCallback<void(bool)>;
   virtual ~IdentityCredentialDelegate() = default;
 
-  // Generates verified Autofill suggestions from identity credential requests.
-  // This could be representing two types of identity credentials suggestions:
+  // Generates verified Autofill suggestions from identity credential requests
+  // for the trigger `field` in `form`. This could be representing two types of
+  // identity credentials suggestions:
   // 1. Verified email and potentially other attributes from an identity
   // provider, e.g. name, address etc.
   // 2. Accounts information that is required for federated logins. e.g. name,
@@ -49,8 +52,14 @@ class IdentityCredentialDelegate {
   // the strings and UI affordances can be different.
   // The given `field_type` must be one of the Identity Credentials types
   // supported by AutofillType::GetIdentityCredentialType(), or UNKNOWN_TYPE.
+  // TODO(crbug.com/409962888): Remove this method once the new suggestion
+  // generation flow is launched.
   virtual std::vector<Suggestion> GetVerifiedAutofillSuggestions(
-      const FieldType& field_type) const = 0;
+      const FormData& form,
+      const FormStructure* form_structure,
+      const FormFieldData& field,
+      const AutofillField* autofill_field,
+      const AutofillClient& client) const = 0;
 
   // Notifies the delegate that a suggestion from an identity credential
   // conditional request was accepted.
@@ -68,6 +77,10 @@ class IdentityCredentialDelegate {
       const Suggestion& suggestion,
       bool show_modal,
       OnFederatedTokenReceivedCallback callback) const = 0;
+
+  // Returns the `SuggestionGenerator` for identity credentials.
+  virtual std::unique_ptr<SuggestionGenerator>
+  GetIdentityCredentialSuggestionGenerator() = 0;
 };
 
 }  // namespace autofill

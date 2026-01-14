@@ -60,6 +60,7 @@
 #include "third_party/blink/renderer/core/layout/layout_image.h"
 #include "third_party/blink/renderer/core/lcp_critical_path_predictor/element_locator.h"
 #include "third_party/blink/renderer/core/lcp_critical_path_predictor/lcp_critical_path_predictor.h"
+#include "third_party/blink/renderer/core/loader/resource/image_resource.h"
 #include "third_party/blink/renderer/core/loader/resource/image_resource_content.h"
 #include "third_party/blink/renderer/core/media_type_names.h"
 #include "third_party/blink/renderer/core/page/chrome_client.h"
@@ -130,7 +131,6 @@ void HTMLImageElement::Trace(Visitor* visitor) const {
   visitor->Trace(image_loader_);
   visitor->Trace(listener_);
   visitor->Trace(form_);
-  visitor->Trace(display_ad_element_monitor_);
   visitor->Trace(source_);
 
   HTMLElement::Trace(visitor);
@@ -417,6 +417,8 @@ void HTMLImageElement::ParseAttribute(
     } else if (!params.new_value.IsNull()) {
       UseCounter::Count(GetDocument(),
                         WebFeature::kSharedStorageAPI_Image_Attribute);
+      Deprecation::CountDeprecation(
+          execution_context, mojom::blink::WebFeature::kSharedStorageAPIAll);
     }
   } else {
     HTMLElement::ParseAttribute(params);
@@ -543,10 +545,6 @@ void HTMLImageElement::AttachLayoutTree(AttachContext& context) {
 
 Node::InsertionNotificationRequest HTMLImageElement::InsertedInto(
     ContainerNode& insertion_point) {
-  if (display_ad_element_monitor_) {
-    display_ad_element_monitor_->EnsureStarted();
-  }
-
   if (!form_was_set_by_parser_ ||
       NodeTraversal::HighestAncestorOrSelf(insertion_point) !=
           NodeTraversal::HighestAncestorOrSelf(*form_.Get()))
@@ -601,10 +599,6 @@ Node::InsertionNotificationRequest HTMLImageElement::InsertedInto(
 }
 
 void HTMLImageElement::RemovedFrom(ContainerNode& insertion_point) {
-  if (display_ad_element_monitor_) {
-    display_ad_element_monitor_->OnElementRemoved();
-  }
-
   if (!form_ || NodeTraversal::HighestAncestorOrSelf(*form_.Get()) !=
                     NodeTraversal::HighestAncestorOrSelf(*this))
     ResetFormOwner();
@@ -756,23 +750,32 @@ bool HTMLImageElement::HasLegalLinkAttribute(const QualifiedName& name) const {
          HTMLElement::HasLegalLinkAttribute(name);
 }
 
-void HTMLImageElement::SetIsAdRelated() {
-  if (!display_ad_element_monitor_) {
-    display_ad_element_monitor_ =
-        MakeGarbageCollected<DisplayAdElementMonitor>(this);
-  }
-}
-
 void HTMLImageElement::DidFinishLayout() {
   if (base::FeatureList::IsEnabled(features::kSpeculativeImageDecodes)) {
     if (LayoutImage* layout_image = DynamicTo<LayoutImage>(GetLayoutObject())) {
-      // Populate cached values for load priority and speculative decode
-      // parameters.
-      layout_image->ComputeResourcePriority();
-      layout_image->ComputeSpeculativeDecodeSize();
-      layout_image->ComputeSpeculativeDecodeQuality();
-      // Once the image has a source ResourceFetcher will take over the updates.
-      if (GetImageLoader().GetContent()) {
+      // Populate cached values for speculative decode parameters.
+      // ComputeResourcePriority is expensive; only call it if the image is big
+      // enough to qualify for speculative decode.
+      bool should_compute_priority = false;
+      gfx::Size layout_size = layout_image->ComputeSpeculativeDecodeSize();
+      ImageResourceContent* content = GetImageLoader().GetContent();
+      if (content && content->IsSizeAvailable()) {
+        should_compute_priority =
+            ImageResource::IsAboveSpeculativeDecodeSizeThreshold(
+                content->GetImage()->Size());
+      } else {
+        // Intrinsic size isn't available, so use the layout size as an
+        // approximation.
+        should_compute_priority =
+            ImageResource::IsAboveSpeculativeDecodeSizeThreshold(layout_size);
+      }
+      if (should_compute_priority) {
+        layout_image->ComputeResourcePriority();
+        layout_image->ComputeSpeculativeDecodeQuality();
+      }
+      // Once the image has a source, ResourceFetcher will take over the
+      // updates.
+      if (content) {
         GetDocument().View()->UnregisterFromLifecycleNotifications(this);
       }
     }

@@ -107,7 +107,8 @@ class TabStripModelDelegate {
   virtual bool IsTabStripEditable() = 0;
 
   // Duplicates the contents at the provided index and places it into a new tab.
-  virtual void DuplicateContentsAt(int index) = 0;
+  // Returns the duplicated tab, if duplication succeeds.
+  virtual content::WebContents* DuplicateContentsAt(int index) = 0;
 
   // Duplicates a split tab.
   virtual void DuplicateSplit(split_tabs::SplitTabId split) = 0;
@@ -162,10 +163,6 @@ class TabStripModelDelegate {
   // to close |contents|.
   virtual bool ShouldRunUnloadListenerBeforeClosing(
       content::WebContents* contents) = 0;
-
-  // Returns whether favicon should be shown.
-  virtual bool ShouldDisplayFavicon(
-      content::WebContents* web_contents) const = 0;
 
   // Returns whether the delegate allows reloading of WebContents.
   virtual bool CanReload() const = 0;
@@ -232,6 +229,10 @@ class TabStripModelDelegate {
 
   // Opens the Glic window if not already open.
   virtual void OpenGlicWindowFromSharedTab() = 0;
+
+  // Unpins the specified tabs from all Glic conversations.
+  virtual void GlicUnpinTabsFromAllConversations(
+      base::span<const tabs::TabHandle> tab_handles);
 #endif
 };
 

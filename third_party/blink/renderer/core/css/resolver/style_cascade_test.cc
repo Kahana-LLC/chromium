@@ -19,7 +19,6 @@
 #include "third_party/blink/renderer/core/css/css_test_helpers.h"
 #include "third_party/blink/renderer/core/css/css_unparsed_declaration_value.h"
 #include "third_party/blink/renderer/core/css/document_style_environment_variables.h"
-#include "third_party/blink/renderer/core/css/document_style_sheet_collection.h"
 #include "third_party/blink/renderer/core/css/media_query_evaluator.h"
 #include "third_party/blink/renderer/core/css/parser/css_parser_context.h"
 #include "third_party/blink/renderer/core/css/parser/css_parser_local_context.h"
@@ -40,6 +39,7 @@
 #include "third_party/blink/renderer/core/css/resolver/style_resolver.h"
 #include "third_party/blink/renderer/core/css/resolver/style_resolver_state.h"
 #include "third_party/blink/renderer/core/css/style_engine.h"
+#include "third_party/blink/renderer/core/css/style_sheet_collection.h"
 #include "third_party/blink/renderer/core/css/style_sheet_contents.h"
 #include "third_party/blink/renderer/core/execution_context/security_context.h"
 #include "third_party/blink/renderer/core/frame/settings.h"
@@ -141,6 +141,7 @@ class TestCascade {
     EnsureAtLeast(options.origin);
     cascade_.MutableMatchResult().AddMatchedProperties(
         set,
+        /*mixin_parameter_bindings=*/nullptr,
         {
             .link_match_type = static_cast<uint8_t>(options.link_match_type),
             .is_inline_style = options.is_inline_style,
@@ -170,6 +171,7 @@ class TestCascade {
                           CascadeOrigin& origin) {
     TestCascadeResolver resolver;
     return cascade_.Resolve(property, value, /*tree_scope=*/&GetDocument(),
+                            /*mixin_parameter_bindings=*/nullptr,
                             CascadePriority(origin), origin,
                             resolver.InnerResolver());
   }
@@ -183,7 +185,8 @@ class TestCascade {
     DCHECK(set->PropertyCount());
     const CSSPropertyValue& reference = set->PropertyAt(0);
     return StyleCascade::Resolve(state, reference.Name(), reference.Value(),
-                                 /*tree_scope=*/&state.GetDocument());
+                                 /*tree_scope=*/&state.GetDocument(),
+                                 /*mixin_parameter_bindings=*/nullptr);
   }
 
   std::unique_ptr<CSSBitset> GetImportantSet() {
@@ -268,7 +271,7 @@ class TestCascade {
       state.CreateNewStyle(*InitialStyle(state.GetDocument()), *parent_style);
       state.SetParentStyle(parent_style);
     } else {
-      state.SetStyle(*InitialStyle(state.GetDocument()));
+      state.CreateNewClonedStyle(*InitialStyle(state.GetDocument()));
       state.SetParentStyle(InitialStyle(state.GetDocument()));
     }
     state.SetOldStyle(state.GetElement().GetComputedStyle());
@@ -360,11 +363,10 @@ class StyleCascadeTest : public PageTestBase {
         tree_scope.EnsureScopedStyleResolver();
     ActiveStyleSheetVector active_sheets{std::make_pair(sheet, nullptr)};
     scoped_resolver.AppendActiveStyleSheets(0, active_sheets);
-    GetDocument()
-        .GetStyleEngine()
-        .GetDocumentStyleSheetCollection()
-        .ReplaceActiveStyleSheets(MediaQueryEvaluator(GetDocument().GetFrame()),
-                                  active_sheets);
+    StyleSheetCollection& collection =
+        GetDocument().GetStyleEngine().GetDocumentStyleSheetCollection();
+    collection.AddPendingActiveStyleSheetForTest(sheet);
+    collection.FinishUpdateActiveStyleSheets(/*effective_mixins=*/{});
   }
 
   Element* DocumentElement() const { return GetDocument().documentElement(); }
@@ -1313,11 +1315,23 @@ TEST_F(StyleCascadeTest, CycleMultipleAttr) {
   EXPECT_FALSE(cascade.ComputedValue("--x"));
 }
 
-TEST_F(StyleCascadeTest, CycleAttrWithFallback) {
+TEST_F(StyleCascadeTest, CycleAttrIgnoreFallback) {
   Element* element = DocumentElement();
   TestCascade cascade(GetDocument(), element);
   element->setAttribute(AtomicString("data-foo"),
-                        AtomicString("attr(data-foo"));
+                        AtomicString("attr(data-foo)"));
+
+  cascade.Reset();
+  cascade.Add("--x", "attr(data-foo type(*), abc)");
+  cascade.Apply();
+
+  EXPECT_EQ(cascade.ComputedValue("--x"), "abc");
+}
+
+TEST_F(StyleCascadeTest, CycleAttrUseFallback) {
+  Element* element = DocumentElement();
+  TestCascade cascade(GetDocument(), element);
+  element->setAttribute(AtomicString("data-foo"), AtomicString("var(--x)"));
 
   cascade.Reset();
   cascade.Add("--x", "attr(data-foo type(*), abc)");
@@ -3214,6 +3228,43 @@ TEST_F(StyleCascadeTest, NonInitialWritingMode) {
   EXPECT_EQ("10px", cascade.ComputedValue("height"));
 }
 
+// crbug.com/40527196
+TEST_F(StyleCascadeTest, ApplyAfterWritingModeAdjustment) {
+  TestCascade cascade(GetDocument());
+
+  // Set ComputedStyle fields for 'padding' to 5px. This makes it possible
+  // to test that we explicitly set the initial value (0px) later.
+  cascade.Add("padding:5px");
+  // Simulate an inherited vertical writing-mode.
+  cascade.Add("writing-mode:vertical-rl");
+  cascade.Apply();
+  cascade.Reset();
+
+  // This should set padding-top/bottom only.
+  cascade.Add("--p:13px");
+  cascade.Add("padding-inline:var(--p)");
+  cascade.Apply();
+  EXPECT_EQ("13px", cascade.ComputedValue("padding-top"));
+  EXPECT_EQ("13px", cascade.ComputedValue("padding-bottom"));
+  EXPECT_EQ("5px", cascade.ComputedValue("padding-left"));
+  EXPECT_EQ("5px", cascade.ComputedValue("padding-right"));
+
+  // Simulate "style adjustment" (crbug.com/40527196).
+  cascade.State().StyleBuilder().SetWritingMode(WritingMode::kHorizontalTb);
+  // Simulate the second Apply() call during StyleResolver::
+  // ApplyAnimatedStyle().
+  cascade.Apply();
+  // padding-inline now means padding-left/right, but the pending substitution
+  // value is still held by the padding-top/bottom properties in the cascade
+  // map. This scenario is really unsupported, but until crbug.com/40527196
+  // can be fixed properly, the expected value is to behave like "unset"
+  // for properties with "broken" pending substitution values.
+  EXPECT_EQ("0px", cascade.ComputedValue("padding-top"));
+  EXPECT_EQ("0px", cascade.ComputedValue("padding-bottom"));
+  EXPECT_EQ("5px", cascade.ComputedValue("padding-left"));
+  EXPECT_EQ("5px", cascade.ComputedValue("padding-right"));
+}
+
 TEST_F(StyleCascadeTest, InitialTextSizeAdjust) {
   GetDocument().GetSettings()->SetTextAutosizingEnabled(true);
 
@@ -4013,9 +4064,40 @@ TEST_F(StyleCascadeTest, RevertOrigin) {
   EXPECT_EQ(CascadeOrigin::kNone, origin);
   EXPECT_EQ("unset", resolved_value->CssText());
 }
+namespace {
+
+class NullAnchorEvaluator : public AnchorEvaluator {
+  STACK_ALLOCATED();
+
+ public:
+  std::optional<LayoutUnit> Evaluate(
+      const AnchorQuery&,
+      const StylePositionAnchor& position_anchor,
+      const std::optional<PositionAreaOffsets>&) override {
+    return std::nullopt;
+  }
+  std::optional<PositionAreaOffsets> ComputePositionAreaOffsetsForLayout(
+      const StylePositionAnchor&,
+      PositionArea) override {
+    return PositionAreaOffsets();
+  }
+  std::optional<PhysicalOffset> ComputeAnchorCenterOffsets(
+      const ComputedStyleBuilder&) override {
+    return std::nullopt;
+  }
+
+  WritingDirectionMode GetContainerWritingDirection() const override {
+    return {WritingMode::kHorizontalTb, TextDirection::kLtr};
+  }
+};
+
+}  // namespace
 
 TEST_F(StyleCascadeTest, FlipRevertValue_Swap) {
-  TestCascade cascade(GetDocument());
+  NullAnchorEvaluator evaluator;
+  StyleRecalcContext style_recalc_context;
+  style_recalc_context.anchor_evaluator = &evaluator;
+  TestCascade cascade(GetDocument(), /*target=*/nullptr, &style_recalc_context);
 
   cascade.Add("left:1px", {.layer_order = 1});
   cascade.Add("right:2px", {.layer_order = 1});
@@ -4037,7 +4119,10 @@ TEST_F(StyleCascadeTest, FlipRevertValue_Swap) {
 }
 
 TEST_F(StyleCascadeTest, FlipRevertValue_Chain) {
-  TestCascade cascade(GetDocument());
+  NullAnchorEvaluator evaluator;
+  StyleRecalcContext style_recalc_context;
+  style_recalc_context.anchor_evaluator = &evaluator;
+  TestCascade cascade(GetDocument(), /*target=*/nullptr, &style_recalc_context);
 
   cascade.Add("left:1px", {.layer_order = 1});
   cascade.Add("right:2px", {.layer_order = 1});
@@ -4059,7 +4144,10 @@ TEST_F(StyleCascadeTest, FlipRevertValue_Chain) {
 }
 
 TEST_F(StyleCascadeTest, FlipRevertValue_Asymmetric) {
-  TestCascade cascade(GetDocument());
+  NullAnchorEvaluator evaluator;
+  StyleRecalcContext style_recalc_context;
+  style_recalc_context.anchor_evaluator = &evaluator;
+  TestCascade cascade(GetDocument(), /*target=*/nullptr, &style_recalc_context);
 
   cascade.Add("left:1px", {.layer_order = 1});
   cascade.Add("right:2px", {.layer_order = 1});
@@ -4079,7 +4167,10 @@ TEST_F(StyleCascadeTest, FlipRevertValue_Asymmetric) {
 }
 
 TEST_F(StyleCascadeTest, FlipRevertValue_DifferentOrigins) {
-  TestCascade cascade(GetDocument());
+  NullAnchorEvaluator evaluator;
+  StyleRecalcContext style_recalc_context;
+  style_recalc_context.anchor_evaluator = &evaluator;
+  TestCascade cascade(GetDocument(), /*target=*/nullptr, &style_recalc_context);
 
   cascade.Add("left:10px", {.origin = CascadeOrigin::kUser});
 
@@ -4100,7 +4191,10 @@ TEST_F(StyleCascadeTest, FlipRevertValue_DifferentOrigins) {
 }
 
 TEST_F(StyleCascadeTest, FlipRevertValue_Overwritten) {
-  TestCascade cascade(GetDocument());
+  NullAnchorEvaluator evaluator;
+  StyleRecalcContext style_recalc_context;
+  style_recalc_context.anchor_evaluator = &evaluator;
+  TestCascade cascade(GetDocument(), /*target=*/nullptr, &style_recalc_context);
 
   cascade.Add("left:1px", {.layer_order = 1});
   cascade.Add("right:2px", {.layer_order = 1});
@@ -4173,7 +4267,10 @@ TEST_F(StyleCascadeTest, TryTacticsStyleRevertLayer) {
 }
 
 TEST_F(StyleCascadeTest, TryTacticsStyleRevertTo) {
-  TestCascade cascade(GetDocument());
+  NullAnchorEvaluator evaluator;
+  StyleRecalcContext style_recalc_context;
+  style_recalc_context.anchor_evaluator = &evaluator;
+  TestCascade cascade(GetDocument(), /*target=*/nullptr, &style_recalc_context);
   cascade.Add("position:absolute");
   cascade.Add("top:1px");
   cascade.Add("top:2px", {.is_try_style = true});
@@ -4256,26 +4353,17 @@ namespace {
 // An AnchorEvaluator that responds to Mode::kTop only. This can be used to
 // test what happens when a flip converts a top (valid) into a bottom
 // (invalid).
-class TopAnchorEvaluator : public AnchorEvaluator {
+class TopAnchorEvaluator : public NullAnchorEvaluator {
   STACK_ALLOCATED();
 
  public:
   std::optional<LayoutUnit> Evaluate(
       const AnchorQuery&,
-      const ScopedCSSName* position_anchor,
+      const StylePositionAnchor& position_anchor,
       const std::optional<PositionAreaOffsets>&) override {
     if (GetMode() == Mode::kTop) {
       return LayoutUnit(1);
     }
-    return std::nullopt;
-  }
-  std::optional<PositionAreaOffsets> ComputePositionAreaOffsetsForLayout(
-      const ScopedCSSName*,
-      PositionArea) override {
-    return PositionAreaOffsets();
-  }
-  std::optional<PhysicalOffset> ComputeAnchorCenterOffsets(
-      const ComputedStyleBuilder&) override {
     return std::nullopt;
   }
 };

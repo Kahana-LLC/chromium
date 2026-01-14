@@ -10,6 +10,7 @@
 #include "base/strings/strcat.h"
 #include "base/syslog_logging.h"
 #include "build/chromeos_buildflags.h"
+#include "components/viz/common/frame_sinks/copy_output_result.h"
 #include "content/public/browser/render_widget_host.h"
 #include "content/public/browser/render_widget_host_view.h"
 #include "content/public/browser/web_contents.h"
@@ -79,7 +80,10 @@ WebContentsCaptureClient::CaptureResult WebContentsCaptureClient::CaptureAsync(
   view->CopyFromSurface(
       source_rect,  // An empty rect will capture the entire surface.
       gfx::Size(),  // Result contains device-level detail.
-      std::move(callback));
+      base::BindOnce([](const content::CopyFromSurfaceResult& result) {
+        // TODO(crbug.com/466199824): Update callsite to handle error case.
+        return result.value_or(viz::CopyOutputBitmapWithMetadata()).bitmap;
+      }).Then(std::move(callback)));
 
 #if BUILDFLAG(IS_CHROMEOS)
   SYSLOG(INFO) << "Screenshot taken";

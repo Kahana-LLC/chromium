@@ -9,6 +9,7 @@
 #include <string>
 
 #include "base/functional/bind.h"
+#include "base/functional/callback.h"
 #include "base/path_service.h"
 #include "chrome/common/chrome_paths.h"
 #include "extensions/common/extension.h"
@@ -97,7 +98,7 @@ TEST_F(ChromeExtensionsClientTest, GetBrowserImagePaths) {
                     .AppendASCII("browser_action")
                     .AppendASCII("basics");
 
-  std::string error;
+  std::u16string error;
   scoped_refptr<Extension> extension(
       file_util::LoadExtension(install_dir, mojom::ManifestLocation::kUnpacked,
                                Extension::NO_FLAGS, &error));
@@ -117,7 +118,7 @@ TEST_F(ChromeExtensionsClientTest, GetBrowserImagePathsThemeHiDpi) {
   install_dir =
       install_dir.AppendASCII("extensions").AppendASCII("theme_hidpi");
 
-  std::string error;
+  std::u16string error;
   scoped_refptr<Extension> extension(
       file_util::LoadExtension(install_dir, mojom::ManifestLocation::kUnpacked,
                                Extension::NO_FLAGS, &error));
@@ -139,12 +140,12 @@ TEST_F(ChromeExtensionsClientTest, CheckZeroLengthActionIconFiles) {
                                .AppendASCII("Extensions")
                                .AppendASCII("gggggggggggggggggggggggggggggggg");
 
-  std::string error;
+  std::u16string error;
   scoped_refptr<Extension> extension2(
       file_util::LoadExtension(ext_dir, mojom::ManifestLocation::kUnpacked,
                                Extension::NO_FLAGS, &error));
   EXPECT_FALSE(extension2.get());
-  EXPECT_EQ("Could not load icon 'icon.png' specified in 'browser_action'.",
+  EXPECT_EQ(u"Could not load icon 'icon.png' specified in 'browser_action'.",
             error);
 
   // Try to install an extension with a zero-length page action icon file.
@@ -157,7 +158,7 @@ TEST_F(ChromeExtensionsClientTest, CheckZeroLengthActionIconFiles) {
       file_util::LoadExtension(ext_dir, mojom::ManifestLocation::kUnpacked,
                                Extension::NO_FLAGS, &error));
   EXPECT_FALSE(extension3.get());
-  EXPECT_EQ("Could not load icon 'icon.png' specified in 'page_action'.",
+  EXPECT_EQ(u"Could not load icon 'icon.png' specified in 'page_action'.",
             error);
 }
 

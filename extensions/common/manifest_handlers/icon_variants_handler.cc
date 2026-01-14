@@ -11,12 +11,15 @@
 #include "base/lazy_instance.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
+#include "extensions/buildflags/buildflags.h"
 #include "extensions/common/api/icon_variants.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_features.h"
 #include "extensions/common/icons/extension_icon_variants.h"
 #include "extensions/common/manifest_constants.h"
 #include "ui/gfx/color_utils.h"
+
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
 
 namespace extensions {
 
@@ -56,7 +59,9 @@ void AddInstallWarningForId(Extension& extension, Id id) {
 ExtensionIconVariants GetIconVariants(Extension& extension) {
   ExtensionIconVariants icon_variants;
 
-  // Convert the input key into a list containing everything.
+  // Convert the input key into a list containing everything. Auto-generated
+  // `ManifestKeys` are intentionally not being used here so that arbitrary size
+  // keys can be specified that are not explicitly defined in the IDL schema.
   const base::Value::List* icon_variants_list =
       extension.manifest()->available_values().FindList(keys::kIconVariants);
   if (!icon_variants_list) {
@@ -94,7 +99,7 @@ const IconVariantsInfo* IconVariantsInfo::GetIconVariants(
     return nullptr;
   }
   return static_cast<IconVariantsInfo*>(
-      extension.GetManifestData(ManifestKeys::kIconVariants));
+      extension.GetManifestData(keys::kIconVariants));
 }
 
 // static

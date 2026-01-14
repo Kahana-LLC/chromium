@@ -127,7 +127,7 @@ class PLATFORM_EXPORT WidgetInputHandlerManager final
   void SetNeedsMainFrame(bool urgent) override;
   bool RequestedMainFramePending() override;
 
-  void DidFirstVisuallyNonEmptyPaint(const base::TimeTicks& first_paint_time);
+  void OnFirstContentfulPaint(const base::TimeTicks& first_paint_time);
   void SetHidden(bool hidden);
   void OnDevToolsSessionConnectionChanged(bool attached);
 
@@ -227,6 +227,11 @@ class PLATFORM_EXPORT WidgetInputHandlerManager final
 
   uint16_t suppressing_input_events_state() const {
     return suppressing_input_events_state_;
+  }
+
+  void PostHandwritingRadiusToInputThread(int handwriting_radius);
+  int HandwritingRadiusOnInputThread() const {
+    return input_handler_proxy_->HandwritingRadiusOnInputThread();
   }
 
  private:

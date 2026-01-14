@@ -36,7 +36,11 @@ class CORE_EXPORT CSSUnresolvedColorValue : public CSSValue {
         alpha_(alpha),
         alpha_channel_type_(alpha_channel_type) {}
 
-  WTF::String CustomCSSText() const;
+  String CustomCSSText() const;
+
+  const CSSValue* CopyRandomValueWithPropertyNameAndValueIndexIfNeeded(
+      const CSSPropertyName& property_name,
+      wtf_size_t& property_value_index) const;
 
   void TraceAfterDispatch(blink::Visitor* visitor) const {
     visitor->Trace(channels_[0]);

@@ -49,7 +49,7 @@ enum class InfobarTearDownMoment {
 
 // Records Presentation Metrics for the Infobar Delegate.
 // `current_password_saved` is true if the Infobar is on read-only mode after a
-// Save/Update action has occured.
+// Save/Update action has occurred.
 // `update_infobar` is YES if presenting an Update Infobar, NO if presenting a
 // Save Infobar.
 // `automatic` is YES the Infobar was presented automatically(e.g. The banner
@@ -220,7 +220,7 @@ NSString* IOSChromeSavePasswordInfoBarDelegate::GetPasswordText() const {
 }
 
 NSString* IOSChromeSavePasswordInfoBarDelegate::GetURLHostText() const {
-  return base::SysUTF8ToNSString(form_to_save_->GetURL().host());
+  return base::SysUTF8ToNSString(form_to_save_->GetURL().GetHost());
 }
 
 std::optional<std::string>
@@ -271,7 +271,6 @@ bool IOSChromeSavePasswordInfoBarDelegate::Accept() {
             changed_password_form_with_backup =
                 password_manager_util::FindChangedPasswordLoginWithBackup(
                     *form_to_save_)) {
-      form_to_save_->OnRemovePasswordBackupNote();
       const password_manager::PasswordForm& pending_credentials =
           form_to_save_->GetPendingCredentials();
       if (changed_password_form_with_backup->GetPasswordBackup().value() ==

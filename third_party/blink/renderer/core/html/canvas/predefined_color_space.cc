@@ -25,8 +25,19 @@ bool ValidateAndConvertColorSpace(const V8PredefinedColorSpace& v8_color_space,
       color_space = PredefinedColorSpace::kP3;
       break;
 
-    // To be shipped via Rec2100Linear feature.
+    // To be shipped via linear color spaces features.
     // https://crbug.com/436274258
+    case V8PredefinedColorSpace::Enum::kSRGBLinear:
+      color_space = PredefinedColorSpace::kSRGBLinear;
+      supported =
+          RuntimeEnabledFeatures::ColorSpacePredefinedLinearSpacesEnabled();
+      break;
+    case V8PredefinedColorSpace::Enum::kDisplayP3Linear:
+      color_space = PredefinedColorSpace::kDisplayP3Linear;
+      supported =
+          RuntimeEnabledFeatures::ColorSpacePredefinedLinearSpacesEnabled();
+      break;
+
     case V8PredefinedColorSpace::Enum::kRec2100Linear:
       color_space = PredefinedColorSpace::kRec2100Linear;
       supported = RuntimeEnabledFeatures::ColorSpaceRec2100LinearEnabled();
@@ -45,14 +56,10 @@ bool ValidateAndConvertColorSpace(const V8PredefinedColorSpace& v8_color_space,
       color_space = PredefinedColorSpace::kRec2100PQ;
       supported = RuntimeEnabledFeatures::CanvasHDREnabled();
       break;
-    case V8PredefinedColorSpace::Enum::kSRGBLinear:
-      color_space = PredefinedColorSpace::kSRGBLinear;
-      supported = RuntimeEnabledFeatures::CanvasHDREnabled();
-      break;
   }
   if (!supported) {
     exception_state.ThrowTypeError(StrCat(
-        {"The provided value '", v8_color_space.AsString(),
+        {"The provided value '", v8_color_space.AsStringView(),
          "' is not a valid enum value of the type PredefinedColorSpace."}));
     return false;
   }
@@ -74,6 +81,9 @@ V8PredefinedColorSpace PredefinedColorSpaceToV8(
       return V8PredefinedColorSpace(V8PredefinedColorSpace::Enum::kRec2100Pq);
     case PredefinedColorSpace::kSRGBLinear:
       return V8PredefinedColorSpace(V8PredefinedColorSpace::Enum::kSRGBLinear);
+    case PredefinedColorSpace::kDisplayP3Linear:
+      return V8PredefinedColorSpace(
+          V8PredefinedColorSpace::Enum::kDisplayP3Linear);
     case PredefinedColorSpace::kRec2100Linear:
       return V8PredefinedColorSpace(
           V8PredefinedColorSpace::Enum::kRec2100Linear);
@@ -115,7 +125,7 @@ void ParseCanvasHighDynamicRangeOptions(
   if (options->hasAgtm()) {
     auto span = options->agtm().RawByteSpan();
     auto data = SkData::MakeWithCopy(span.data(), span.size());
-    hdr_metadata.agtm.emplace(std::move(data));
+    hdr_metadata.setSerializedAgtm(std::move(data));
   }
 }
 

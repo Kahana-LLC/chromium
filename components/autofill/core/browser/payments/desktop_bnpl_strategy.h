@@ -17,6 +17,16 @@ class DesktopBnplStrategy : public BnplStrategy {
   DesktopBnplStrategy(const DesktopBnplStrategy&) = delete;
   DesktopBnplStrategy& operator=(const DesktopBnplStrategy&) = delete;
   ~DesktopBnplStrategy() override;
+
+  // BnplStrategy:
+  SuggestionShownNextAction GetNextActionOnSuggestionShown() override;
+  BnplSuggestionAcceptedNextAction GetNextActionOnBnplSuggestionAcceptance()
+      override;
+  BnplAmountExtractionReturnedNextAction
+  GetNextActionOnAmountExtractionReturned() override;
+  BeforeSwitchingViewAction GetBeforeViewSwitchAction() override;
+  bool ShouldRemoveExistingUiOnServerReturn(
+      PaymentsAutofillClient::PaymentsRpcResult result) override;
 };
 
 }  // namespace autofill::payments

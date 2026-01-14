@@ -8,38 +8,44 @@
 #import <Foundation/Foundation.h>
 
 #include "base/scoped_observation.h"
-#include "components/omnibox/composebox/composebox_query_controller.h"
+#include "components/contextual_search/contextual_search_context_controller.h"
 
 // Objective-C protocol for observing file upload status changes from
 // ComposeboxQueryController.
 @protocol ComposeboxFileUploadObserver <NSObject>
 - (void)onFileUploadStatusChanged:(const base::UnguessableToken&)fileToken
                          mimeType:(lens::MimeType)mimeType
-                 fileUploadStatus:(FileUploadStatus)fileUploadStatus
-                        errorType:(const std::optional<FileUploadErrorType>&)
+                 fileUploadStatus:
+                     (contextual_search::FileUploadStatus)fileUploadStatus
+                        errorType:(const std::optional<
+                                      contextual_search::FileUploadErrorType>&)
                                       errorType;
 @end
 
 // Bridge class that forwards file upload status changes from a C++
 // ComposeboxQueryController to an Objective-C observer.
 class ComposeboxFileUploadObserverBridge
-    : public ComposeboxQueryController::FileUploadStatusObserver {
+    : public contextual_search::ContextualSearchContextController::
+          FileUploadStatusObserver {
  public:
-  ComposeboxFileUploadObserverBridge(id<ComposeboxFileUploadObserver> observer,
-                                     ComposeboxQueryController* controller);
+  ComposeboxFileUploadObserverBridge(
+      id<ComposeboxFileUploadObserver> observer,
+      contextual_search::ContextualSearchContextController* controller);
   ~ComposeboxFileUploadObserverBridge() override;
 
   // ComposeboxQueryController::FileUploadStatusObserver implementation.
   void OnFileUploadStatusChanged(
       const base::UnguessableToken& file_token,
       lens::MimeType mime_type,
-      FileUploadStatus file_upload_status,
-      const std::optional<FileUploadErrorType>& error_type) override;
+      contextual_search::FileUploadStatus file_upload_status,
+      const std::optional<contextual_search::FileUploadErrorType>& error_type)
+      override;
 
  private:
   __weak id<ComposeboxFileUploadObserver> observer_;
-  base::ScopedObservation<ComposeboxQueryController,
-                          ComposeboxQueryController::FileUploadStatusObserver>
+  base::ScopedObservation<contextual_search::ContextualSearchContextController,
+                          contextual_search::ContextualSearchContextController::
+                              FileUploadStatusObserver>
       observation_{this};
 };
 

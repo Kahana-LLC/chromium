@@ -276,18 +276,14 @@ StyleImage* ElementStyleResources::GetStyleImage(CSSPropertyID property,
 }
 
 static bool AllowExternalResources(CSSPropertyID property) {
-  if (RuntimeEnabledFeatures::SvgExternalResourcesEnabled()) {
-    if (property == CSSPropertyID::kClipPath ||
-        property == CSSPropertyID::kFill ||
-        property == CSSPropertyID::kMarkerEnd ||
-        property == CSSPropertyID::kMarkerMid ||
-        property == CSSPropertyID::kMarkerStart ||
-        property == CSSPropertyID::kStroke) {
-      return true;
-    }
-  }
   return property == CSSPropertyID::kBackdropFilter ||
-         property == CSSPropertyID::kFilter;
+         property == CSSPropertyID::kClipPath ||
+         property == CSSPropertyID::kFill ||
+         property == CSSPropertyID::kFilter ||
+         property == CSSPropertyID::kMarkerEnd ||
+         property == CSSPropertyID::kMarkerMid ||
+         property == CSSPropertyID::kMarkerStart ||
+         property == CSSPropertyID::kStroke;
 }
 
 SVGResource* ElementStyleResources::GetSVGResourceFromValue(
@@ -327,7 +323,6 @@ static SVGResource* GetSVGResourceOrNull(StyleSVGResource* style_resource) {
 
 static SVGResource* GetSingleSVGResource(CSSPropertyID property,
                                          ComputedStyleBuilder& builder) {
-  CHECK(RuntimeEnabledFeatures::SvgExternalResourcesEnabled());
   switch (property) {
     case CSSPropertyID::kClipPath: {
       auto* reference_clip =
@@ -437,9 +432,7 @@ void ElementStyleResources::LoadPendingImages(
                 FetchParameters::ImageRequestBehavior::kNone;
             StyleImage* new_image = loader.Load(*pending_value, length_resolver,
                                                 image_request_behavior);
-            if (new_image && new_image->IsLazyloadPossiblyDeferred()) {
-              LazyImageHelper::StartMonitoring(&element_);
-            }
+            CHECK(!new_image || !new_image->IsLazyloadPossiblyDeferred());
             background_layer->SetImage(new_image);
           }
         }

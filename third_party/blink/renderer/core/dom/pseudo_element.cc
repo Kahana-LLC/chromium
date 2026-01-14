@@ -31,10 +31,12 @@
 #include "third_party/blink/renderer/core/css/post_style_update_scope.h"
 #include "third_party/blink/renderer/core/css/resolver/style_adjuster.h"
 #include "third_party/blink/renderer/core/css/resolver/style_resolver.h"
-#include "third_party/blink/renderer/core/css/style_containment_scope_tree.h"
+#include "third_party/blink/renderer/core/css/style_containment_scope.h"
+#include "third_party/blink/renderer/core/css/style_engine.h"
 #include "third_party/blink/renderer/core/dom/element_rare_data_vector.h"
 #include "third_party/blink/renderer/core/dom/first_letter_pseudo_element.h"
 #include "third_party/blink/renderer/core/dom/interest_hint_pseudo_element.h"
+#include "third_party/blink/renderer/core/dom/overscroll_pseudo_element_data.h"
 #include "third_party/blink/renderer/core/dom/scroll_button_pseudo_element.h"
 #include "third_party/blink/renderer/core/dom/scroll_marker_group_pseudo_element.h"
 #include "third_party/blink/renderer/core/dom/scroll_marker_pseudo_element.h"
@@ -83,11 +85,8 @@ PseudoId ResolvePseudoIdAlias(PseudoId pseudo_id) {
 
 PseudoElement* PseudoElement::Create(Element* parent,
                                      PseudoId pseudo_id,
-                                     const AtomicString& view_transition_name) {
+                                     const AtomicString& pseudo_argument) {
   if (pseudo_id == kPseudoIdCheckMark) {
-    CHECK(HTMLSelectElement::CustomizableSelectEnabled(parent) ||
-          RuntimeEnabledFeatures::MenuElementsEnabled());
-
     if (!IsA<HTMLOptionElement>(parent) && !IsA<HTMLMenuItemElement>(parent)) {
       // The `::checkmark` pseudo-element should only be created for option and
       // menuitem elements.
@@ -96,8 +95,6 @@ PseudoElement* PseudoElement::Create(Element* parent,
   }
 
   if (pseudo_id == kPseudoIdPickerIcon) {
-    CHECK(HTMLSelectElement::CustomizableSelectEnabled(parent));
-
     if (!IsA<HTMLSelectElement>(parent)) {
       // The `::picker-icon` pseudo-element should only be created for select
       // elements.
@@ -121,8 +118,7 @@ PseudoElement* PseudoElement::Create(Element* parent,
   } else if (IsTransitionPseudoElement(pseudo_id)) {
     auto* transition = ViewTransitionUtils::GetTransition(*parent);
     DCHECK(transition);
-    return transition->CreatePseudoElement(parent, pseudo_id,
-                                           view_transition_name);
+    return transition->CreatePseudoElement(parent, pseudo_id, pseudo_argument);
   } else if (ResolvePseudoIdAlias(pseudo_id) == kPseudoIdScrollMarkerGroup) {
     return MakeGarbageCollected<ScrollMarkerGroupPseudoElement>(parent,
                                                                 pseudo_id);
@@ -137,9 +133,10 @@ PseudoElement* PseudoElement::Create(Element* parent,
   DCHECK(pseudo_id == kPseudoIdAfter || pseudo_id == kPseudoIdBefore ||
          pseudo_id == kPseudoIdCheckMark || pseudo_id == kPseudoIdPickerIcon ||
          pseudo_id == kPseudoIdInterestHint || pseudo_id == kPseudoIdBackdrop ||
-         pseudo_id == kPseudoIdMarker || pseudo_id == kPseudoIdColumn);
+         pseudo_id == kPseudoIdMarker || pseudo_id == kPseudoIdColumn ||
+         pseudo_id == kPseudoIdOverscrollAreaParent);
   return MakeGarbageCollected<PseudoElement>(parent, pseudo_id,
-                                             view_transition_name);
+                                             pseudo_argument);
 }
 
 const QualifiedName& PseudoElementTagName(PseudoId pseudo_id) {
@@ -184,6 +181,11 @@ const QualifiedName& PseudoElementTagName(PseudoId pseudo_id) {
     case kPseudoIdMarker: {
       DEFINE_STATIC_LOCAL(QualifiedName, marker, (AtomicString("::marker")));
       return marker;
+    }
+    case kPseudoIdOverscrollAreaParent: {
+      DEFINE_STATIC_LOCAL(QualifiedName, overscroll_area_parent,
+                          (AtomicString("::internal-overscroll-area-parent")));
+      return overscroll_area_parent;
     }
     case kPseudoIdScrollMarkerGroup: {
       DEFINE_STATIC_LOCAL(QualifiedName, scroll_marker_group,
@@ -266,7 +268,7 @@ AtomicString PseudoElement::PseudoElementNameForEvents(Element* element) {
     case kPseudoIdViewTransitionImagePair:
     case kPseudoIdViewTransitionNew:
     case kPseudoIdViewTransitionOld: {
-      auto* pseudo = To<PseudoElement>(element);
+      auto* pseudo = To<ViewTransitionPseudoElementBase>(element);
       DCHECK(pseudo);
       StringBuilder builder;
       builder.Append(PseudoElementTagName(pseudo_id).LocalName());
@@ -295,6 +297,8 @@ bool PseudoElement::IsWebExposed(PseudoId pseudo_id, const Node* parent) {
       if (parent && parent->IsPseudoElement())
         return RuntimeEnabledFeatures::CSSMarkerNestedPseudoElementEnabled();
       return true;
+    case kPseudoIdOverscrollAreaParent:
+      return false;
     default:
       return true;
   }
@@ -302,12 +306,12 @@ bool PseudoElement::IsWebExposed(PseudoId pseudo_id, const Node* parent) {
 
 PseudoElement::PseudoElement(Element* parent,
                              PseudoId pseudo_id,
-                             const AtomicString& view_transition_name)
+                             const AtomicString& pseudo_argument)
     : Element(PseudoElementTagName(ResolvePseudoIdAlias(pseudo_id)),
               &parent->GetDocument(),
               kCreateElement),
       pseudo_id_(pseudo_id),
-      view_transition_name_(view_transition_name) {
+      pseudo_argument_(pseudo_argument) {
   DCHECK_NE(pseudo_id, kPseudoIdNone);
   parent->GetTreeScope().AdoptIfNeeded(*this);
   SetParentNode(parent);
@@ -347,17 +351,21 @@ const ComputedStyle* PseudoElement::CustomStyleForLayoutObject(
         style_recalc_context,
         StyleRequest(kPseudoIdNone, parent->GetComputedStyle(),
                      /* originating_element_style */ nullptr,
-                     view_transition_name_));
+                     pseudo_argument_));
   }
   return parent->StyleForPseudoElement(
       style_recalc_context,
       StyleRequest(GetPseudoIdForStyling(), parent->GetComputedStyle(),
-                   /* originating_element_style */ nullptr,
-                   view_transition_name_));
+                   /* originating_element_style */ nullptr, pseudo_argument_));
 }
 
 // static
-bool PseudoElement::IsLayoutSiblingOfOriginatingElement(PseudoId pseudo_id) {
+bool PseudoElement::IsLayoutSiblingOfOriginatingElement(
+    const Element& originating_element,
+    PseudoId pseudo_id) {
+  if (originating_element.IsDocumentElement()) {
+    return false;
+  }
   return pseudo_id == kPseudoIdScrollButtonBlockStart ||
          pseudo_id == kPseudoIdScrollButtonInlineStart ||
          pseudo_id == kPseudoIdScrollButtonBlockEnd ||
@@ -366,6 +374,13 @@ bool PseudoElement::IsLayoutSiblingOfOriginatingElement(PseudoId pseudo_id) {
          pseudo_id == kPseudoIdScrollMarkerGroup ||
          pseudo_id == kPseudoIdScrollMarkerGroupAfter ||
          pseudo_id == kPseudoIdScrollMarkerGroupBefore;
+}
+
+bool PseudoElement::IsLayoutSiblingOfOriginatingElement() const {
+  if (Element* parent = parentElement()) {
+    return IsLayoutSiblingOfOriginatingElement(*parent, GetPseudoId());
+  }
+  return false;
 }
 
 const ComputedStyle* PseudoElement::AdjustedLayoutStyle(
@@ -409,6 +424,33 @@ const ComputedStyle* PseudoElement::AdjustedLayoutStyle(
   return nullptr;
 }
 
+const ContentData* PseudoElement::GetContentData() const {
+  if (ContentData* content_data = GetAltContentData()) {
+    return content_data;
+  }
+  if (const ComputedStyle* style = GetComputedStyle()) {
+    return style->GetContentData();
+  }
+  return nullptr;
+}
+
+ContentData* PseudoElement::CreateMutableAltContentDataForCountersIfNeeded() {
+  if (ContentData* content_data = GetAltContentData()) {
+    return content_data;
+  }
+  const ComputedStyle* style = GetComputedStyle();
+  if (!style) {
+    return nullptr;
+  }
+  const ContentData* style_content = style->GetContentData();
+  if (!style_content || !style_content->HasAltCounterContent()) {
+    return nullptr;
+  }
+  ContentData* content_data = style_content->Clone();
+  SetAltContentData(content_data);
+  return content_data;
+}
+
 void PseudoElement::Dispose() {
   DCHECK(ParentOrShadowHostElement());
 
@@ -416,6 +458,13 @@ void PseudoElement::Dispose() {
 
   DCHECK(!nextSibling());
   DCHECK(!previousSibling());
+
+  if (const ComputedStyle* style = GetComputedStyle()) {
+    if (style->GetCounterDirectives() || style->ContainsStyle() ||
+        PseudoElementStylesAffectCounters()) {
+      GetDocument().GetStyleEngine().MarkCountersDirty();
+    }
+  }
 
   DetachLayoutTree();
   Element* parent = ParentOrShadowHostElement();
@@ -517,40 +566,65 @@ void PseudoElement::AttachLayoutTree(AttachContext& context) {
 
   DCHECK(!style.ContentBehavesAsNormal());
   DCHECK(!style.ContentPreventsBoxGeneration());
-  for (ContentData* content = style.GetContentData(); content;
+
+  const ContentData* style_content = style.GetContentData();
+  const bool has_alt_counter = style_content->HasAltCounterContent();
+
+  ContentData* mutable_content = nullptr;
+  if (has_alt_counter) {
+    mutable_content = style_content->Clone();
+    SetAltContentData(mutable_content);
+    if (context.counters_context.AttachmentRootIsDocumentElement()) {
+      for (ContentData* content = mutable_content; content;
+           content = content->Next()) {
+        if (auto* alt_counter_data =
+                DynamicTo<AltCounterContentData>(content)) {
+          alt_counter_data->UpdateText(context.counters_context,
+                                       GetDocument().GetStyleEngine(),
+                                       *layout_object);
+        }
+      }
+    } else {
+      GetDocument().GetStyleEngine().MarkCountersDirty();
+    }
+  } else {
+    if (GetAltContentData()) {
+      SetAltContentData(nullptr);
+    }
+  }
+
+  const ContentData* content_for_layout =
+      mutable_content ? mutable_content : style_content;
+
+  for (const ContentData* content = content_for_layout; content;
        content = content->Next()) {
-    if (auto* alt_counter_data = DynamicTo<AltCounterContentData>(content)) {
-      alt_counter_data->UpdateText(context.counters_context,
-                                   GetDocument().GetStyleEngine(),
-                                   *layout_object);
+    if (content->IsAltText() || content->IsAltCounter()) {
       continue;
     }
-    if (!content->IsAltText()) {
-      LayoutObject* child = content->CreateLayoutObject(*layout_object);
-      if (layout_object->IsChildAllowed(child, style)) {
-        layout_object->AddChild(child);
-        if (child->IsQuote()) {
-          StyleContainmentScopeTree& tree =
-              GetDocument().GetStyleEngine().EnsureStyleContainmentScopeTree();
-          StyleContainmentScope* scope =
-              tree.FindOrCreateEnclosingScopeForElement(*this);
-          scope->AttachQuote(*To<LayoutQuote>(child));
-          tree.UpdateOutermostQuotesDirtyScope(scope);
-        }
-        if (auto* layout_counter = DynamicTo<LayoutCounter>(child)) {
-          if (context.counters_context.AttachmentRootIsDocumentElement()) {
-            Vector<int> counter_values =
-                context.counters_context.GetCounterValues(
-                    *layout_object, layout_counter->Identifier(),
-                    layout_counter->Separator().IsNull());
-            layout_counter->UpdateCounter(std::move(counter_values));
-          } else {
-            GetDocument().GetStyleEngine().MarkCountersDirty();
-          }
-        }
-      } else {
-        child->Destroy();
+    LayoutObject* child = content->CreateLayoutObject(*layout_object);
+    if (layout_object->IsChildAllowed(child, style)) {
+      layout_object->AddChild(child);
+      if (child->IsQuote()) {
+        StyleContainmentScopeTree& tree =
+            GetDocument().GetStyleEngine().EnsureStyleContainmentScopeTree();
+        StyleContainmentScope* scope =
+            tree.FindOrCreateEnclosingScopeForElement(*this);
+        scope->AttachItem(*To<LayoutQuote>(child));
+        tree.UpdateOutermostDirtyScope(scope);
       }
+      if (auto* layout_counter = DynamicTo<LayoutCounter>(child)) {
+        if (context.counters_context.AttachmentRootIsDocumentElement()) {
+          Vector<int> counter_values =
+              context.counters_context.GetCounterValues(
+                  *layout_object, layout_counter->Identifier(),
+                  layout_counter->Separator().IsNull());
+          layout_counter->UpdateCounter(std::move(counter_values));
+        } else {
+          GetDocument().GetStyleEngine().MarkCountersDirty();
+        }
+      }
+    } else {
+      child->Destroy();
     }
   }
   context.counters_context.LeaveObject(*layout_object);
@@ -570,6 +644,7 @@ bool PseudoElement::CanGenerateContent() const {
     case kPseudoIdScrollButtonInlineStart:
     case kPseudoIdScrollButtonInlineEnd:
     case kPseudoIdScrollButtonBlockEnd:
+    case kPseudoIdOverscrollAreaParent:
       return true;
     default:
       return false;
@@ -673,6 +748,7 @@ bool PseudoElementLayoutObjectIsNeeded(PseudoId pseudo_id,
     case kPseudoIdViewTransitionNew:
     case kPseudoIdViewTransitionOld:
     case kPseudoIdColumn:
+    case kPseudoIdOverscrollAreaParent:
       return true;
     case kPseudoIdCheckMark:
     case kPseudoIdBefore:

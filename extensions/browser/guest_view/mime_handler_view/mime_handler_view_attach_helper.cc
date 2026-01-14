@@ -9,7 +9,6 @@
 #include <string>
 #include <vector>
 
-#include "base/containers/contains.h"
 #include "base/containers/flat_map.h"
 #include "base/functional/bind.h"
 #include "base/memory/ptr_util.h"
@@ -64,7 +63,7 @@ SkColor GetBackgroundColorStringForMimeType(const GURL& url,
   std::vector<content::WebPluginInfo> web_plugin_info_array;
   std::vector<std::string> unused_actual_mime_types;
   content::PluginService::GetInstance()->GetPluginInfoArray(
-      url, mime_type, true, &web_plugin_info_array, &unused_actual_mime_types);
+      url, mime_type, &web_plugin_info_array, &unused_actual_mime_types);
   if (!web_plugin_info_array.empty()) {
     return web_plugin_info_array.front().background_color;
   }
@@ -87,7 +86,7 @@ MimeHandlerViewAttachHelper* MimeHandlerViewAttachHelper::Get(
     int32_t render_process_id) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   auto& map = *GetProcessIdToHelperMap();
-  if (!base::Contains(map, render_process_id)) {
+  if (!map.contains(render_process_id)) {
     auto* process_host = content::RenderProcessHost::FromID(render_process_id);
     if (!process_host) {
       return nullptr;

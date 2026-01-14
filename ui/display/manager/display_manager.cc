@@ -16,7 +16,6 @@
 
 #include "base/auto_reset.h"
 #include "base/command_line.h"
-#include "base/containers/contains.h"
 #include "base/functional/bind.h"
 #include "base/logging.h"
 #include "base/metrics/histogram_macros.h"
@@ -808,15 +807,13 @@ bool DisplayManager::SetDisplayMode(int64_t display_id,
         display_property_changed = true;
       }
 
-      if (features::IsListAllDisplayModesEnabled()) {
-        if (info.refresh_rate() != display_mode.refresh_rate()) {
-          info.set_refresh_rate(display_mode.refresh_rate());
-          resolution_changed = true;
-        }
-        if (info.is_interlaced() != display_mode.is_interlaced()) {
-          info.set_is_interlaced(display_mode.is_interlaced());
-          resolution_changed = true;
-        }
+      if (info.refresh_rate() != display_mode.refresh_rate()) {
+        info.set_refresh_rate(display_mode.refresh_rate());
+        resolution_changed = true;
+      }
+      if (info.is_interlaced() != display_mode.is_interlaced()) {
+        info.set_is_interlaced(display_mode.is_interlaced());
+        resolution_changed = true;
       }
     }
     display_info_list.emplace_back(info);
@@ -1309,7 +1306,7 @@ bool DisplayManager::UpdateDisplaysWith(
   std::vector<size_t> updated_indices;
   UpdateNonPrimaryDisplayBoundsForLayout(&new_displays, &updated_indices);
   for (size_t updated_index : updated_indices) {
-    if (!base::Contains(added_display_indices, updated_index)) {
+    if (!std::ranges::contains(added_display_indices, updated_index)) {
       uint32_t metrics = DisplayObserver::DISPLAY_METRIC_BOUNDS |
                          DisplayObserver::DISPLAY_METRIC_WORK_AREA;
       if (display_changes.find(updated_index) != display_changes.end()) {
@@ -1481,7 +1478,7 @@ const Display& DisplayManager::GetFakePrimaryDisplay() {
   static Display* fake_display = nullptr;
   if (!fake_display) {
     fake_display = new Display(Display::GetDefaultDisplay());
-    // Note that if an inappropriate gfx::BufferFormat is specified in the
+    // Note that if an inappropriate format is specified in the
     // gfx::DisplayColorSpaces of the fake display, this can sometimes
     // propagate to allocation code and cause errors.
     // https://crbug.com/1057501
@@ -1511,6 +1508,15 @@ size_t DisplayManager::GetNumExternalDisplays() const {
 
 bool DisplayManager::IsActiveDisplayId(int64_t display_id) const {
   return ContainsDisplayWithId(active_display_list_, display_id);
+}
+
+bool DisplayManager::IsConnectedDisplayId(int64_t display_id) const {
+  for (int64_t id : connected_display_id_list_) {
+    if (id == display_id) {
+      return true;
+    }
+  }
+  return false;
 }
 
 bool DisplayManager::IsInMirrorMode() const {
@@ -1943,8 +1949,8 @@ bool DisplayManager::UpdateDisplayBounds(int64_t display_id,
   display_info_[display_id].SetBounds(new_bounds);
   // Don't notify observers if the mirrored window has changed.
   if (IsInSoftwareMirrorMode() &&
-      base::Contains(software_mirroring_display_list_, display_id,
-                     &Display::id)) {
+      std::ranges::contains(software_mirroring_display_list_, display_id,
+                            &Display::id)) {
     return false;
   }
 
@@ -2083,23 +2089,20 @@ void DisplayManager::CreateSoftwareMirroringDisplayInfo(
           destination_ids.insert(id);
         }
       } else {
-        // Select a default source display and treat all other connected
-        // displays as destination.
-        if (HasInternalDisplay()) {
-          // Use the internal display as mirroring source.
-          source_id = Display::InternalDisplayId();
-          if (!base::Contains(*display_info_list, source_id,
-                              &ManagedDisplayInfo::id)) {
-            // It is possible that internal display is removed (e.g. Use
-            // Chromebook in Dock mode with two or more external displays). In
-            // this case, we use the first connected display as mirroring
-            // source.
-            source_id = first_display_id_;
-          }
-        } else {
-          // Use the first connected display as mirroring source
+        // Select the primary display as the source display and treat all other
+        // connected displays as destination.
+        // Get primary display from layout as primary display may be changed.
+        const display::DisplayLayout& layout =
+            layout_store()->GetRegisteredDisplayLayout(
+                CreateDisplayIdList(*display_info_list));
+        source_id = layout.primary_id;
+        if (!std::ranges::contains(*display_info_list, source_id,
+                                   &ManagedDisplayInfo::id)) {
+          // It is possible that primary display is removed in the new display
+          // configuration.
           source_id = first_display_id_;
         }
+
         DCHECK(source_id != kInvalidDisplayId);
 
         for (auto& info : *display_info_list) {

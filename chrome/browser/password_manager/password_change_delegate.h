@@ -58,6 +58,8 @@ class PasswordChangeDelegate {
     // The flow is not stopped, but the user action is required.
     kLoginFormDetected = 10,
 
+    // Deprecated: kLoginFormDetectedUserCanContinue = 11,
+
     kMaxValue = kLoginFormDetected,
   };
   // LINT.ThenChange(/tools/metrics/histograms/metadata/password/enums.xml:PasswordChangeFlowState)
@@ -140,6 +142,10 @@ class PasswordChangeDelegate {
 
   // Called when the user declines the initial dialog offering password change.
   virtual void OnPasswordChangeDeclined() = 0;
+
+  // Called when the user chooses to retry the login check (by clicking
+  // 'Retry' on the toast).
+  virtual void RetryLoginCheck() = 0;
 
   // Adds/removes an observer.
   virtual void AddObserver(Observer* observer) = 0;

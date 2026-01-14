@@ -15,6 +15,7 @@
 #include "base/test/bind.h"
 #include "base/test/scoped_feature_list.h"
 #include "media/base/media_switches.h"
+#include "media/base/supported_types.h"
 #include "media/base/video_codecs.h"
 #include "media/mojo/clients/mojo_video_encoder_metrics_provider.h"
 #include "media/mojo/mojom/media_metrics_provider.mojom-blink.h"
@@ -45,6 +46,7 @@
 #include "third_party/blink/renderer/platform/testing/task_environment.h"
 #include "third_party/blink/renderer/platform/testing/testing_platform_support.h"
 #include "third_party/blink/renderer/platform/testing/unit_test_helpers.h"
+#include "third_party/blink/renderer/platform/wtf/functional.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_view.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 #include "third_party/blink/renderer/platform/wtf/wtf_size_t.h"
@@ -69,7 +71,7 @@ class MockPerfHistoryService
     receiver_.Bind(
         mojo::PendingReceiver<media::mojom::blink::VideoDecodePerfHistory>(
             std::move(handle)));
-    receiver_.set_disconnect_handler(base::BindOnce(
+    receiver_.set_disconnect_handler(blink::BindOnce(
         &MockPerfHistoryService::OnConnectionError, base::Unretained(this)));
   }
 
@@ -92,8 +94,8 @@ class MockWebrtcPerfHistoryService
         mojo::PendingReceiver<media::mojom::blink::WebrtcVideoPerfHistory>(
             std::move(handle)));
     receiver_.set_disconnect_handler(
-        base::BindOnce(&MockWebrtcPerfHistoryService::OnConnectionError,
-                       base::Unretained(this)));
+        blink::BindOnce(&MockWebrtcPerfHistoryService::OnConnectionError,
+                        base::Unretained(this)));
   }
 
   void OnConnectionError() { receiver_.reset(); }
@@ -119,7 +121,7 @@ class FakeMediaMetricsProvider
     receiver_.Bind(
         mojo::PendingReceiver<media::mojom::blink::MediaMetricsProvider>(
             std::move(handle)));
-    receiver_.set_disconnect_handler(base::BindOnce(
+    receiver_.set_disconnect_handler(blink::BindOnce(
         &FakeMediaMetricsProvider::OnConnectionError, base::Unretained(this)));
   }
 
@@ -149,6 +151,7 @@ class FakeMediaMetricsProvider
   void OnError(const media::PipelineStatus& status) override {}
   void OnFallback(const media::PipelineStatus& status) override {}
   void SetIsEME() override {}
+  void SetHasTrackChange() override {}
   void SetTimeToMetadata(base::TimeDelta elapsed) override {}
   void SetTimeToFirstFrame(base::TimeDelta elapsed) override {}
   void SetTimeToPlayReady(base::TimeDelta elapsed) override {}
@@ -489,6 +492,22 @@ TEST(MediaCapabilitiesTests, BasicAudio) {
   EXPECT_TRUE(info->supported());
   EXPECT_TRUE(info->smooth());
   EXPECT_TRUE(info->powerEfficient());
+}
+
+TEST(MediaCapabilitiesTests, BasicAudioWithProfile) {
+  test::TaskEnvironment task_environment;
+  MediaCapabilitiesTestContext context;
+  auto* decoding_config = CreateAudioConfig<MediaDecodingConfiguration>(
+      "audio/mp4; codecs=mp4a.40.42", V8MediaDecodingType::Enum::kMediaSource);
+  MediaCapabilitiesInfo* info = DecodingInfo(decoding_config, &context);
+
+  EXPECT_EQ(info->supported(),
+            media::IsDecoderSupportedAudioType(
+                {media::AudioCodec::kAAC, media::AudioCodecProfile::kXHE_AAC}));
+  if (info->supported()) {
+    EXPECT_TRUE(info->smooth());
+    EXPECT_TRUE(info->powerEfficient());
+  }
 }
 
 // Other tests will assume these match. Test to be sure they stay in sync.

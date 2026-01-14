@@ -172,8 +172,9 @@ D3D12VideoEncodeH265Delegate::GetSupportedProfiles(
 }
 
 D3D12VideoEncodeH265Delegate::D3D12VideoEncodeH265Delegate(
-    Microsoft::WRL::ComPtr<ID3D12VideoDevice3> video_device)
-    : D3D12VideoEncodeDelegate(std::move(video_device)) {
+    Microsoft::WRL::ComPtr<ID3D12VideoDevice3> video_device,
+    const gpu::GpuDriverBugWorkarounds& gpu_workarounds)
+    : D3D12VideoEncodeDelegate(std::move(video_device), gpu_workarounds) {
   // We always do add-one before encoding, so we assign them to be -1 to make it
   // start with 0.
   pic_params_.PictureOrderCountNumber = -1;
@@ -193,6 +194,19 @@ size_t D3D12VideoEncodeH265Delegate::GetMaxNumOfRefFrames() const {
   return max_num_ref_frames_;
 }
 
+size_t D3D12VideoEncodeH265Delegate::GetMaxNumOfManualRefBuffers() const {
+  // We should have initialized.
+  CHECK_GT(max_num_ref_frames_, 0u);
+
+  // TODO(https://crbug.com/440117473): remove the limitation of 2.
+  // Some IHV driver reports MaxDPBCapacity as 16 regardless of current level
+  // used. Decoder will check the `vps|sps_max_dec_pic_buffering_minus1` value
+  // against level constraint, which for level 4.1-, is much smaller than 15
+  // but always >= 6. We further reduce this to <= 2 to simplify reference
+  // management and reordering.
+  return std::min(max_num_ref_frames_, 2u);
+}
+
 bool D3D12VideoEncodeH265Delegate::SupportsRateControlReconfiguration() const {
   return encoder_support_flags_ &
          D3D12_VIDEO_ENCODER_SUPPORT_FLAG_RATE_CONTROL_RECONFIGURATION_AVAILABLE;
@@ -203,18 +217,17 @@ bool D3D12VideoEncodeH265Delegate::ReportsAverageQp() const {
          D3D12_VIDEO_ENCODER_RATE_CONTROL_MODE_CQP;
 }
 
-bool D3D12VideoEncodeH265Delegate::UpdateRateControl(const Bitrate& bitrate,
-                                                     uint32_t framerate) {
+bool D3D12VideoEncodeH265Delegate::UpdateRateControl(
+    const VideoBitrateAllocation& bitrate_allocation,
+    uint32_t framerate) {
   if (software_rate_controller_) {
-    if (bitrate.mode() != Bitrate::Mode::kConstant &&
-        bitrate.mode() != Bitrate::Mode::kVariable) {
+    if (bitrate_allocation.GetMode() != Bitrate::Mode::kConstant &&
+        bitrate_allocation.GetMode() != Bitrate::Mode::kVariable) {
       return false;
     }
 
-    config_.bitrate = bitrate;
-    config_.framerate = framerate;
-    VideoBitrateAllocation bitrate_allocation =
-        AllocateBitrateForDefaultEncoding(config_);
+    framerate_ = framerate;
+    bitrate_allocation_ = bitrate_allocation;
     if (bitrate_allocation.GetSumBps() == 0) {
       return false;
     }
@@ -234,7 +247,7 @@ bool D3D12VideoEncodeH265Delegate::UpdateRateControl(const Bitrate& bitrate,
         sum_bitrate += bitrate_allocation.GetBitrateBps(0, i);
         layer_settings.avg_bitrate = sum_bitrate;
         layer_settings.peak_bitrate =
-            bitrate.mode() == Bitrate::Mode::kConstant
+            bitrate_allocation.GetMode() == Bitrate::Mode::kConstant
                 ? sum_bitrate
                 : base::saturated_cast<uint32_t>(sum_bitrate *
                                                  peak_target_ratio);
@@ -248,7 +261,7 @@ bool D3D12VideoEncodeH265Delegate::UpdateRateControl(const Bitrate& bitrate,
         software_rate_controller_->temporal_layers(i).SetBufferParameters(
             rate_controller_settings_.layer_settings[i].hrd_buffer_size,
             sum_bitrate,
-            bitrate.mode() == Bitrate::Mode::kConstant
+            bitrate_allocation.GetMode() == Bitrate::Mode::kConstant
                 ? sum_bitrate
                 : base::saturated_cast<uint32_t>(sum_bitrate *
                                                  peak_target_ratio),
@@ -258,11 +271,11 @@ bool D3D12VideoEncodeH265Delegate::UpdateRateControl(const Bitrate& bitrate,
     return true;
   }
 
-  return D3D12VideoEncodeDelegate::UpdateRateControl(bitrate, framerate);
+  return D3D12VideoEncodeDelegate::UpdateRateControl(bitrate_allocation,
+                                                     framerate);
 }
 
-EncoderStatus::Or<BitstreamBufferMetadata>
-D3D12VideoEncodeH265Delegate::EncodeImpl(
+EncoderStatus D3D12VideoEncodeH265Delegate::EncodeImpl(
     ID3D12Resource* input_frame,
     UINT input_frame_subresource,
     const VideoEncoder::EncodeOptions& options,
@@ -325,6 +338,13 @@ D3D12VideoEncodeH265Delegate::EncodeImpl(
 
   if (is_keyframe) {
     H265VPS vps = ToVPS();
+    // HEVC spec section C.3: insertion of current picture happens before
+    // removal of pictures from the DPB, so if we for example allow the
+    // maximum references for each frame to be 2, the DPB must allow 3 frames
+    // to be stored into it. Thus vps_max_dec_pic_buffering_minus1 equals to
+    // the maximum allowed references, instead of that minus 1.
+    vps.vps_max_dec_pic_buffering_minus1[0] =
+        svc_layers_ ? max_num_ref_frames_ : GetMaxNumOfManualRefBuffers();
     H265SPS sps = ToSPS(vps);
     // Values specified here equals to that in T-REC H.273 Table 3.
     if (IsRec601(input_color_space)) {
@@ -424,11 +444,7 @@ D3D12VideoEncodeH265Delegate::EncodeImpl(
   if (update_buffer) {
     input_arguments_.PictureControlDesc.Flags =
         D3D12_VIDEO_ENCODER_PICTURE_CONTROL_FLAG_USED_AS_REFERENCE_PICTURE;
-    D3D12PictureBuffer reconstructed_picture =
-        reference_frame_manager_.GetCurrentFrame();
-    output_arguments.pReconstructedPicture = reconstructed_picture.resource_;
-    output_arguments.ReconstructedPictureSubresource =
-        reconstructed_picture.subresource_;
+    output_arguments = reference_frame_manager_.GetCurrentFrame();
   } else {
     input_arguments_.PictureControlDesc.Flags =
         D3D12_VIDEO_ENCODER_PICTURE_CONTROL_FLAG_NONE;
@@ -448,11 +464,13 @@ D3D12VideoEncodeH265Delegate::EncodeImpl(
         pic_params_.PictureOrderCountNumber, update_buffer.value(), false);
   }
 
-  svc_layers_->PostEncode(0);
+  if (svc_layers_) {
+    svc_layers_->PostEncode(0);
+  }
 
   metadata_.key_frame = is_keyframe;
   metadata_.qp = qp;
-  return metadata_;
+  return EncoderStatus::Codes::kOk;
 }
 
 EncoderStatus D3D12VideoEncodeH265Delegate::InitializeVideoEncoder(
@@ -631,9 +649,12 @@ EncoderStatus D3D12VideoEncodeH265Delegate::InitializeVideoEncoder(
 
   h265_level_ = suggested_level;
 
-  if (!reference_frame_manager_.InitializeTextureArray(
+  bool use_texture_array =
+      encoder_support_flags_ &
+      D3D12_VIDEO_ENCODER_SUPPORT_FLAG_RECONSTRUCTED_FRAMES_REQUIRE_TEXTURE_ARRAYS;
+  if (!reference_frame_manager_.InitializeTextureResources(
           device_.Get(), config.input_visible_size, input_format_,
-          max_num_ref_frames_)) {
+          max_num_ref_frames_, use_texture_array)) {
     return {EncoderStatus::Codes::kEncoderInitializationError,
             "Failed to initialize DPB"};
   }

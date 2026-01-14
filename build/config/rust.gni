@@ -52,6 +52,11 @@ declare_args() {
   # To use a custom toolchain instead, specify an absolute path to the root of
   # a Rust sysroot, which will have a 'bin' directory and others. Commonly
   # <home dir>/.rustup/toolchains/nightly-<something>-<something>
+  # Using a custom toolchain should work, but this build configuration is
+  # community-supported and not tested by Chromium CQ.  In particular, Chromium
+  # build may depend on using a *nightly* version of Rust toolchain (see
+  # `tools/rust/unstable_rust_feature_usage.md`) although other projects (e.g. V8)
+  # may be compatible with the stable version of Rust toolchain.
   rust_sysroot_absolute = ""
 
   # Directory under which to find `bin/bindgen` (a `bin` directory containing
@@ -68,12 +73,9 @@ declare_args() {
   #
   # One important consideration is whether the linker uses the same LLVM
   # version as `rustc` (i.e. if it can understand the LLVM-IR from the
-  # compilation artifacts produced by `rustc`).  In LaCrOS and ash builds this
-  # may not be true - see b/299483903.
-  #
-  # TODO(crbug.com/40281834): Re-enable ThinLTO for Rust on LaCrOS
-  # TODO(b/300937673): Re-enable ThinLTO for Rust on ash-chrome
-  toolchain_supports_rust_thin_lto = !is_chromeos
+  # compilation artifacts produced by `rustc`).  For more context please see
+  # older bugs like b/299483903, https://crbug.com/40281834, or b/300937673.
+  toolchain_supports_rust_thin_lto = true
 
   # Any extra std rlibs in your Rust toolchain, relative to the standard
   # Rust toolchain. Typically used with 'rust_sysroot_absolute'
@@ -91,6 +93,15 @@ declare_args() {
   # a platform. Mostly applicable to Windows, where new versions can handle ANSI
   # escape sequences but it's not reliable in general.
   force_rustc_color_output = false
+
+  # Whether expansion of GN templates like `rust_static_library` automatically
+  # creates a target for invoking `clippy` against Rust sources.
+  #
+  # TODO(crbug.com/41484295): Consider enabling this in some configurations.
+  # This requires:
+  # * Fixing pre-existing violations of `clippy` lints (crbug.com/472355480)
+  # * Deciding on a policy (e.g. which trybots can/should cover `clippy`)
+  enable_rust_clippy = false
 }
 
 declare_args() {
@@ -106,6 +117,11 @@ declare_args() {
 # Use the Rust toolchain built in-tree. When false, we use the prebuilt Rust
 # stdlibs that come with the specified custom toolchain.
 use_chromium_rust_toolchain = rust_sysroot_absolute == ""
+
+# `rustc_nightly_capability = false` will make the build avoid the use of
+# Rust nightly features. There are no bots that test this and there is no
+# guarantee it will work, but we accept patches for this configuration.
+rustc_nightly_capability = use_chromium_rust_toolchain
 
 # Platform support for the Rust toolchain.
 chromium_toolchain_supports_platform = !is_wasm
@@ -200,11 +216,7 @@ if (is_linux || is_chromeos) {
       # The thumbv7 vs. armv7 distinction is for legacy reasons and both
       # targets in fact target Thumb, see:
       # https://github.com/rust-lang/rust/issues/44722
-      if (arm_use_neon) {
-        rust_abi_target = "thumbv7neon-unknown-linux-gnueabi" + float_suffix
-      } else {
-        rust_abi_target = "armv7-unknown-linux-gnueabi" + float_suffix
-      }
+      rust_abi_target = "thumbv7neon-unknown-linux-gnueabi" + float_suffix
     } else {
       rust_abi_target = "arm-unknown-linux-gnueabi" + float_suffix
     }
@@ -228,12 +240,7 @@ if (is_linux || is_chromeos) {
     # Android clang target specifications mostly match Rust, but this
     # is an exception.
     # See section above for Linux for thumbv7neon vs. armv7.
-    # Note that on Android, NEON is enabled for all builds except Cronet.
-    if (arm_use_neon) {
-      rust_abi_target = "thumbv7neon-linux-androideabi"
-    } else {
-      rust_abi_target = "armv7-linux-androideabi"
-    }
+    rust_abi_target = "thumbv7neon-linux-androideabi"
   } else if (android_abi_target == "mipsel-linux-android") {
     # There is no MIPS android target.
     rust_abi_target = ""

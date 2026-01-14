@@ -23,7 +23,6 @@
 #include "base/strings/strcat.h"
 #include "base/synchronization/lock.h"
 #include "base/task/sequenced_task_runner.h"
-#include "base/task/single_thread_task_runner.h"
 #include "build/build_config.h"
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -151,7 +150,7 @@ class ObserverListThreadSafe : public internal::ObserverListThreadSafeBase {
     bool was_empty = observers_.empty();
 
     // Add |observer| to the list of observers.
-    DCHECK(!Contains(observers_, observer));
+    DCHECK(!observers_.contains(observer));
     const scoped_refptr<SequencedTaskRunner> task_runner =
         SequencedTaskRunner::GetCurrentDefault();
     // Each observer gets a unique identifier. These unique identifiers are used

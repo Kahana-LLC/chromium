@@ -74,12 +74,15 @@ chromium-metrics-reviews@google.com.
   <int value="5" label="Node Removed"/>
 </enum>
 
-<enum name="LocalSiteCharacteristicsDBInitStatus">
-  <int value="0" label="Success"/>
-  <int value="1" label="Corruption"/>
-  <int value="2" label="IO Error"/>
-  <int value="3" label="Unknown Error"/>
+<!-- LINT.IfChange(TransientKeepAliveResult) -->
+
+<enum name="TransientKeepAliveResult">
+  <int value="0" label="Successful Reuse"/>
+  <int value="1" label="Evicted Due To Count Limit"/>
+  <int value="2" label="Timer Expired Without Reuse"/>
 </enum>
+
+<!-- LINT.ThenChange(//chrome/browser/performance_manager/policies/transient_keep_alive_policy.h:TransientKeepAliveResult) -->
 
 </enums>
 

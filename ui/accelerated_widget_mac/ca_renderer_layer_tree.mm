@@ -41,15 +41,12 @@ namespace ui {
 // Transitioning between AVSampleBufferDisplayLayer and CALayer with IOSurface
 // contents can cause flickering.
 // https://crbug.com/1441762
-BASE_FEATURE(kFullscreenLowPowerBackdropMac,
-             "FullscreenLowPowerBackdropMac",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+BASE_FEATURE(kFullscreenLowPowerBackdropMac, base::FEATURE_DISABLED_BY_DEFAULT);
 
 #if BUILDFLAG(IS_MAC)
 // Show borders around RenderPassDrawQuad CALayers. which is the output of a
 // non-root render pass.
 BASE_FEATURE(kShowMacRenderPassDrawQuadBorders,
-             "ShowMacRenderPassDrawQuadBorders",
              base::FEATURE_DISABLED_BY_DEFAULT);
 #endif
 
@@ -138,7 +135,7 @@ bool AVSampleBufferDisplayLayerEnqueueIOSurface(
     AVSampleBufferDisplayLayer* av_layer,
     IOSurfaceRef io_surface,
     const gfx::ColorSpace& io_surface_color_space,
-    std::optional<gfx::HDRMetadata> hdr_metadata) {
+    const gfx::HDRMetadata& hdr_metadata) {
   CVReturn cv_return = kCVReturnSuccess;
 
   base::apple::ScopedCFTypeRef<CVPixelBufferRef> cv_pixel_buffer;

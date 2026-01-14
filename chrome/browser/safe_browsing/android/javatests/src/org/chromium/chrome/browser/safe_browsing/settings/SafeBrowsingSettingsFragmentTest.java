@@ -4,6 +4,7 @@
 
 package org.chromium.chrome.browser.safe_browsing.settings;
 
+import static androidx.test.espresso.Espresso.onIdle;
 import static androidx.test.espresso.Espresso.onView;
 import static androidx.test.espresso.action.ViewActions.click;
 import static androidx.test.espresso.assertion.ViewAssertions.doesNotExist;
@@ -210,6 +211,10 @@ public class SafeBrowsingSettingsFragmentTest {
         onView(withText(R.string.safe_browsing_no_protection_confirmation_dialog_title))
                 .inRoot(isDialog())
                 .check(matches(isDisplayed()));
+
+        // Wait for the UI thread to become idle.
+        onIdle();
+
         // Don't confirm.
         onView(withText(R.string.cancel)).perform(click());
 
@@ -309,7 +314,9 @@ public class SafeBrowsingSettingsFragmentTest {
                     Mockito.verify(mSettingsNavigation)
                             .startSettings(
                                     mSafeBrowsingSettingsFragment.getContext(),
-                                    EnhancedProtectionSettingsFragment.class);
+                                    EnhancedProtectionSettingsFragment.class,
+                                    null,
+                                    true);
                 });
     }
 
@@ -325,7 +332,9 @@ public class SafeBrowsingSettingsFragmentTest {
                     Mockito.verify(mSettingsNavigation)
                             .startSettings(
                                     mSafeBrowsingSettingsFragment.getContext(),
-                                    StandardProtectionSettingsFragment.class);
+                                    StandardProtectionSettingsFragment.class,
+                                    null,
+                                    true);
                 });
     }
 

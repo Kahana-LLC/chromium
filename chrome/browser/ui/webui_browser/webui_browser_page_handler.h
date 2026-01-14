@@ -10,12 +10,10 @@
 #include "chrome/browser/ui/views/tab_search_bubble_host.h"
 #include "chrome/browser/ui/webui_browser/browser.mojom.h"
 #include "chrome/browser/ui/webui_browser/webui_browser_window.h"
+#include "components/browser_apis/tab_strip/types/node_id.h"
 #include "content/public/browser/document_service.h"
 #include "content/public/browser/web_contents.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
-#include "mojo/public/cpp/bindings/pending_remote.h"
-#include "mojo/public/cpp/bindings/receiver.h"
-#include "mojo/public/cpp/bindings/remote.h"
 
 class AppMenu;
 class AppMenuModel;
@@ -36,15 +34,12 @@ class WebUIBrowserPageHandler
       WebUIBrowserUI* controller);
 
   // webui_browser::mojom::PageHandler
-  void GetGuestIdForTabId(int tab_id,
-                          GetGuestIdForTabIdCallback callback) override;
+  void GetGuestIdForTabId(
+      const tabs_api::NodeId& tab_id,
+      mojo::PendingReceiver<webui_browser::mojom::GuestHandler> receiver,
+      GetGuestIdForTabIdCallback callback) override;
   void LoadTabSearch(LoadTabSearchCallback callback) override;
   void ShowTabSearchBubble(const std::string& anchor_name) override;
-  void Navigate(int guest_id, const GURL& src) override;
-  void CanGoBack(int guest_id, CanGoBackCallback callback) override;
-  void GoBack(int guest_id) override;
-  void CanGoForward(int guest_id, CanGoForwardCallback callback) override;
-  void GoForward(int guest_id) override;
   void OpenAppMenu() override;
   void OpenProfileMenu() override;
   void LaunchDevToolsForBrowser() override;

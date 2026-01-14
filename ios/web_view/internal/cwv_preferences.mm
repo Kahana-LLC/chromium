@@ -65,6 +65,22 @@
   return ios_web_view::IsAutofillAddressSyncEnabled(_prefService);
 }
 
+- (void)setUseImageFetcherEnabled:(BOOL)enabled {
+  ios_web_view::SetUseImageFetcherEnabled(_prefService, enabled);
+}
+
+- (BOOL)isUseImageFetcherEnabled {
+  return ios_web_view::IsUseImageFetcherEnabled(_prefService);
+}
+
+- (void)setUseCardCustomImageEnabled:(BOOL)enabled {
+  ios_web_view::SetUseCardCustomImageEnabled(_prefService, enabled);
+}
+
+- (BOOL)isUseCardCustomImageEnabled {
+  return ios_web_view::IsUseCardCustomImagerEnabled(_prefService);
+}
+
 - (void)setPasswordAffiliationEnabled:(BOOL)enabled {
   ios_web_view::SetPasswordAffiliationEnabled(_prefService, enabled);
 }
@@ -103,6 +119,22 @@
 
 - (BOOL)isSafeBrowsingEnabled {
   return safe_browsing::IsSafeBrowsingEnabled(*_prefService);
+}
+
+- (void)setAutofillVCNUsageEnabled:(BOOL)enabled {
+  ios_web_view::SetAutofillVCNUsageEnabled(_prefService, enabled);
+}
+
+- (BOOL)isAutofillVCNUsageEnabled {
+  return ios_web_view::IsAutofillVCNUsageEnabled(_prefService);
+}
+
+- (void)setRiskBasedAuthenticationEnabled:(BOOL)enabled {
+  ios_web_view::SetRiskBasedAuthenticationEnabled(_prefService, enabled);
+}
+
+- (BOOL)isRiskBasedAuthenticationEnabled {
+  return ios_web_view::IsRiskBasedAuthenticationEnabled(_prefService);
 }
 
 - (void)commitPendingWrite:(void (^)(void))completionHandler {

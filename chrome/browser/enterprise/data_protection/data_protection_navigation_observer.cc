@@ -14,13 +14,11 @@
 #include "chrome/browser/enterprise/connectors/connectors_service.h"
 #include "chrome/browser/enterprise/data_controls/chrome_rules_service.h"
 #include "chrome/browser/enterprise/data_protection/data_protection_features.h"
+#include "chrome/browser/enterprise/data_protection/data_protection_url_lookup_service.h"
 #include "chrome/browser/interstitials/enterprise_util.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/safe_browsing/chrome_enterprise_url_lookup_service_factory.h"
 #include "chrome/common/webui_url_constants.h"
 #include "components/safe_browsing/buildflags.h"
-#include "components/safe_browsing/core/browser/realtime/chrome_enterprise_url_lookup_service.h"
-#include "components/safe_browsing/core/browser/realtime/policy_engine.h"
 #include "components/sessions/content/session_tab_helper.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_frame_host.h"
@@ -31,6 +29,9 @@
 #include "url/gurl.h"
 
 #if BUILDFLAG(SAFE_BROWSING_AVAILABLE)
+#include "chrome/browser/safe_browsing/chrome_enterprise_url_lookup_service_factory.h"
+#include "components/safe_browsing/core/browser/realtime/chrome_enterprise_url_lookup_service.h"
+#include "components/safe_browsing/core/browser/realtime/policy_engine.h"
 #include "components/safe_browsing/core/browser/realtime/url_lookup_service_base.h"
 #endif
 
@@ -50,7 +51,7 @@ safe_browsing::RealTimeUrlLookupServiceBase* g_lookup_service = nullptr;
 
 bool IsWatermarkWebUIURL(const GURL& url) {
   return url.SchemeIs(content::kChromeUIScheme) &&
-         url.host_piece() == chrome::kChromeUIWatermarkHost;
+         url.host() == chrome::kChromeUIWatermarkHost;
 }
 
 content::Page& GetPageFromWebContents(content::WebContents* web_contents) {
@@ -62,6 +63,7 @@ DataProtectionPageUserData* GetUserData(content::WebContents* web_contents) {
       GetPageFromWebContents(web_contents));
 }
 
+#if BUILDFLAG(SAFE_BROWSING_AVAILABLE)
 // Returns whether a URL filtering event should be reported for safe verdicts.
 // For warn/block+watermark verdicts, a security event is reported as part
 // of the interstitial page appearing, so we only need to report in this class
@@ -77,6 +79,7 @@ bool ShouldReportSafeUrlFilteringEvents(DataProtectionPageUserData* user_data) {
              ->threat_info(0)
              .has_matched_url_navigation_rule();
 }
+#endif  // BUILDFLAG(SAFE_BROWSING_AVAILABLE)
 
 void RunPendingNavigationCallback(
     content::WebContents* web_contents,
@@ -131,24 +134,8 @@ bool SkipUrl(const GURL& url) {
          url.SchemeIs(extensions::kExtensionScheme);
 }
 
-using LookupCallback =
-    base::OnceCallback<void(std::unique_ptr<safe_browsing::RTLookupResponse>)>;
-
-void OnRealTimeLookupComplete(
-    LookupCallback callback,
-    const std::string& identifier,
-    bool is_success,
-    bool is_cached,
-    std::unique_ptr<safe_browsing::RTLookupResponse> rt_lookup_response) {
-  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-  if (!is_success) {
-    rt_lookup_response.reset();
-  }
-
-  std::move(callback).Run(std::move(rt_lookup_response));
-}
-
 bool IsEnterpriseLookupEnabled(Profile* profile) {
+#if BUILDFLAG(SAFE_BROWSING_AVAILABLE)
   // Some tests return a non-null pointer for the enterprise lookup service,
   // so we need to defensively check if enterprise lookup is enabled.
   auto* connectors_service =
@@ -160,6 +147,9 @@ bool IsEnterpriseLookupEnabled(Profile* profile) {
   return safe_browsing::RealTimePolicyEngine::CanPerformEnterpriseFullURLLookup(
       profile->GetPrefs(), has_valid_dm_token, profile->IsOffTheRecord(),
       profile->IsGuestSession());
+#else
+  return false;
+#endif
 }
 
 bool IsEnterpriseLookupEnabled(content::BrowserContext* context) {
@@ -172,19 +162,18 @@ void DoLookup(safe_browsing::RealTimeUrlLookupServiceBase* lookup_service,
               const std::string& identifier,
               LookupCallback callback,
               content::WebContents* web_contents) {
-  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-  DCHECK(web_contents);
-  DCHECK(!callback.is_null());
   DCHECK(IsEnterpriseLookupEnabled(web_contents->GetBrowserContext()));
-  // The referring_app_info parameter to StartLookup is Android-specific.
-  lookup_service->StartMaybeCachedLookup(
-      url,
-      base::BindOnce(&OnRealTimeLookupComplete, std::move(callback),
-                     identifier),
-      base::SequencedTaskRunner::GetCurrentDefault(),
-      sessions::SessionTabHelper::IdForTab(web_contents),
-      /*referring_app_info=*/std::nullopt, /*use_cache=*/
-      !base::FeatureList::IsEnabled(kEnableSinglePageAppDataProtection));
+
+  auto* url_lookup_service =
+      DataProtectionUrlLookupServiceFactory::GetInstance()
+          ->GetForBrowserContext(web_contents->GetBrowserContext());
+
+  if (!url_lookup_service) {
+    return;
+  }
+
+  url_lookup_service->DoLookup(lookup_service, url, identifier,
+                               std::move(callback), web_contents);
 }
 
 std::string GetIdentifier(content::BrowserContext* browser_context) {
@@ -486,6 +475,16 @@ void DataProtectionNavigationObserver::DidFinishNavigation(
   }
 
   DCHECK(pending_navigation_callback_.is_null());
+}
+
+// static
+size_t DataProtectionNavigationObserver::GetVerdictCacheMaxSize() {
+  size_t max_value = enterprise_data_protection::kVerdictCacheMaxSize.Get();
+
+  // Defensive check to ensure a valid size for the verdict cache.
+  return max_value > 0
+             ? max_value
+             : enterprise_data_protection::kVerdictCacheMaxSize.default_value;
 }
 
 NAVIGATION_HANDLE_USER_DATA_KEY_IMPL(DataProtectionNavigationObserver);

@@ -4,6 +4,7 @@
 
 import("//chrome/common/features.gni")
 import("//mojo/public/tools/bindings/mojom.gni")
+import("//pdf/features.gni")
 
 assert(!is_android && !is_fuchsia)
 
@@ -28,6 +29,8 @@ source_set("whats_new") {
     sources += [
       "whats_new_fetcher.h",
       "whats_new_handler.h",
+      "whats_new_interaction_data.cc",
+      "whats_new_interaction_data.h",
       "whats_new_registrar.h",
       "whats_new_storage_service_impl.h",
       "whats_new_ui.h",
@@ -88,8 +91,12 @@ source_set("impl") {
       "//components/history_embeddings",
       "//components/user_education/common",
       "//components/variations/service",
+      "//pdf:buildflags",
       "//ui/webui",
     ]
+    if (enable_pdf) {
+      deps += [ "//pdf:features" ]
+    }
   }
 }
 
@@ -108,6 +115,7 @@ if (is_linux || is_mac || is_win) {
       "//base/test:test_support",
       "//chrome/browser/ui",
       "//chrome/browser/ui:test_support",
+      "//chrome/browser/ui:ui_features",
       "//chrome/browser/ui/hats",
       "//chrome/browser/ui/hats:test_support",
       "//chrome/common:chrome_features",
@@ -137,6 +145,7 @@ if (!is_android && !is_chromeos) {
       "//base/test:test_support",
       "//chrome/browser:browser_process",
       "//chrome/browser:global_features",
+      "//chrome/browser/ui:ui_features",
       "//chrome/common:version_header",
       "//chrome/test:test_support_ui",
       "//components/user_education/common",

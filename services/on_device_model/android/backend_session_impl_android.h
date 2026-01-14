@@ -8,8 +8,11 @@
 #include <string>
 
 #include "base/android/scoped_java_ref.h"
+#include "base/memory/weak_ptr.h"
+#include "base/sequence_checker.h"
 #include "components/optimization_guide/proto/model_execution.pb.h"
 #include "mojo/public/cpp/bindings/remote.h"
+#include "services/on_device_model/android/sequence_checker_helper.h"
 #include "services/on_device_model/backend_session.h"
 
 namespace on_device_model {
@@ -26,8 +29,24 @@ class BackendSessionImplAndroid : public BackendSession {
   enum class GenerateResult {
     kSuccess = 0,
     kUnknownError = 1,
+    // The backend API is not constructed. This happens if this is an upstream
+    // build.
     kApiNotAvailable = 2,
-    kMaxValue = kApiNotAvailable,
+    // The backend is not able to find the feature ID. This can happen if AICore
+    // doesn't enable the feature as part of experiments or device filters.
+    kFeatureIsNull = 3,
+    // An exception is thrown when getting the feature. This can happen if the
+    // AICore APK is not installed on the device.
+    kGetFeatureError = 4,
+    // A general exception is thrown when running inference.
+    kInferenceGeneralError = 5,
+    // A request processing error is thrown when running inference. This may
+    // be caused by safety filtering.
+    kInferenceRequestProcessingError = 6,
+    // A response processing error is thrown when running inference. This may
+    // be caused by safety filtering.
+    kInferenceResponseProcessingError = 7,
+    kMaxValue = kInferenceResponseProcessingError,
   };
 
   BackendSessionImplAndroid(
@@ -56,13 +75,21 @@ class BackendSessionImplAndroid : public BackendSession {
                      response) override;
   void AsrAddAudioChunk(on_device_model::mojom::AudioDataPtr data) override;
 
-  // Called by Java:
+  // Called by Java (can be called on any thread):
   // Called when the response of `Generate` is received from the AiCoreSession.
   void OnResponse(const std::string& response);
   // Called when the response of `Generate` is completed from the AiCoreSession.
   void OnComplete(GenerateResult generate_result);
 
  private:
+  BackendSessionImplAndroid(
+      optimization_guide::proto::ModelExecutionFeature feature,
+      on_device_model::mojom::SessionParamsPtr params,
+      const std::vector<ml::InputPiece>& context_input_pieces);
+
+  void OnResponseOnSequence(const std::string& response);
+  void OnCompleteOnSequence(GenerateResult generate_result);
+
   // The Java counterpart of this object.
   base::android::ScopedJavaGlobalRef<jobject> java_session_;
 
@@ -72,6 +99,19 @@ class BackendSessionImplAndroid : public BackendSession {
   mojo::Remote<on_device_model::mojom::StreamingResponder> responder_;
   // The accumulated context of the current session.
   std::vector<ml::InputPiece> context_input_pieces_;
+
+  // The feature for which this session was created.
+  const optimization_guide::proto::ModelExecutionFeature feature_;
+
+  // The params used to create this session.
+  on_device_model::mojom::SessionParamsPtr params_;
+
+  SEQUENCE_CHECKER(sequence_checker_);
+  SequenceCheckerHelper sequence_checker_helper_;
+
+  // The weak pointer created on the main sequence.
+  base::WeakPtr<BackendSessionImplAndroid> weak_ptr_;
+  base::WeakPtrFactory<BackendSessionImplAndroid> weak_factory_{this};
 };
 
 }  // namespace on_device_model

@@ -7,6 +7,7 @@
 #include <inttypes.h>
 
 #include "base/synchronization/lock.h"
+#include "media/base/audio_bus.h"
 #include "third_party/blink/public/platform/modules/webrtc/webrtc_logging.h"
 #include "third_party/blink/renderer/modules/webaudio/audio_node_input.h"
 #include "third_party/blink/renderer/modules/webaudio/base_audio_context.h"
@@ -156,7 +157,7 @@ void MediaStreamAudioDestinationHandler::CheckNumberOfChannelsForInput(
 
   AudioHandler::CheckNumberOfChannelsForInput(input);
 
-  UpdatePullStatusIfNeeded();
+  Context()->GetDeferredTaskHandler().UpdatePullStatusWithFeatureCheck(this);
 }
 
 void MediaStreamAudioDestinationHandler::UpdatePullStatusIfNeeded() {
@@ -181,10 +182,11 @@ void MediaStreamAudioDestinationHandler::UpdatePullStatusIfNeeded() {
 void MediaStreamAudioDestinationHandler::SendLogMessage(
     const char* const function_name,
     const String& message) {
-  WebRtcLogMessage(String::Format("[WA]MSADH::%s %s [this=0x%" PRIXPTR "]",
-                                  function_name, message.Utf8().c_str(),
-                                  reinterpret_cast<uintptr_t>(this))
-                       .Utf8());
+  WebRtcLogMessage(
+      UNSAFE_TODO(String::Format("[WA]MSADH::%s %s [this=0x%" PRIXPTR "]",
+                                 function_name, message.Utf8().c_str(),
+                                 reinterpret_cast<uintptr_t>(this)))
+          .Utf8());
 }
 
 void MediaStreamAudioDestinationHandler::SetConsumer(

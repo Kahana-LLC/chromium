@@ -135,6 +135,8 @@ class IOSChromePasswordManagerClient
   void NotifyKeychainError() override;
   bool IsSavingAndFillingEnabled(const GURL& url) const override;
   bool IsFillingEnabled(const GURL& url) const override;
+  bool IsFieldFilledWithOtp(autofill::FormGlobalId form_id,
+                            autofill::FieldGlobalId field_id) override;
   bool IsCommittedMainFrameSecure() const override;
   const GURL& GetLastCommittedURL() const override;
   url::Origin GetLastCommittedOrigin() const override;
@@ -153,6 +155,9 @@ class IOSChromePasswordManagerClient
   void UpdateFormManagers() override;
   bool IsIsolationForPasswordSitesEnabled() const override;
   bool IsNewTabPage() const override;
+  password_manager::WebAuthnCredentialsDelegate*
+  GetWebAuthnCredentialsDelegateForDriver(
+      password_manager::PasswordManagerDriver* driver) override;
   safe_browsing::PasswordProtectionService* GetPasswordProtectionService()
       const override;
   autofill::AutofillCrowdsourcingManager* GetAutofillCrowdsourcingManager()

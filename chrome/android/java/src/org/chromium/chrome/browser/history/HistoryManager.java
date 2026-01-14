@@ -22,9 +22,10 @@ import androidx.appcompat.widget.Toolbar.OnMenuItemClickListener;
 import androidx.recyclerview.widget.LinearLayoutManager;
 
 import org.chromium.base.IntentUtils;
-import org.chromium.base.supplier.ObservableSupplier;
+import org.chromium.base.supplier.NonNullObservableSupplier;
 import org.chromium.base.supplier.ObservableSupplierImpl;
-import org.chromium.base.supplier.Supplier;
+import org.chromium.base.supplier.ObservableSuppliers;
+import org.chromium.base.supplier.SettableNonNullObservableSupplier;
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.R;
@@ -43,7 +44,6 @@ import org.chromium.chrome.browser.ui.messages.snackbar.Snackbar;
 import org.chromium.chrome.browser.ui.messages.snackbar.SnackbarManager;
 import org.chromium.chrome.browser.ui.messages.snackbar.SnackbarManager.SnackbarController;
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetController;
-import org.chromium.components.browser_ui.edge_to_edge.EdgeToEdgePadAdjuster;
 import org.chromium.components.browser_ui.settings.SettingsNavigation;
 import org.chromium.components.browser_ui.widget.DateDividedAdapter.ItemViewType;
 import org.chromium.components.browser_ui.widget.gesture.BackPressHandler;
@@ -55,9 +55,13 @@ import org.chromium.components.prefs.PrefService;
 import org.chromium.components.search_engines.TemplateUrl;
 import org.chromium.components.user_prefs.UserPrefs;
 import org.chromium.ui.base.Clipboard;
+import org.chromium.ui.base.DeviceFormFactor;
+import org.chromium.ui.base.DeviceInput;
+import org.chromium.ui.edge_to_edge.EdgeToEdgePadAdjuster;
 
 import java.util.List;
 import java.util.function.Function;
+import java.util.function.Supplier;
 
 /** Combines and manages the different UI components of browsing history. */
 @NullMarked
@@ -92,8 +96,8 @@ public class HistoryManager
     private final ObservableSupplierImpl<Boolean> mShouldShowClearBrowsingDataSupplier =
             new ObservableSupplierImpl<>();
 
-    private final ObservableSupplierImpl<Boolean> mBackPressStateSupplier =
-            new ObservableSupplierImpl<>();
+    private final SettableNonNullObservableSupplier<Boolean> mBackPressStateSupplier =
+            ObservableSuppliers.createNonNull(false);
 
     private final PrefService mPrefService;
     private final Profile mProfile;
@@ -207,7 +211,10 @@ public class HistoryManager
                 mContentManager.getAdapter(),
                 mContentManager.getRecyclerView(),
                 edgeToEdgePadAdjusterGenerator);
-        if (mContentManager.showAppFilter()) {
+        boolean isLargeScreenWithKeyboard =
+                DeviceInput.supportsKeyboard()
+                        && DeviceFormFactor.isNonMultiDisplayContextOnTablet(mActivity);
+        if (mContentManager.showAppFilter() || isLargeScreenWithKeyboard) {
             // Now the search mode can have a header. Let the layout ignore it to
             // return the right item count.
             mSelectableListLayout.ignoreItemTypeForEmptyState(ItemViewType.STANDARD_HEADER);
@@ -245,7 +252,17 @@ public class HistoryManager
                         return IncognitoUtils.isIncognitoModeEnabled(profile);
                     }
                 });
-        mToolbar.initializeSearchView(this, R.string.history_manager_search, R.id.search_menu_id);
+
+        mToolbar.setIsLargeScreenWithKeyboard(isLargeScreenWithKeyboard);
+
+        /* If the current device is LFF device w/ physical keyboard attached,
+         * then initialize the search box only; Otherwise initialize the whole toolbar
+         */
+        if (!isLargeScreenWithKeyboard) {
+            mToolbar.initializeSearchView(
+                    this, R.string.history_manager_search, R.id.search_menu_id);
+        } else mToolbar.initializeInlineSearchView(this, R.id.search_menu_id);
+
         mToolbar.setInfoMenuItem(R.id.info_menu_id);
         mToolbar.updateInfoMenuItem(shouldShowInfoButton(), shouldShowInfoHeaderIfAvailable());
 
@@ -271,6 +288,9 @@ public class HistoryManager
 
         onBackPressStateChanged(); // Initialize back press State.
         mContentManager.maybeQueryApps();
+
+        mContentManager.getAdapter().setIsLargeScreenWithKeyboard(isLargeScreenWithKeyboard);
+        mContentManager.getAdapter().setToolbar(mToolbar);
     }
 
     private void initializeEmptyView() {
@@ -352,20 +372,27 @@ public class HistoryManager
 
             return true;
         } else if (item.getItemId() == R.id.search_menu_id) {
-            mContentManager.maybeResetAppFilterChip();
-            mContentManager.getAdapter().onSearchStart();
-            mToolbar.showSearchView(true);
-            String searchEmptyString = getSearchEmptyString();
-            mSelectableListLayout.onStartSearch(
-                    searchEmptyString,
-                    R.string.history_manager_empty_state_view_or_open_more_history);
-            mUmaRecorder.recordSearchHistory();
-            mIsSearching = true;
+            enterSearchMode();
             return true;
         } else if (item.getItemId() == R.id.info_menu_id) {
             toggleInfoHeaderVisibility();
         }
         return false;
+    }
+
+    private void enterSearchMode() {
+        assumeNonNull(mContentManager);
+        assumeNonNull(mToolbar);
+        assumeNonNull(mSelectableListLayout);
+
+        mContentManager.maybeResetAppFilterChip();
+        mContentManager.getAdapter().onSearchStart();
+        mToolbar.showSearchView(true);
+        String searchEmptyString = getSearchEmptyString();
+        mSelectableListLayout.onStartSearch(
+                searchEmptyString, R.string.history_manager_empty_state_view_or_open_more_history);
+        mUmaRecorder.recordSearchHistory();
+        mIsSearching = true;
     }
 
     private void toggleInfoHeaderVisibility() {
@@ -453,7 +480,7 @@ public class HistoryManager
     }
 
     @Override
-    public ObservableSupplier<Boolean> getHandleBackPressChangedSupplier() {
+    public NonNullObservableSupplier<Boolean> getHandleBackPressChangedSupplier() {
         return mBackPressStateSupplier;
     }
 
@@ -591,7 +618,7 @@ public class HistoryManager
     // HistoryContentManager.Observer
     @Override
     public void onClearBrowsingDataClicked() {
-        mUmaRecorder.recordClearBrowsingData(mIsIncognito);
+        mUmaRecorder.recordClearBrowsingData();
         // Opens the clear browsing data preference.
         SettingsNavigation settingsNavigation =
                 SettingsNavigationFactory.createSettingsNavigation();

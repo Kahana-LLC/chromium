@@ -511,9 +511,10 @@ void SpeechRecognitionRecognizerImpl::OnLanguageChanged(
                                   base::PathExists(config_file_path));
           },
           language),
-      base::BindOnce(&SpeechRecognitionRecognizerImpl::ResetSodaWithNewLanguage,
-                     weak_factory_.GetWeakPtr(),
-                     language_component_config.value().language_name));
+      base::BindOnce(
+          &SpeechRecognitionRecognizerImpl::ResetSodaWithNewLanguage,
+          weak_factory_.GetWeakPtr(),
+          std::string(language_component_config.value().language_name)));
 }
 
 void SpeechRecognitionRecognizerImpl::OnMaskOffensiveWordsChanged(
@@ -559,8 +560,14 @@ void SpeechRecognitionRecognizerImpl::ResetSoda() {
   // to determine the appropriate language pack path. Note that
   // SodaInstaller::GetLanguagePath() is not implemented outside of Chrome OS,
   // and options_->language is not set for Live Caption.
+  std::optional<speech::SodaLanguagePackComponentConfig> language_config =
+      speech::GetLanguageComponentConfigMatchingLanguageSubtag(
+          primary_language_name_);
   std::string language_pack_directory =
-      config_paths_[primary_language_name_].AsUTF8Unsafe();
+      config_paths_[language_config.has_value()
+                        ? language_config.value().language_name
+                        : primary_language_name_]
+          .AsUTF8Unsafe();
 
   // Initialize the SODA instance with the serialized config.
   config_msg_ = soda::chrome::ExtendedSodaConfigMsg();
@@ -576,8 +583,7 @@ void SpeechRecognitionRecognizerImpl::ResetSoda() {
   config_msg_.set_enable_speaker_change_detection(
       base::FeatureList::IsEnabled(media::kSpeakerChangeDetection));
   config_msg_.set_mask_offensive_words(mask_offensive_words_);
-  if (base::FeatureList::IsEnabled(media::kLiveCaptionMultiLanguage) &&
-      config_paths_.size() > 0) {
+  if (config_paths_.size() > 0) {
     auto* multilang_config = config_msg_.mutable_multilang_config();
     multilang_config->set_rewind_when_switching_language(true);
     auto& multilang_language_pack_directory =

@@ -17,6 +17,7 @@
 #include "base/task/single_thread_task_runner.h"
 #include "base/timer/elapsed_timer.h"
 #include "base/trace_event/trace_event.h"
+#include "net/http/http_response_headers.h"
 #include "net/http/http_status_code.h"
 #include "net/http/http_util.h"
 #include "net/url_request/redirect_info.h"
@@ -67,7 +68,7 @@ void CheckThrottleWillNotCauseCorsPreflight(
   base::flat_set<std::string> cors_exempt_header_flat_set(
       cors_exempt_header_list);
   for (auto& header : headers.GetHeaderVector()) {
-    if (!base::Contains(initial_headers, header.key) &&
+    if (!initial_headers.contains(header.key) &&
         !network::cors::IsCorsSafelistedHeader(header.key, header.value) &&
         net::HttpUtil::IsSafeHeader(header.key, header.value)) {
       bool is_cors_exempt = cors_exempt_header_flat_set.count(header.key);
@@ -84,7 +85,7 @@ void CheckThrottleWillNotCauseCorsPreflight(
 
   for (auto& header : cors_exempt_headers.GetHeaderVector()) {
     if (cors_exempt_header_flat_set.count(header.key) == 0 &&
-        !base::Contains(initial_cors_exempt_headers, header.key)) {
+        !initial_cors_exempt_headers.contains(header.key)) {
       NOTREACHED()
           << "Throttle added cors exempt header " << header.key
           << " but it wasn't configured as cors exempt by the browser. See "
@@ -485,10 +486,14 @@ void ThrottlingURLLoader::Start(
   }
 
   if (initiator_origin_trial_features &&
-      base::Contains(
-          *initiator_origin_trial_features,
-          static_cast<int>(
-              mojom::OriginTrialFeature::kDeviceBoundSessionCredentials))) {
+      (base::Contains(
+           *initiator_origin_trial_features,
+           static_cast<int>(
+               mojom::OriginTrialFeature::kDeviceBoundSessionCredentials)) ||
+       base::Contains(
+           *initiator_origin_trial_features,
+           static_cast<int>(
+               mojom::OriginTrialFeature::kDeviceBoundSessionCredentials2)))) {
     url_request->allows_device_bound_session_registration = true;
   }
 
@@ -711,8 +716,8 @@ void ThrottlingURLLoader::OnReceiveResponse(
     }
   }
 
-  forwarding_client_->OnReceiveResponse(
-      std::move(response_head), std::move(body_), std::move(cached_metadata_));
+  ForwardResponseToClient(std::move(response_head), std::move(body_),
+                          std::move(cached_metadata_));
   base::UmaHistogramTimes("Net.URLLoaderThrottle.OnReceiveResponseTime",
                           timer.Elapsed());
 }
@@ -945,9 +950,8 @@ void ThrottlingURLLoader::Resume() {
     }
     case DEFERRED_RESPONSE: {
       client_receiver_.Resume();
-      forwarding_client_->OnReceiveResponse(
-          std::move(response_info_->response_head), std::move(body_),
-          std::move(cached_metadata_));
+      ForwardResponseToClient(std::move(response_info_->response_head),
+                              std::move(body_), std::move(cached_metadata_));
       // Note: |this| may be deleted here.
       break;
     }
@@ -1016,6 +1020,18 @@ void ThrottlingURLLoader::DisconnectClient(std::string_view custom_reason) {
   }
 
   loader_completed_ = true;
+}
+
+void ThrottlingURLLoader::ForwardResponseToClient(
+    network::mojom::URLResponseHeadPtr head,
+    mojo::ScopedDataPipeConsumerHandle body,
+    std::optional<mojo_base::BigBuffer> cached_metadata) {
+  // OnReceiveResponse() can be called at most once. This check is added to
+  // debug crbug.com/463388771.
+  CHECK(!has_forwarded_response_);
+  has_forwarded_response_ = true;
+  forwarding_client_->OnReceiveResponse(std::move(head), std::move(body),
+                                        std::move(cached_metadata));
 }
 
 const char* ThrottlingURLLoader::GetStageNameForHistogram(DeferredStage stage) {

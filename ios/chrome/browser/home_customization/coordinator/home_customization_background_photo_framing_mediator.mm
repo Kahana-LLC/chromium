@@ -6,78 +6,50 @@
 
 #import <Foundation/Foundation.h>
 
-#import "base/apple/foundation_util.h"
 #import "base/check.h"
-#import "base/files/file_path.h"
 #import "base/files/file_util.h"
-#import "base/functional/callback_forward.h"
+#import "base/functional/bind.h"
 #import "base/logging.h"
-#import "base/memory/raw_ptr.h"
-#import "base/sequence_checker.h"
-#import "base/strings/strcat.h"
-#import "base/strings/sys_string_conversions.h"
-#import "base/task/sequenced_task_runner.h"
-#import "base/task/task_traits.h"
+#import "base/metrics/histogram_functions.h"
 #import "base/task/thread_pool.h"
-#import "base/uuid.h"
-#import "ios/chrome/browser/home_customization/model/framing_coordinates.h"
+#import "base/threading/scoped_blocking_call.h"
+#import "ios/chrome/browser/home_customization/coordinator/home_customization_data_conversion.h"
 #import "ios/chrome/browser/home_customization/model/home_background_customization_service.h"
-#import "ios/chrome/browser/home_customization/model/home_customization_background_photo_framing_coordinates.h"
+#import "ios/chrome/browser/home_customization/model/home_background_data.h"
+#import "ios/chrome/browser/home_customization/model/user_uploaded_image_manager.h"
 #import "ios/chrome/browser/home_customization/ui/home_customization_background_photo_framing_mutator.h"
+#import "ios/chrome/browser/home_customization/ui/home_customization_framing_coordinates.h"
 
 namespace {
-// Compresses and saves `image` to the provided `directory_path`. Also generates
-// a UUID-based filename for `image` and returns the full save path (or an empty
-// path if saving failed).
-base::FilePath SaveImageToDirectory(const base::FilePath& directory_path,
-                                    UIImage* image) {
-  // Create directory if it doesn't exist.
-  if (!base::CreateDirectory(directory_path)) {
-    LOG(ERROR) << "Failed to create directory: " << directory_path.value();
-    return base::FilePath();
+
+// Records the file size to UMA histogram if it exists.
+void RecordUserUploadedImageManagerFileSize(base::FilePath full_image_path) {
+  base::ScopedBlockingCall may_block(FROM_HERE, base::BlockingType::MAY_BLOCK);
+
+  std::optional<int64_t> file_size = base::GetFileSize(full_image_path);
+  if (file_size.has_value()) {
+    base::UmaHistogramMemoryKB(
+        "IOS.HomeCustomization.Background.UserUploaded.ImageSizeInKB",
+        file_size.value() / 1024);
   }
-
-  // Convert image to JPEG.
-  NSData* image_data = UIImageJPEGRepresentation(image, 0.9);
-  if (!image_data) {
-    return base::FilePath();
-  }
-
-  // Generate UUID-based filename.
-  const base::Uuid uuid = base::Uuid::GenerateRandomV4();
-  base::FilePath file_path = directory_path.AppendASCII(
-      base::StrCat({"background_image_", uuid.AsLowercaseString(), ".jpg"}));
-
-  const std::string_view data_string(
-      reinterpret_cast<const char*>([image_data bytes]), [image_data length]);
-  if (!base::WriteFile(file_path, data_string)) {
-    LOG(ERROR) << "Failed to write file: " << file_path.value();
-    return base::FilePath();
-  }
-
-  return file_path;
 }
+
 }  // namespace
 
 @implementation HomeCustomizationBackgroundPhotoFramingMediator {
-  // Task runner for file operations operations.
-  scoped_refptr<base::SequencedTaskRunner> _taskRunner;
-  // File path for profile-specific storage.
-  base::FilePath _imageSavePath;
+  raw_ptr<UserUploadedImageManager> _userUploadedImageManager;
   raw_ptr<HomeBackgroundCustomizationService> _backgroundService;
-  SEQUENCE_CHECKER(_sequenceChecker);
 }
 
-- (instancetype)initWithFilePath:(const base::FilePath&)filePath
-               backgroundService:
-                   (HomeBackgroundCustomizationService*)backgroundService {
+- (instancetype)initWithUserUploadedImageManager:
+                    (UserUploadedImageManager*)userUploadedImageManager
+                               backgroundService:
+                                   (HomeBackgroundCustomizationService*)
+                                       backgroundService {
   self = [super init];
   if (self) {
-    _imageSavePath = filePath;
+    _userUploadedImageManager = userUploadedImageManager;
     _backgroundService = backgroundService;
-    _taskRunner = base::ThreadPool::CreateSequencedTaskRunner(
-        {base::MayBlock(), base::TaskPriority::BEST_EFFORT,
-         base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN});
   }
   return self;
 }
@@ -90,40 +62,37 @@ base::FilePath SaveImageToDirectory(const base::FilePath& directory_path,
 
 - (void)saveImage:(UIImage*)image
     withFramingCoordinates:(HomeCustomizationFramingCoordinates*)coordinates
-                completion:(base::OnceClosure)completion {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(_sequenceChecker);
+                completion:(base::OnceCallback<void(BOOL success)>)completion {
   DCHECK(image);
   DCHECK(coordinates);
 
-  // Get profile-specific path.
-  base::FilePath backgroundImagesPath =
-      _imageSavePath.AppendASCII("BackgroundImages");
-
   __weak __typeof(self) weakSelf = self;
-  _taskRunner->PostTaskAndReplyWithResult(
-      FROM_HERE,
-      base::BindOnce(&SaveImageToDirectory, backgroundImagesPath, image),
-      base::BindOnce(
-          ^(base::OnceClosure finalCompletion, base::FilePath path) {
-            [weakSelf imageSavedAtPath:path
-                    framingCoordinates:coordinates
-                            completion:std::move(finalCompletion)];
-          },
-          std::move(completion)));
+  _userUploadedImageManager->StoreUserUploadedImage(
+      image, base::BindOnce(^BOOL(base::FilePath path) {
+               return [weakSelf imageSavedAtPath:path
+                              framingCoordinates:coordinates];
+             }).Then(std::move(completion)));
 }
 
 #pragma mark - Private
 
-- (void)imageSavedAtPath:(base::FilePath)imagePath
-      framingCoordinates:(HomeCustomizationFramingCoordinates*)coordinates
-              completion:(base::OnceClosure)completion {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(_sequenceChecker);
+// Completion handler for when the image is saved. Returns YES if the save is
+// successful and NO otherwise.
+- (BOOL)imageSavedAtPath:(base::FilePath)imagePath
+      framingCoordinates:(HomeCustomizationFramingCoordinates*)coordinates {
   if (!imagePath.empty() && _backgroundService) {
     _backgroundService->SetCurrentUserUploadedBackground(
-        imagePath.value(), [coordinates toFramingCoordinates]);
-    _backgroundService->StoreCurrentTheme();
+        imagePath.value(),
+        FramingCoordinatesFromHomeCustomizationFramingCoordinates(coordinates));
+
+    base::FilePath fullImagePath =
+        _userUploadedImageManager->GetFullImagePath(imagePath);
+    base::ThreadPool::PostTask(
+        FROM_HERE, {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
+        base::BindOnce(&RecordUserUploadedImageManagerFileSize, fullImagePath));
   }
-  std::move(completion).Run();
+
+  return !imagePath.empty();
 }
 
 @end

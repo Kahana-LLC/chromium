@@ -70,7 +70,6 @@
 #include "third_party/blink/public/web/web_navigation_type.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/dom/weak_identifier_map.h"
-#include "third_party/blink/renderer/core/frame/dactyloscoper.h"
 #include "third_party/blink/renderer/core/frame/frame_types.h"
 #include "third_party/blink/renderer/core/frame/policy_container.h"
 #include "third_party/blink/renderer/core/frame/use_counter_impl.h"
@@ -480,12 +479,10 @@ class CORE_EXPORT DocumentLoader : public GarbageCollected<DocumentLoader>,
   void UpdateSubresourceLoadMetrics(
       const SubresourceLoadMetrics& subresource_load_metrics);
 
-  const AtomicString& GetCookieDeprecationLabel() const {
-    return cookie_deprecation_label_;
-  }
-
   // Gets the content settings for the current {frame, navigation commit} tuple.
   const mojom::RendererContentSettingsPtr& GetContentSettings();
+
+  void ReportTotalTakenTimeToUpdateSubresourceLoadMetrics();
 
  protected:
   // Based on its MIME type, if the main document's response corresponds to an
@@ -858,11 +855,6 @@ class CORE_EXPORT DocumentLoader : public GarbageCollected<DocumentLoader>,
   const base::flat_map<mojom::blink::RuntimeFeature, bool>
       modified_runtime_features_;
 
-  // The cookie deprecation label for cookie deprecation facilitated testing.
-  // Will be used in
-  // //third_party/blink/renderer/modules/cookie_deprecation_label.
-  const AtomicString cookie_deprecation_label_;
-
   // Renderer-enforced content settings are stored on a per-document basis.
   mojom::RendererContentSettingsPtr content_settings_;
 
@@ -883,6 +875,10 @@ class CORE_EXPORT DocumentLoader : public GarbageCollected<DocumentLoader>,
   // the URL seems like a match. This matters for cross-origin navigations
   // (apart from error pages with the same precursor origin).
   bool force_new_document_sequence_number_ = false;
+
+  // Stores the total time taken by `UpdateSubresourceLoadMetrics()` for the
+  // measurement purpose.
+  base::TimeDelta total_taken_time_to_update_subresource_load_metrics_;
 };
 
 DECLARE_WEAK_IDENTIFIER_MAP(DocumentLoader);

@@ -26,11 +26,13 @@ BASE_DECLARE_FEATURE(kEnableExternalDisplayHDR10Mode);
 
 COMPONENT_EXPORT(DISPLAY_FEATURES)
 BASE_DECLARE_FEATURE(kCtmColorManagement);
+
+COMPONENT_EXPORT(DISPLAY_FEATURES)
+BASE_DECLARE_FEATURE(kDrmColorSpaceDefaultIsRec709);
 #endif
 
-COMPONENT_EXPORT(DISPLAY_FEATURES) BASE_DECLARE_FEATURE(kListAllDisplayModes);
-
-COMPONENT_EXPORT(DISPLAY_FEATURES) bool IsListAllDisplayModesEnabled();
+COMPONENT_EXPORT(DISPLAY_FEATURES)
+BASE_DECLARE_FEATURE(kCADisplayLinkInBrowser);
 
 COMPONENT_EXPORT(DISPLAY_FEATURES)
 BASE_DECLARE_FEATURE(kEnableEdidBasedDisplayIds);
@@ -91,7 +93,7 @@ extern const base::FeatureParam<int>
     kMaxExternalDisplaySupportedNotificationLimit;
 
 COMPONENT_EXPORT(DISPLAY_FEATURES)
-bool IsMaximumDisplaySupportedNotifacationEnabled();
+bool IsMaxExternalDisplaySupportedNotificationEnabled();
 
 }  // namespace features
 }  // namespace display

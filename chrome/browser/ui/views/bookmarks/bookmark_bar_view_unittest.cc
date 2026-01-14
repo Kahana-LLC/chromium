@@ -86,8 +86,14 @@ class BookmarkBarViewBaseTest : public ChromeViewsTestBase {
         ->LoadForTesting({});
 
     Browser::CreateParams params(profile(), true);
-    params.window = &browser_window_;
+    auto browser_window = std::make_unique<TestBrowserWindow>();
+    params.window = browser_window.release();
     browser_ = Browser::DeprecatedCreateOwnedForTesting(params);
+  }
+
+  void TearDown() override {
+    browser_->GetWindow()->Close();
+    ChromeViewsTestBase::TearDown();
   }
 
   virtual BookmarkBarView* bookmark_bar_view() = 0;
@@ -187,7 +193,6 @@ class BookmarkBarViewBaseTest : public ChromeViewsTestBase {
 
   base::test::ScopedFeatureList feature_list_;
   std::unique_ptr<TestingProfile> profile_;
-  TestBrowserWindow browser_window_;
   std::unique_ptr<Browser> browser_;
   std::unique_ptr<BookmarkBarViewTestHelper> test_helper_;
 };

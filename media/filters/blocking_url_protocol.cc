@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "media/filters/blocking_url_protocol.h"
 
 #include <stddef.h>
@@ -44,7 +39,7 @@ void BlockingUrlProtocol::Abort() {
   data_source_ = nullptr;
 }
 
-int BlockingUrlProtocol::Read(int size, uint8_t* data) {
+int BlockingUrlProtocol::Read(base::span<uint8_t> data) {
   {
     // Read errors are unrecoverable.
     base::AutoLock lock(data_source_lock_);
@@ -53,13 +48,9 @@ int BlockingUrlProtocol::Read(int size, uint8_t* data) {
       return AVERROR(EIO);
     }
 
-    // Not sure this can happen, but it's unclear from the ffmpeg code, so guard
-    // against it.
-    if (size < 0)
-      return AVERROR(EIO);
-    if (!size)
+    if (data.empty()) {
       return 0;
-
+    }
     int64_t file_size;
     if (data_source_->GetSize(&file_size) && read_position_ >= file_size)
       return AVERROR_EOF;
@@ -67,7 +58,7 @@ int BlockingUrlProtocol::Read(int size, uint8_t* data) {
     // Blocking read from data source until either:
     //   1) |last_read_bytes_| is set and |read_complete_| is signalled
     //   2) |aborted_| is signalled
-    data_source_->Read(read_position_, size, data,
+    data_source_->Read(read_position_, data,
                        base::BindOnce(&BlockingUrlProtocol::SignalReadCompleted,
                                       base::Unretained(this)));
   }
@@ -77,7 +68,7 @@ int BlockingUrlProtocol::Read(int size, uint8_t* data) {
   size_t index;
   {
     base::ScopedAllowBaseSyncPrimitives allow_base_sync_primitives;
-    index = base::WaitableEvent::WaitMany(events.data(), std::size(events));
+    index = base::WaitableEvent::WaitMany(events);
   }
 
   if (events[index] == &aborted_) {
@@ -117,7 +108,7 @@ bool BlockingUrlProtocol::SetPosition(int64_t position) {
 
 bool BlockingUrlProtocol::GetSize(int64_t* size_out) {
   base::AutoLock lock(data_source_lock_);
-  return data_source_ ? data_source_->GetSize(size_out) : false;
+  return data_source_ && data_source_->GetSize(size_out);
 }
 
 bool BlockingUrlProtocol::IsStreaming() {

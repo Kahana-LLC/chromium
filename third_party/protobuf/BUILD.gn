@@ -12,14 +12,12 @@ if (enable_js_protobuf) {
   import("//third_party/closure_compiler/compile_js.gni")
 }
 
-proto_library("any_proto") {
-  sources = [ "src/google/protobuf/any.proto" ]
-  cc_generator_options = "lite"
-}
-
 config("protobuf_config") {
   include_dirs = [ "src" ]
-  defines = [ "GOOGLE_PROTOBUF_NO_RTTI" ]
+  defines = [
+    "GOOGLE_PROTOBUF_NO_RTTI",
+    "PROTOBUF_INTERNAL_BOUNDS_CHECK_MODE_ABORT",
+  ]
   if (!is_win) {
     defines += [ "HAVE_PTHREAD" ]
   }
@@ -32,8 +30,15 @@ config("protobuf_config_internal") {
     cflags = [
       # For src/google/protobuf/map.cc:
       "-Wno-deprecated-this-capture",
+
+      # For src/google/protobuf/generated_message_reflection.cc
+      "-Wno-unused-lambda-capture",
     ]
   }
+}
+
+proto_library("struct_proto") {
+  sources = [ "src/google/protobuf/struct.proto" ]
 }
 
 if (is_component_build) {
@@ -50,7 +55,12 @@ config("using_proto") {
 
 # On Android, we must use a static library to avoid symbol conflicts with
 # the system's version of protobuf.
-if (is_android) {
+# Exclude Android fuzzing builds since having targets that include a proto_library
+# and a fuzzable_proto_library leads to symbol conflicts due to the inclusion of
+# the protobuf lite_runtime and full_runtime.
+# TODO(448809154): Investigate whether symbol conflicts with the system's protobuf
+# version appear on our android fuzzing devices.
+if (is_android && !use_fuzzing_engine_with_lpm) {
   _protobuf_lite_target_type = "static_library"
 } else {
   _protobuf_lite_target_type = "component"
@@ -160,9 +170,16 @@ static_library("protobuf_full") {
       # use, and thus needs to know the full types.
       "//components/proto_extras:protobuf_full_support",
 
+      # The proto_extras plugin uses a custom option, which must be defined in a
+      # full protobuf. This is only used in the plugin binary.
+      "//components/proto_extras:proto_extras_options_proto",
+
       # Sync requires descriptors for testing.
       "//components/sync:sync_full_proto_unittests",
       "//components/sync/protocol:full_proto",
+
+      # third_party/federated_compute requires it for testing.
+      "//third_party/federated_compute:federated_compute_tests",
     ]
   }
 
@@ -438,16 +455,31 @@ if (enable_js_protobuf) {
       "//third_party/google-closure-library/closure/goog/useragent/product.js",
       "//third_party/google-closure-library/closure/goog/useragent/useragent.js",
       "//third_party/protobuf-javascript/src/asserts.js",
+      "//third_party/protobuf-javascript/src/binary/any_field_type.js",
       "//third_party/protobuf-javascript/src/binary/arith.js",
-      "//third_party/protobuf-javascript/src/binary/constants.js",
+      "//third_party/protobuf-javascript/src/binary/binary_constants.js",
+      "//third_party/protobuf-javascript/src/binary/bytesource.js",
       "//third_party/protobuf-javascript/src/binary/decoder.js",
+      "//third_party/protobuf-javascript/src/binary/decoder_alias.js",
       "//third_party/protobuf-javascript/src/binary/encoder.js",
+      "//third_party/protobuf-javascript/src/binary/encoder_alias.js",
+      "//third_party/protobuf-javascript/src/binary/errors.js",
+      "//third_party/protobuf-javascript/src/binary/internal_buffer.js",
       "//third_party/protobuf-javascript/src/binary/reader.js",
+      "//third_party/protobuf-javascript/src/binary/reader_alias.js",
+      "//third_party/protobuf-javascript/src/binary/repeated_field_type.js",
+      "//third_party/protobuf-javascript/src/binary/scalar_field_type.js",
       "//third_party/protobuf-javascript/src/binary/utf8.js",
       "//third_party/protobuf-javascript/src/binary/utils.js",
       "//third_party/protobuf-javascript/src/binary/writer.js",
+      "//third_party/protobuf-javascript/src/binary/writer_alias.js",
+      "//third_party/protobuf-javascript/src/bytestring.js",
+      "//third_party/protobuf-javascript/src/internal_bytes.js",
+      "//third_party/protobuf-javascript/src/internal_options.js",
+      "//third_party/protobuf-javascript/src/internal_public.js",
       "//third_party/protobuf-javascript/src/map.js",
       "//third_party/protobuf-javascript/src/message.js",
+      "//third_party/protobuf-javascript/src/unsafe_bytestring.js",
     ]
   }
 }

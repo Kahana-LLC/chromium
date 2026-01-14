@@ -20,7 +20,6 @@ import static androidx.core.view.accessibility.AccessibilityNodeInfoCompat.Acces
 import static androidx.core.view.accessibility.AccessibilityNodeInfoCompat.AccessibilityActionCompat.ACTION_COPY;
 import static androidx.core.view.accessibility.AccessibilityNodeInfoCompat.AccessibilityActionCompat.ACTION_CUT;
 import static androidx.core.view.accessibility.AccessibilityNodeInfoCompat.AccessibilityActionCompat.ACTION_FOCUS;
-import static androidx.core.view.accessibility.AccessibilityNodeInfoCompat.AccessibilityActionCompat.ACTION_LONG_CLICK;
 import static androidx.core.view.accessibility.AccessibilityNodeInfoCompat.AccessibilityActionCompat.ACTION_NEXT_AT_MOVEMENT_GRANULARITY;
 import static androidx.core.view.accessibility.AccessibilityNodeInfoCompat.AccessibilityActionCompat.ACTION_NEXT_HTML_ELEMENT;
 import static androidx.core.view.accessibility.AccessibilityNodeInfoCompat.AccessibilityActionCompat.ACTION_PAGE_UP;
@@ -138,7 +137,6 @@ import org.chromium.base.test.util.HistogramWatcher;
 import org.chromium.base.test.util.Restriction;
 import org.chromium.base.test.util.TestAnimations;
 import org.chromium.base.test.util.UrlUtils;
-import org.chromium.content_public.browser.ContentFeatureList;
 import org.chromium.content_public.browser.test.ContentJUnit4ClassRunner;
 import org.chromium.content_public.common.ContentFeatures;
 import org.chromium.ui.accessibility.AccessibilityFeatures;
@@ -146,9 +144,9 @@ import org.chromium.ui.accessibility.AccessibilityState;
 import org.chromium.ui.base.DeviceFormFactor;
 import org.chromium.ui.test.util.DeviceRestriction;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
-import java.util.LinkedList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -228,61 +226,43 @@ public class WebContentsAccessibilityTest {
         mActivityTestRule.launchContentShellWithUrl(UrlUtils.encodeHtmlDataUri(html));
         mActivityTestRule.waitForActiveShellToBeDoneLoading();
         mActivityTestRule.setupTestFramework();
-        mActivityTestRule.setAccessibilityDelegate();
-
-        // To prevent flakes, do not disable accessibility mid tests.
-        mActivityTestRule.mWcax.setIsAutoDisableAccessibilityCandidateForTesting(false);
-
-        mTestData = AccessibilityContentShellTestData.getInstance();
-        mActivityTestRule.sendReadyForTestSignal();
+        setupTestBase();
     }
 
+    /* @Before */
     protected void setupTestWithHTMLForFormControlsMode(
             String html, boolean includeEventMaskByDefault) {
         mActivityTestRule.launchContentShellWithUrl(UrlUtils.encodeHtmlDataUri(html));
         mActivityTestRule.waitForActiveShellToBeDoneLoading();
         mActivityTestRule.setupTestFrameworkForFormControlsMode(includeEventMaskByDefault);
-        mActivityTestRule.setAccessibilityDelegate();
-
-        // To prevent flakes, do not disable accessibility mid tests.
-        mActivityTestRule.mWcax.setIsAutoDisableAccessibilityCandidateForTesting(false);
-
-        mTestData = AccessibilityContentShellTestData.getInstance();
-        mActivityTestRule.sendReadyForTestSignal();
+        setupTestBase();
     }
 
+    /* @Before */
     protected void setupTestWithHTMLForBasicMode(String html, boolean includeEventMaskByDefault) {
         mActivityTestRule.launchContentShellWithUrl(UrlUtils.encodeHtmlDataUri(html));
         mActivityTestRule.waitForActiveShellToBeDoneLoading();
         mActivityTestRule.setupTestFrameworkForBasicMode(includeEventMaskByDefault);
-        mActivityTestRule.setAccessibilityDelegate();
-
-        // To prevent flakes, do not disable accessibility mid tests.
-        mActivityTestRule.mWcax.setIsAutoDisableAccessibilityCandidateForTesting(false);
-
-        mTestData = AccessibilityContentShellTestData.getInstance();
-        mActivityTestRule.sendReadyForTestSignal();
+        setupTestBase();
     }
 
+    /* @Before */
     protected void setupTestWithHTMLForCompleteMode(
             String html, boolean includeEventMaskByDefault) {
         mActivityTestRule.launchContentShellWithUrl(UrlUtils.encodeHtmlDataUri(html));
         mActivityTestRule.waitForActiveShellToBeDoneLoading();
         mActivityTestRule.setupTestFrameworkForCompleteMode(includeEventMaskByDefault);
-        mActivityTestRule.setAccessibilityDelegate();
-
-        // To prevent flakes, do not disable accessibility mid tests.
-        mActivityTestRule.mWcax.setIsAutoDisableAccessibilityCandidateForTesting(false);
-
-        mTestData = AccessibilityContentShellTestData.getInstance();
-        mActivityTestRule.sendReadyForTestSignal();
+        setupTestBase();
     }
 
     /* @Before */
     protected void setupTestFromFile(String filepath) {
-        mActivityTestRule.launchContentShellWithUrl(UrlUtils.getIsolatedTestFileUrl(filepath));
-        mActivityTestRule.waitForActiveShellToBeDoneLoading();
+        mActivityTestRule.launchContentShellWithUrlSync(filepath);
         mActivityTestRule.setupTestFramework();
+        setupTestBase();
+    }
+
+    private void setupTestBase() {
         mActivityTestRule.setAccessibilityDelegate();
 
         // To prevent flakes, do not disable accessibility mid tests.
@@ -675,6 +655,7 @@ public class WebContentsAccessibilityTest {
     @Test
     @SmallTest
     @DisableFeatures(ContentFeatures.ACCESSIBILITY_DEPRECATE_JAVA_NODE_CACHE)
+    @DisabledTest(message = "Flaky, see crbug.com/457725708")
     public void testUMAHistograms_Cache() throws Throwable {
         // Build a simple web page with a few nodes to traverse.
         setupTestWithHTML(
@@ -2352,34 +2333,6 @@ public class WebContentsAccessibilityTest {
                 mNodeInfo3.getExtras().getBoolean(EXTRAS_KEY_OFFSCREEN));
     }
 
-    /** Test that ACTION_LONG_CLICK is included when experiment is running. */
-    @Test
-    @SmallTest
-    @EnableFeatures(ContentFeatureList.ACCESSIBILITY_INCLUDE_LONG_CLICK_ACTION)
-    public void testNodeInfo_Actions_longClickIncluded() throws Throwable {
-        setupTestWithHTML("<p id='id1'>Example</p>");
-
-        int vvId = waitForNodeMatching(sViewIdResourceNameMatcher, "id1");
-        mNodeInfo = createAccessibilityNodeInfo(vvId);
-        Assert.assertNotNull(NODE_TIMEOUT_ERROR, mNodeInfo);
-
-        Assert.assertTrue(mNodeInfo.getActionList().contains(ACTION_LONG_CLICK));
-    }
-
-    /** Test that ACTION_LONG_CLICK is excluded when experiment is paused. */
-    @Test
-    @SmallTest
-    @DisableFeatures(ContentFeatureList.ACCESSIBILITY_INCLUDE_LONG_CLICK_ACTION)
-    public void testNodeInfo_Actions_longClickExcluded() throws Throwable {
-        setupTestWithHTML("<p id='id1'>Example</p>");
-
-        int vvId = waitForNodeMatching(sViewIdResourceNameMatcher, "id1");
-        mNodeInfo = createAccessibilityNodeInfo(vvId);
-        Assert.assertNotNull(NODE_TIMEOUT_ERROR, mNodeInfo);
-
-        Assert.assertFalse(mNodeInfo.getActionList().contains(ACTION_LONG_CLICK));
-    }
-
     // ------------------ Tests of performAction method ------------------ //
 
     /** Test that the performAction for ACTION_SET_TEXT works properly with accessibility. */
@@ -3142,10 +3095,16 @@ public class WebContentsAccessibilityTest {
     @Test
     @SmallTest
     @EnableFeatures(AccessibilityFeatures.ACCESSIBILITY_TEXT_FORMATTING)
-    @DisabledTest(message = "https://crbug.com/434253831")
     public void testAccessibilityNodeInfo_textFormatting() throws Throwable {
-        // Build a simple web page with a variety of text formatting options.
+        // Build a web page with a variety of text formatting options.
         setupTestFromFile("content/test/data/android/accessibility_text_formatting_examples.html");
+
+        // This page has a lot of content, so it needs more time to render.
+        mActivityTestRule.waitForNodeMatching(
+                sTextMatcher,
+                "Accessibility Text Formatting Examples",
+                CriteriaHelper.DEFAULT_MAX_TIME_TO_POLL * 5,
+                CriteriaHelper.DEFAULT_POLLING_INTERVAL * 4);
 
         String serifFont = "Noto Serif";
         String sansSerifFont = "Roboto";
@@ -3345,6 +3304,8 @@ public class WebContentsAccessibilityTest {
                         // new SpanRange(new AbsoluteSizeSpan(0), 22, 31),
                         new SpanRange(new AbsoluteSizeSpan(16), 31, 36)));
 
+        testCases.put("Italic text field", List.of(new SpanRange(new StyleSpan(Typeface.ITALIC))));
+
         StringBuilder sb = new StringBuilder();
         sb.append("Simple contenteditable example with bold, italic, and underline text.\n");
         sb.append("Also monospace, big, and red text with yellow background and bold style.");
@@ -3392,7 +3353,7 @@ public class WebContentsAccessibilityTest {
 
             // Find node matching test string for this test case
             int vvid = waitForNodeMatching(sTextMatcher, testString);
-            expect.withMessage("Could not find node for: " + testString)
+            expect.withMessage("Could not find node for: %s", testString)
                     .that(vvid)
                     .isNotEqualTo(View.NO_ID);
             if (vvid == View.NO_ID) {
@@ -3401,7 +3362,7 @@ public class WebContentsAccessibilityTest {
             }
             focusNode(vvid);
             mNodeInfo = createAccessibilityNodeInfo(vvid);
-            expect.withMessage("Could not create ANI for: " + testString)
+            expect.withMessage("Could not create ANI for: %s", testString)
                     .that(mNodeInfo)
                     .isNotNull();
             if (mNodeInfo == null) {
@@ -3411,7 +3372,7 @@ public class WebContentsAccessibilityTest {
             SpannableString spannableUnderTest = new SpannableString(mNodeInfo.getText());
 
             // Get all the spans we care about.
-            List<SpanRange> actualSpans = new LinkedList<>();
+            List<SpanRange> actualSpans = new ArrayList<>();
             addSpansToList(actualSpans, spannableUnderTest, StyleSpan.class);
             addSpansToList(actualSpans, spannableUnderTest, UnderlineSpan.class);
             addSpansToList(actualSpans, spannableUnderTest, StrikethroughSpan.class);
@@ -3423,10 +3384,10 @@ public class WebContentsAccessibilityTest {
             addSpansToList(actualSpans, spannableUnderTest, AbsoluteSizeSpan.class);
             addSpansToList(actualSpans, spannableUnderTest, LocaleSpan.class);
 
-            expect.withMessage("Verify spans on text: " + testString)
+            expect.withMessage("Verify spans on text: %s", testString)
                     .that(actualSpans)
                     .containsAtLeastElementsIn(expectedSpans);
-            expect.withMessage("Duplicate spans on text: " + testString)
+            expect.withMessage("Duplicate spans on text: %s", testString)
                     .that(actualSpans)
                     .containsNoDuplicates();
         }

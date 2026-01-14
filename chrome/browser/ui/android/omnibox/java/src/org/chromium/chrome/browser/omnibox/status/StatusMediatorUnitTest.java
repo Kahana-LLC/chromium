@@ -8,6 +8,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -51,7 +52,8 @@ import org.chromium.chrome.browser.omnibox.test.R;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.ui.theme.BrandedColorScheme;
-import org.chromium.components.content_settings.CookieBlocking3pcdStatus;
+import org.chromium.components.content_settings.ContentSettingsType;
+import org.chromium.components.content_settings.ContentSetting;
 import org.chromium.components.content_settings.CookieControlsBridge;
 import org.chromium.components.content_settings.CookieControlsBridgeJni;
 import org.chromium.components.content_settings.CookieControlsState;
@@ -97,10 +99,11 @@ public final class StatusMediatorUnitTest {
     private @Mock Tab mTab;
 
     private @Mock WebContents mWebContents;
-    private @Mock StatusView mStatusView;
     @Mock UserPrefsJni mMockUserPrefsJni;
     @Mock private PrefService mPrefs;
     @Mock private Tracker mTracker;
+
+    private PermissionDialogController.Observer mPermissionObserver;
 
     Context mContext;
 
@@ -132,6 +135,14 @@ public final class StatusMediatorUnitTest {
         doReturn(mPrefs).when(mMockUserPrefsJni).get(mProfile);
 
         TrackerFactory.setTrackerForTests(mTracker);
+
+        doAnswer(
+                        invocation -> {
+                            mPermissionObserver = invocation.getArgument(0);
+                            return null;
+                        })
+                .when(mPermissionDialogController)
+                .addObserver(any());
 
         setupStatusMediator(/* isTablet= */ false);
 
@@ -167,6 +178,23 @@ public final class StatusMediatorUnitTest {
 
     @Test
     @SmallTest
+    public void testPermissionIconShown() {
+        mPermissionObserver.onDialogResult(
+                mWindowAndroid,
+                new int[] {ContentSettingsType.MEDIASTREAM_CAMERA},
+                ContentSetting.ALLOW);
+
+        StatusIconResource icon = mModel.get(StatusProperties.STATUS_ICON_RESOURCE);
+        Assert.assertNotNull("Permission icon should be shown", icon);
+        Assert.assertEquals(IconTransitionType.ROTATE, icon.getTransitionType());
+        icon.getAnimationFinishedCallback().run();
+        verify(mPageInfoIphController, times(1))
+                .onPermissionDialogShown(
+                        any(), eq(mMediator.getPermissionStatusHandler().getIphTimeoutMs()));
+    }
+
+    @Test
+    @SmallTest
     public void searchEngineLogo_isGoogleLogo() {
         mMediator.setUrlHasFocus(true);
         mMediator.setShowIconsWhenUrlFocused(true);
@@ -180,7 +208,7 @@ public final class StatusMediatorUnitTest {
     public void testStatusViewHoverActions() {
         doReturn(PageClassification.NTP_VALUE)
                 .when(mLocationBarDataProvider)
-                .getPageClassification(false);
+                .getPageClassification(/* prefetch= */ false);
 
         // Tooltip and background should be set when StatusViewIcon is visible.
         mMediator.setStatusIconShown(true);
@@ -494,7 +522,7 @@ public final class StatusMediatorUnitTest {
         // Test default behaviour first.
         doReturn(PageClassification.NTP_VALUE)
                 .when(mLocationBarDataProvider)
-                .getPageClassification(false);
+                .getPageClassification(/* prefetch= */ false);
         mMediator.updateLocationBarIcon(IconTransitionType.CROSSFADE);
         Assert.assertEquals(
                 R.string.accessibility_toolbar_view_site_info,
@@ -502,7 +530,7 @@ public final class StatusMediatorUnitTest {
 
         doReturn(PageClassification.ANDROID_HUB_VALUE)
                 .when(mLocationBarDataProvider)
-                .getPageClassification(false);
+                .getPageClassification(/* prefetch= */ false);
         mMediator.updateLocationBarIcon(IconTransitionType.CROSSFADE);
 
         Assert.assertTrue(mModel.get(StatusProperties.SHOW_STATUS_ICON));
@@ -522,7 +550,7 @@ public final class StatusMediatorUnitTest {
     public void testSetTooltipText() {
         doReturn(PageClassification.NTP_VALUE)
                 .when(mLocationBarDataProvider)
-                .getPageClassification(false);
+                .getPageClassification(/* prefetch= */ false);
 
         mModel.set(StatusProperties.SHOW_STATUS_ICON, true);
         mMediator.setTooltipText(Resources.ID_NULL);
@@ -537,7 +565,7 @@ public final class StatusMediatorUnitTest {
     public void testSetBackground() {
         doReturn(PageClassification.NTP_VALUE)
                 .when(mLocationBarDataProvider)
-                .getPageClassification(false);
+                .getPageClassification(/* prefetch= */ false);
 
         mModel.set(StatusProperties.SHOW_STATUS_ICON, true);
         mMediator.setBackground();
@@ -592,29 +620,14 @@ public final class StatusMediatorUnitTest {
 
     @Test
     @SmallTest
-    public void iphCookieControls_showIphOnlyWhenNotIn3pcd() {
+    public void iphCookieControls() {
         setupCookieControlsTest();
         mMediator.onStatusChanged(
-                CookieControlsState.BLOCKED3PC,
-                /* enforcement= */ 0,
-                CookieBlocking3pcdStatus.NOT_IN3PCD,
-                /* expiration= */ 0);
+                CookieControlsState.BLOCKED3PC, /* enforcement= */ 0, /* expiration= */ 0);
 
         mMediator.onHighlightCookieControl(true);
         Assert.assertEquals(COOKIE_CONTROLS_ICON, getIconIdentifierForTesting());
         mModel.get(StatusProperties.STATUS_ICON_RESOURCE).getAnimationFinishedCallback().run();
-        // Not in 3PCD, IPH is shown.
-        verify(mPageInfoIphController, times(1)).showCookieControlsIph(anyInt(), anyInt());
-
-        mMediator.onStatusChanged(
-                CookieControlsState.BLOCKED3PC,
-                /* enforcement= */ 0,
-                CookieBlocking3pcdStatus.LIMITED,
-                /* expiration= */ 0);
-
-        mMediator.onHighlightCookieControl(true);
-        Assert.assertEquals(COOKIE_CONTROLS_ICON, getIconIdentifierForTesting());
-        // Limited 3PCD, IPH is NOT shown.
         verify(mPageInfoIphController, times(1)).showCookieControlsIph(anyInt(), anyInt());
     }
 
@@ -635,10 +648,7 @@ public final class StatusMediatorUnitTest {
         doReturn(null).when(mTab).getWebContents();
 
         mMediator.onStatusChanged(
-                CookieControlsState.BLOCKED3PC,
-                /* enforcement= */ 0,
-                CookieBlocking3pcdStatus.LIMITED,
-                /* expiration= */ 0);
+                CookieControlsState.BLOCKED3PC, /* enforcement= */ 0, /* expiration= */ 0);
         Assert.assertNotEquals(COOKIE_CONTROLS_ICON, getIconIdentifierForTesting());
 
         mMediator.onHighlightCookieControl(true);
@@ -751,7 +761,7 @@ public final class StatusMediatorUnitTest {
         mMediator.updateVerboseStatus(ConnectionSecurityLevel.SECURE, false, false);
         Assert.assertTrue(mModel.get(StatusProperties.SHOW_STATUS_VIEW));
 
-        mMediator.setHideStatusIconForSecureOrigins(true);
+        mMediator.setShowStatusIconForSecureOrigins(false);
         Assert.assertFalse(mModel.get(StatusProperties.SHOW_STATUS_VIEW));
 
         mMediator.updateVerboseStatus(ConnectionSecurityLevel.WARNING, false, false);
@@ -760,7 +770,7 @@ public final class StatusMediatorUnitTest {
         mMediator.updateVerboseStatus(ConnectionSecurityLevel.SECURE, false, false);
         Assert.assertFalse(mModel.get(StatusProperties.SHOW_STATUS_VIEW));
 
-        mMediator.setHideStatusIconForSecureOrigins(false);
+        mMediator.setShowStatusIconForSecureOrigins(true);
         Assert.assertTrue(mModel.get(StatusProperties.SHOW_STATUS_VIEW));
     }
 

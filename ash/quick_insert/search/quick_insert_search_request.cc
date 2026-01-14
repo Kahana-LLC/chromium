@@ -35,7 +35,6 @@
 #include "base/containers/span.h"
 #include "base/containers/to_vector.h"
 #include "base/functional/bind.h"
-#include "base/functional/callback_forward.h"
 #include "base/functional/callback_helpers.h"
 #include "base/logging.h"
 #include "base/metrics/histogram_functions.h"
@@ -43,7 +42,6 @@
 #include "base/parameter_pack.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
-#include "base/types/cxx23_to_underlying.h"
 #include "chromeos/ash/components/emoji/gif_tenor_api_fetcher.h"
 #include "chromeos/ash/components/emoji/tenor_types.mojom.h"
 #include "components/endpoint_fetcher/endpoint_fetcher.h"
@@ -85,7 +83,7 @@ const char* SearchSourceToHistogram(QuickInsertSearchSource source) {
     case QuickInsertSearchSource::kGifs:
       return "Ash.Picker.Search.Gifs.QueryTime";
   }
-  NOTREACHED() << "Unexpected search source " << base::to_underlying(source);
+  NOTREACHED() << "Unexpected search source " << std::to_underlying(source);
 }
 
 [[nodiscard]] std::vector<QuickInsertSearchResult>
@@ -103,12 +101,12 @@ DeduplicateGoogleCorpGotoDomains(
     }
     const GURL& url = link_data->url;
     if (!url.has_host() || !url.has_path() ||
-        !kGoogleCorpGotoHosts.contains(url.host_piece())) {
+        !kGoogleCorpGotoHosts.contains(url.host())) {
       deduped_results.push_back(std::move(link));
       continue;
     }
 
-    auto [it, inserted] = seen.emplace(url.path_piece());
+    auto [it, inserted] = seen.emplace(url.path());
     if (inserted) {
       deduped_results.push_back(std::move(link));
     }
@@ -121,7 +119,6 @@ std::vector<QuickInsertSearchResult> ConvertGifResponse(
     base::expected<tenor::mojom::PaginatedGifResponsesPtr,
                    GifTenorApiFetcher::Error> response) {
   if (!response.has_value()) {
-    // TODO: b/325368650 - Add better handling of errors.
     return {};
   }
 
@@ -175,8 +172,6 @@ QuickInsertSearchRequest::QuickInsertSearchRequest(
   }
 
   if (!cros_search_sources.empty()) {
-    // TODO: b/326166751 - Use `available_categories_` to decide what searches
-    // to do.
     for (QuickInsertSearchSource source : cros_search_sources) {
       MarkSearchStarted(source);
     }
@@ -417,14 +412,14 @@ void QuickInsertSearchRequest::HandleLobsterSearchResults(
 void QuickInsertSearchRequest::MarkSearchStarted(
     QuickInsertSearchSource source) {
   CHECK(!SwapSearchStart(source, base::TimeTicks::Now()).has_value())
-      << "search_starts_ enum " << base::to_underlying(source)
+      << "search_starts_ enum " << std::to_underlying(source)
       << " was already set";
 }
 
 void QuickInsertSearchRequest::MarkSearchEnded(QuickInsertSearchSource source) {
   std::optional<base::TimeTicks> start = SwapSearchStart(source, std::nullopt);
   CHECK(start.has_value()) << "search_starts_ enum "
-                           << base::to_underlying(source) << " was not set";
+                           << std::to_underlying(source) << " was not set";
 
   base::TimeDelta elapsed = base::TimeTicks::Now() - *start;
   base::UmaHistogramTimes(SearchSourceToHistogram(source), elapsed);
@@ -433,7 +428,7 @@ void QuickInsertSearchRequest::MarkSearchEnded(QuickInsertSearchSource source) {
 std::optional<base::TimeTicks> QuickInsertSearchRequest::SwapSearchStart(
     QuickInsertSearchSource source,
     std::optional<base::TimeTicks> new_value) {
-  return std::exchange(search_starts_[base::to_underlying(source)],
+  return std::exchange(search_starts_[std::to_underlying(source)],
                        std::move(new_value));
 }
 

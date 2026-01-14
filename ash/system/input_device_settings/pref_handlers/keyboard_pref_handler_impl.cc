@@ -6,7 +6,6 @@
 
 #include "ash/constants/ash_features.h"
 #include "ash/constants/ash_pref_names.h"
-#include "ash/public/mojom/input_device_settings.mojom-shared.h"
 #include "ash/public/mojom/input_device_settings.mojom.h"
 #include "ash/shell.h"
 #include "ash/system/input_device_settings/input_device_settings_defaults.h"
@@ -27,11 +26,8 @@
 #include "components/user_manager/known_user.h"
 #include "ui/base/ui_base_features.h"
 #include "ui/events/ash/keyboard_capability.h"
-#include "ui/events/ash/mojom/extended_fkeys_modifier.mojom-shared.h"
 #include "ui/events/ash/mojom/extended_fkeys_modifier.mojom.h"
-#include "ui/events/ash/mojom/modifier_key.mojom-shared.h"
 #include "ui/events/ash/mojom/modifier_key.mojom.h"
-#include "ui/events/ash/mojom/six_pack_shortcut_modifier.mojom-shared.h"
 #include "ui/events/ash/mojom/six_pack_shortcut_modifier.mojom.h"
 #include "ui/events/ash/pref_names.h"
 
@@ -793,7 +789,8 @@ void InitializeKeyboardSettingsImpl(
       keyboard->settings->f12 = keyboard_policies.f12_key_policy->value;
     }
   }
-  if (keyboard_policies.home_and_end_keys_policy &&
+  if (keyboard->settings->six_pack_key_remappings &&
+      keyboard_policies.home_and_end_keys_policy &&
       keyboard_policies.home_and_end_keys_policy->policy_status ==
           mojom::PolicyStatus::kManaged) {
     keyboard->settings->six_pack_key_remappings->home =
@@ -802,7 +799,8 @@ void InitializeKeyboardSettingsImpl(
         keyboard_policies.home_and_end_keys_policy->value;
   }
 
-  if (keyboard_policies.page_up_and_page_down_keys_policy &&
+  if (keyboard->settings->six_pack_key_remappings &&
+      keyboard_policies.page_up_and_page_down_keys_policy &&
       keyboard_policies.page_up_and_page_down_keys_policy->policy_status ==
           mojom::PolicyStatus::kManaged) {
     keyboard->settings->six_pack_key_remappings->page_up =
@@ -811,14 +809,16 @@ void InitializeKeyboardSettingsImpl(
         keyboard_policies.page_up_and_page_down_keys_policy->value;
   }
 
-  if (keyboard_policies.delete_key_policy &&
+  if (keyboard->settings->six_pack_key_remappings &&
+      keyboard_policies.delete_key_policy &&
       keyboard_policies.delete_key_policy->policy_status ==
           mojom::PolicyStatus::kManaged) {
     keyboard->settings->six_pack_key_remappings->del =
         keyboard_policies.delete_key_policy->value;
   }
 
-  if (keyboard_policies.insert_key_policy &&
+  if (keyboard->settings->six_pack_key_remappings &&
+      keyboard_policies.insert_key_policy &&
       keyboard_policies.insert_key_policy->policy_status ==
           mojom::PolicyStatus::kManaged) {
     keyboard->settings->six_pack_key_remappings->insert =

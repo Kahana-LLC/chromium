@@ -32,6 +32,7 @@
 #include "components/payments/core/payment_details_validation.h"
 #include "components/payments/core/payment_prefs.h"
 #include "components/payments/core/payment_request_delegate.h"
+#include "components/payments/core/payments_experimental_features.h"
 #include "components/payments/core/payments_validators.h"
 #include "components/payments/core/url_util.h"
 #include "components/prefs/pref_service.h"
@@ -44,6 +45,7 @@
 #include "content/public/common/content_features.h"
 #include "services/metrics/public/cpp/ukm_source_id.h"
 #include "services/network/public/cpp/is_potentially_trustworthy.h"
+#include "third_party/blink/public/common/features.h"
 
 namespace payments {
 namespace {
@@ -573,7 +575,9 @@ void PaymentRequest::CanMakePayment() {
   }
 
   if (!can_make_payment_allowed_by_pref) {
-    CanMakePaymentCallback(/*can_make_payment=*/false);
+    CanMakePaymentCallback(
+        /*can_make_payment=*/PaymentsExperimentalFeatures::IsEnabled(
+            features::kCanMakePaymentTrueWhenPrivate));
   } else {
     state_->CanMakePayment(
         base::BindOnce(&PaymentRequest::CanMakePaymentCallback,
@@ -675,16 +679,23 @@ void PaymentRequest::AreRequestedMethodsSupportedCallback(
     observer_for_testing_->OnAppListReady(weak_ptr_factory_.GetWeakPtr());
   }
 
+  // In most cases, we show the 'No Matching Payment Credential' dialog in
+  // order to preserve user privacy. An exception is failure to download the
+  // card art icon - because we download it in all cases, revealing a
+  // failure doesn't leak any information about the user to the site.
+  // The no matching credentials dialog is only shown if the SPC UX Refresh
+  // feature is not enabled.
+  // TODO: crbug.com/469745132 - Note that once the SPC UX Refresh feature is
+  // launched, the no matching credentials dialog will no longer be needed.
   if (render_frame_host().IsActive() &&
       spec_->IsSecurePaymentConfirmationRequested() &&
       state()->available_apps().empty() &&
       base::FeatureList::IsEnabled(::features::kSecurePaymentConfirmation) &&
-      // In most cases, we show the 'No Matching Payment Credential' dialog in
-      // order to preserve user privacy. An exception is failure to download the
-      // card art icon - because we download it in all cases, revealing a
-      // failure doesn't leak any information about the user to the site.
-      error_reason != AppCreationFailureReason::ICON_DOWNLOAD_FAILED) {
+      error_reason != AppCreationFailureReason::ICON_DOWNLOAD_FAILED &&
+      !base::FeatureList::IsEnabled(
+          blink::features::kSecurePaymentConfirmationUxRefresh)) {
     journey_logger_.SetNoMatchingCredentialsShown();
+
     auto opt_out_callback =
         spec_->method_data().front()->secure_payment_confirmation->show_opt_out
             ? base::BindOnce(&PaymentRequest::OnUserOptedOut,
@@ -698,8 +709,11 @@ void PaymentRequest::AreRequestedMethodsSupportedCallback(
         base::BindOnce(&PaymentRequest::OnUserCancelled,
                        weak_ptr_factory_.GetWeakPtr()),
         std::move(opt_out_callback));
-    if (observer_for_testing_)
+
+    if (observer_for_testing_) {
       observer_for_testing_->OnErrorDisplayed();
+    }
+
     return;
   }
 
@@ -853,6 +867,22 @@ void PaymentRequest::OnPayerInfoSelected(mojom::PayerDetailPtr payer_info) {
   client_->OnPayerDetailChange(std::move(payer_info));
 }
 
+void PaymentRequest::OnUserAuthAnotherWay() {
+  // If |client_| is not bound, then the object is already being destroyed as
+  // a result of a renderer event.
+  if (!client_.is_bound()) {
+    return;
+  }
+
+  RecordFirstAbortReason(JourneyLogger::ABORT_REASON_ABORTED_BY_USER);
+
+  // This sends an error to the renderer, which informs the API user.
+  client_->OnError(mojom::PaymentErrorReason::NOT_ALLOWED_ERROR,
+                   errors::kWebAuthnOperationTimedOutOrNotAllowed);
+
+  ResetAndDeleteThis();
+}
+
 void PaymentRequest::OnUserCancelled() {
   // If |client_| is not bound, then the object is already being destroyed as
   // a result of a renderer event.
@@ -861,16 +891,24 @@ void PaymentRequest::OnUserCancelled() {
 
   RecordFirstAbortReason(JourneyLogger::ABORT_REASON_ABORTED_BY_USER);
 
-  // This sends an error to the renderer, which informs the API user.
-  // If SPC flag is enabled, use NotAllowedError instead.
-  bool is_spc_enabled = spec_->IsSecurePaymentConfirmationRequested();
-  client_->OnError(
-      is_spc_enabled ? mojom::PaymentErrorReason::NOT_ALLOWED_ERROR
-                     : mojom::PaymentErrorReason::USER_CANCEL,
-      is_spc_enabled
-          ? errors::kWebAuthnOperationTimedOutOrNotAllowed
-          : (!reject_show_error_message_.empty() ? reject_show_error_message_
-                                                 : errors::kUserCancelled));
+  if (base::FeatureList::IsEnabled(
+          blink::features::kSecurePaymentConfirmationUxRefresh)) {
+    client_->OnError(
+        mojom::PaymentErrorReason::USER_CANCEL,
+        (!reject_show_error_message_.empty() ? reject_show_error_message_
+                                             : errors::kUserCancelled));
+  } else {
+    // This sends an error to the renderer, which informs the API user.
+    // If SPC flag is enabled, use NotAllowedError instead.
+    bool is_spc_enabled = spec_->IsSecurePaymentConfirmationRequested();
+    client_->OnError(
+        is_spc_enabled ? mojom::PaymentErrorReason::NOT_ALLOWED_ERROR
+                       : mojom::PaymentErrorReason::USER_CANCEL,
+        is_spc_enabled
+            ? errors::kWebAuthnOperationTimedOutOrNotAllowed
+            : (!reject_show_error_message_.empty() ? reject_show_error_message_
+                                                   : errors::kUserCancelled));
+  }
 
   ResetAndDeleteThis();
 }

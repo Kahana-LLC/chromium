@@ -25,12 +25,12 @@ constexpr gfx::PointF kCanonicalMiddlePoint(100.0f, 50.0f);
 using PDFiumInkTransformTest = PDFiumTestBase;
 
 TEST_P(PDFiumInkTransformTest, GetCanonicalToPdfTransformForHelloWorld) {
-  TestClient client;
+  TestClient client(/*use_skia_renderer=*/GetParam());
   std::unique_ptr<PDFiumEngine> engine =
       InitializeEngine(&client, FILE_PATH_LITERAL("hello_world2.pdf"));
   ASSERT_TRUE(engine);
 
-  PDFiumPage& pdfium_page = GetPDFiumPageForTest(*engine, 0);
+  PDFiumPage& pdfium_page = GetPDFiumPage(*engine, 0);
   FPDF_PAGE page = pdfium_page.GetPage();
   ASSERT_TRUE(page);
 
@@ -42,12 +42,12 @@ TEST_P(PDFiumInkTransformTest, GetCanonicalToPdfTransformForHelloWorld) {
 }
 
 TEST_P(PDFiumInkTransformTest, GetCanonicalToPdfTransformForHelloWorldCropped) {
-  TestClient client;
+  TestClient client(/*use_skia_renderer=*/GetParam());
   std::unique_ptr<PDFiumEngine> engine =
       InitializeEngine(&client, FILE_PATH_LITERAL("hello_world_cropped.pdf"));
   ASSERT_TRUE(engine);
 
-  PDFiumPage& pdfium_page = GetPDFiumPageForTest(*engine, 0);
+  PDFiumPage& pdfium_page = GetPDFiumPage(*engine, 0);
   FPDF_PAGE page = pdfium_page.GetPage();
   ASSERT_TRUE(page);
 

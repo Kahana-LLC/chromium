@@ -5,6 +5,7 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_PLATFORM_FONTS_SHAPING_SHAPE_RESULT_CURSOR_H_
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_FONTS_SHAPING_SHAPE_RESULT_CURSOR_H_
 
+#include "base/gtest_prod_util.h"
 #include "third_party/blink/renderer/platform/fonts/shaping/glyph_data.h"
 #include "third_party/blink/renderer/platform/fonts/shaping/shape_result.h"
 #include "third_party/blink/renderer/platform/fonts/shaping/shape_result_run.h"
@@ -37,6 +38,8 @@ class PLATFORM_EXPORT ShapeResultCursor {
     return run_->start_index_ + GlyphData().character_index;
   }
 
+  const SimpleFontData& FontData() const { return *run_->font_data_; }
+
   // Advance of the current cluster.
   TextRunLayoutUnit ClusterAdvance() const;
 
@@ -62,6 +65,7 @@ class PLATFORM_EXPORT ShapeResultCursor {
  private:
   FRIEND_TEST_ALL_PREFIXES(ShapeResultCursorTest, Ltr);
   FRIEND_TEST_ALL_PREFIXES(ShapeResultCursorTest, Rtl);
+  FRIEND_TEST_ALL_PREFIXES(ShapeResultCursorTest, StartIndex);
 
   // Get `HarfBuzzRunGlyphData` for the current or the specified glyph index.
   const HarfBuzzRunGlyphData& GlyphData(wtf_size_t i) const {

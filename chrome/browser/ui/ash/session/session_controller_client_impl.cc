@@ -38,7 +38,6 @@
 #include "chrome/browser/ui/browser_dialogs.h"
 #include "chrome/browser/ui/managed_ui.h"
 #include "chrome/common/pref_names.h"
-#include "chromeos/ash/components/assistant/buildflags.h"
 #include "chromeos/ash/components/dbus/session_manager/session_manager_client.h"
 #include "chromeos/ash/components/demo_mode/utils/demo_session_utils.h"
 #include "chromeos/ash/components/login/session/session_termination_manager.h"
@@ -321,7 +320,11 @@ void SessionControllerClientImpl::EmitAshInitialized() {
 }
 
 PrefService* SessionControllerClientImpl::GetSigninScreenPrefService() {
-  return ash::ProfileHelper::Get()->GetSigninProfile()->GetPrefs();
+  auto* profile = ash::ProfileHelper::Get()->GetSigninProfile();
+  if (!profile) {
+    return nullptr;
+  }
+  return profile->GetPrefs();
 }
 
 PrefService* SessionControllerClientImpl::GetUserPrefService(

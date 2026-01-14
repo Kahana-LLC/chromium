@@ -61,8 +61,7 @@ optimization_guide::proto::SummarizerOutputLength ToProtoLength(
 
 AISummarizer::AISummarizer(
     AIContextBoundObjectSet& context_bound_object_set,
-    std::unique_ptr<optimization_guide::OptimizationGuideModelExecutor::Session>
-        session,
+    std::unique_ptr<optimization_guide::OnDeviceSession> session,
     blink::mojom::AISummarizerCreateOptionsPtr options,
     mojo::PendingReceiver<blink::mojom::AISummarizer> receiver)
     : AIContextBoundObject(context_bound_object_set),
@@ -195,15 +194,14 @@ void AISummarizer::ModelExecutionCallback(
 
   if (!result.response.has_value()) {
     AIUtils::SendStreamingStatus(
-        responder,
-        AIUtils::ConvertModelExecutionError(result.response.error().error()));
+        responder, AIUtils::ConvertOnDeviceError(result.response.error()));
     return;
   }
 
   auto response = optimization_guide::ParsedAnyMetadata<
-      optimization_guide::proto::SummarizeResponse>(result.response->response);
-  if (response->has_output()) {
-    responder->OnStreaming(response->output());
+      optimization_guide::proto::StringValue>(result.response->response);
+  if (response->has_value()) {
+    responder->OnStreaming(response->value());
   }
   if (result.response->is_complete) {
     responder->OnCompletion(/*context_info=*/nullptr);

@@ -21,9 +21,11 @@
 #include "net/base/load_flags.h"
 #include "net/base/net_errors.h"
 #include "net/http/http_request_headers.h"
+#include "net/http/http_response_headers.h"
 #include "net/http/http_status_code.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
 #include "services/network/public/cpp/resource_request.h"
+#include "services/network/public/mojom/network_context.mojom.h"
 #include "services/network/public/mojom/oblivious_http_request.mojom.h"
 #include "services/network/public/mojom/url_response_head.mojom.h"
 
@@ -439,9 +441,9 @@ void HashRealTimeService::OnURLLoaderComplete(
     }
 
     // Merge together the results from the cache and from the response.
-    for (const auto& response_hash : response.value()->full_hashes()) {
-      result_full_hashes.push_back(response_hash);
-    }
+    result_full_hashes.insert(result_full_hashes.end(),
+                              response.value()->full_hashes().begin(),
+                              response.value()->full_hashes().end());
     SBThreatInfo sb_threat_info =
         DetermineSBThreatInfo(url, result_full_hashes);
     sb_threat_type = sb_threat_info.threat_type;
@@ -494,8 +496,7 @@ void HashRealTimeService::RemoveUnmatchedFullHashes(
       std::remove_if(
           mutable_full_hashes->begin(), mutable_full_hashes->end(),
           [requested_hash_prefixes_set](const V5::FullHash& full_hash) {
-            return !base::Contains(
-                requested_hash_prefixes_set,
+            return !requested_hash_prefixes_set.contains(
                 hash_realtime_utils::GetHashPrefix(full_hash.full_hash()));
           }),
       mutable_full_hashes->end());

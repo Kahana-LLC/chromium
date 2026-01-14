@@ -48,8 +48,6 @@ using ChromeMLCancel = uintptr_t;
 using ChromeMLTSModel = uintptr_t;
 // Opaque handle to an instance of a ChromeML ASR stream.
 using ChromeMLASRStream = uintptr_t;
-// Opaque handle to a video-frame-specific ML inference engine.
-using ChromeMLInferenceEngine = uintptr_t;
 // Opaque handle to a constraint object.
 using ChromeMLConstraint = uintptr_t;
 
@@ -64,7 +62,7 @@ struct ChromeMLModelData {
   // File holding the weights data. The file will be owned by the inference
   // library and closed once weight loading is complete. kApuBackend provides
   // the `model_path` and not this field.
-  PlatformFile weights_file;
+  PlatformFile weights_file = kInvalidPlatformFile;
   // A unique ID to identify `weights_file`s which point to the same data.
   // Matching `file_id` tells the backend that the data also matches.
   std::optional<uint32_t> file_id;
@@ -101,6 +99,9 @@ struct ChromeMLModelDescriptor {
   float temperature;
   int top_k;
 
+  // Speculative decoding
+  int num_draft_tokens;
+
   // Packed TS data.
   const void* ts_data;
   size_t ts_size;
@@ -133,6 +134,9 @@ struct ChromeMLAdaptationDescriptor {
   uint32_t top_k;
   float temperature;
 
+  // Whether or not the mode will use speculative decoding.
+  bool enable_speculative_decoding;
+
   // Whether this model will handle InputPieces containing images.
   bool enable_image_input;
 
@@ -148,6 +152,9 @@ enum class ChromeMLGenerateStatus {
   // Generation either completed normally or was cancelled. This is the
   // last output.
   kComplete,
+
+  // Generation failed because there was an error creating the constraint.
+  kInvalidConstraint,
 };
 using ChromeMLExecutionStatus = ChromeMLGenerateStatus;
 
@@ -560,25 +567,10 @@ struct ChromeMLAPI {
   bool (*GetTokenizerParams)(ChromeMLModel model,
                              const ChromeMLGetTokenizerParamsFn& fn);
 
-  // Create new instance of ML inference engine, using the passed in `device`.
-  // `model_blob` should contain a binary blob of a TFLite model (read from
-  // .tflite file). `model_blob_size` is the size in bytes of `model_blob`. On
-  // failure, will return `0`.
-  ChromeMLInferenceEngine (*CreateInferenceEngine)(WGPUAdapterInfo adapter_info,
-                                                   WGPUDevice device,
-                                                   const char* model_blob,
-                                                   size_t model_blob_size);
-
-  // Runs inference on `source`, producing results into `destination`. `engine`
-  // must have been obtained from `CreateInferenceEngine()` call.
-  bool (*RunInference)(ChromeMLInferenceEngine engine,
-                       WGPUTexture source,
-                       WGPUTexture destination);
-
-  // Cleans up the instance of ML inference engine returned from
-  // `CreateInferenceEngine()` call. It is invalid to use `engine` for inference
-  // after this call.
-  void (*DestroyInferenceEngine)(ChromeMLInferenceEngine engine);
+  // Gets parameters needed to construct a tokenizer.
+  bool (*GetTokenizerParamsV2)(ChromeMLModel model,
+                               ChromeMLSession session,
+                               const ChromeMLGetTokenizerParamsFn& fn);
 
   // Creates a new TFLite delegate using the GPU inference engine.
   TfLiteDelegate* (*CreateGpuDelegate)();
@@ -594,7 +586,7 @@ struct ChromeMLAPI {
 };
 
 // Signature of the GetChromeMLAPI() function which the shared library exports.
-using ChromeMLAPIGetter = const ChromeMLAPI* (*)();
+using ChromeMLAPIGetter = const ChromeMLAPI* (*)(bool enable_litert_lm);
 
 }  // extern "C"
 

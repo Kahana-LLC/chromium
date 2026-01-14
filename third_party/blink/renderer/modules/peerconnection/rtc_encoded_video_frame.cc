@@ -24,7 +24,6 @@ namespace blink {
 
 // Allow all fields to be set when calling RTCEncodedVideoFrame.setMetadata.
 BASE_FEATURE(kAllowRTCEncodedVideoFrameSetMetadataAllFields,
-             "AllowRTCEncodedVideoFrameSetMetadataAllFields",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
 namespace {
@@ -67,8 +66,8 @@ base::expected<void, String> ValidateMetadata(
     return base::unexpected("new metadata has member(s) missing.");
   }
 
-  // This might happen if the dependency descriptor is not set.
-  if (!metadata->hasFrameId() && metadata->hasDependencies()) {
+  if (!metadata->hasFrameId() && metadata->hasDependencies() &&
+      !metadata->dependencies().empty()) {
     return base::unexpected(
         "new metadata has frameID missing, but has dependencies");
   }
@@ -124,7 +123,7 @@ RTCEncodedVideoFrame* RTCEncodedVideoFrame::Create(
     if (!set_metadata.has_value()) {
       exception_state.ThrowDOMException(
           DOMExceptionCode::kInvalidModificationError,
-          "Cannot create a new VideoFrame: " + set_metadata.error());
+          StrCat({"Cannot create a new VideoFrame: ", set_metadata.error()}));
       return nullptr;
     }
   }
@@ -173,7 +172,7 @@ RTCEncodedVideoFrameMetadata* RTCEncodedVideoFrame::getMetadata(
     metadata->setPayloadType(*delegate_->PayloadType());
   }
   if (delegate_->MimeType()) {
-    metadata->setMimeType(WTF::String::FromUTF8(*delegate_->MimeType()));
+    metadata->setMimeType(String::FromUTF8(*delegate_->MimeType()));
   }
 
   if (RuntimeEnabledFeatures::RTCEncodedVideoFrameAdditionalMetadataEnabled()) {
@@ -214,7 +213,7 @@ RTCEncodedVideoFrameMetadata* RTCEncodedVideoFrame::getMetadata(
     if (std::optional<base::TimeTicks> receive_time =
             delegate_->ReceiveTime()) {
       metadata->setReceiveTime(
-          RTCEncodedFrameTimestampFromTimeTicks(context, *receive_time));
+          RTCTimeStampFromTimeTicks(context, *receive_time));
     }
     if (std::optional<CaptureTimeInfo> capture_time_info =
             delegate_->CaptureTime()) {
@@ -303,7 +302,7 @@ void RTCEncodedVideoFrame::setMetadata(ExecutionContext* context,
   if (!set_metadata.has_value()) {
     exception_state.ThrowDOMException(
         DOMExceptionCode::kInvalidModificationError,
-        "Cannot setMetadata: " + set_metadata.error());
+        StrCat({"Cannot setMetadata: ", set_metadata.error()}));
   }
 }
 

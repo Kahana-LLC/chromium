@@ -11,6 +11,7 @@
 #include "third_party/blink/renderer/core/css/resolver/scoped_style_resolver.h"
 #include "third_party/blink/renderer/core/css/selector_statistics_flag.h"
 #include "third_party/blink/renderer/core/css/style_engine.h"
+#include "third_party/blink/renderer/core/css/style_rule.h"
 #include "third_party/blink/renderer/core/css/style_sheet_contents.h"
 #include "third_party/blink/renderer/core/inspector/style_rule_to_style_sheet_contents_map.h"
 
@@ -61,7 +62,7 @@ void InvalidationSetToSelectorMap::StartOrStopTrackingIfNeeded(
       CSSDefaultStyleSheets::Instance().ForEachRuleFeatureSet(
           tree_scope.GetDocument(),
           /*call_for_each_stylesheet=*/true,
-          WTF::BindRepeating(
+          BindRepeating(
               [](InvalidationSetToSelectorMap* instance,
                  const StyleEngine* style_engine,
                  const RuleFeatureSet& features, StyleSheetContents* contents) {
@@ -230,13 +231,13 @@ void InvalidationSetToSelectorMap::BeginInvalidationSetCombine(
             .stored_value->value.Get();
     auto source_entry_it = instance->invalidation_set_map_->find(source);
     CHECK(source_entry_it != instance->invalidation_set_map_->end());
-    for (auto source_selector_list_it : *(source_entry_it->value)) {
+    for (const auto& source_selector_list_it : *(source_entry_it->value)) {
       IndexedSelectorList* target_selector_list =
           target_entry_map
               ->insert(source_selector_list_it.key,
                        MakeGarbageCollected<IndexedSelectorList>())
               .stored_value->value.Get();
-      for (auto source_selector : *(source_selector_list_it.value)) {
+      for (const auto& source_selector : *(source_selector_list_it.value)) {
         target_selector_list->insert(source_selector);
       }
     }

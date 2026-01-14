@@ -18,6 +18,7 @@
 #include "chrome/browser/optimization_guide/optimization_guide_keyed_service.h"
 #include "chrome/browser/optimization_guide/optimization_guide_keyed_service_factory.h"
 #include "chrome/browser/page_content_annotations/page_content_annotations_service_factory.h"
+#include "chrome/browser/page_content_annotations/page_content_annotations_web_contents_observer.h"
 #include "chrome/browser/page_content_annotations/page_content_extraction_service.h"
 #include "chrome/browser/page_content_annotations/page_content_extraction_service_factory.h"
 #include "chrome/browser/page_content_annotations/page_content_extraction_types.h"
@@ -26,6 +27,7 @@
 #include "chrome/common/chrome_switches.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
+#include "components/history/core/browser/features.h"
 #include "components/history/core/browser/history_database.h"
 #include "components/history/core/browser/history_db_task.h"
 #include "components/history/core/browser/history_service.h"
@@ -76,7 +78,7 @@ class TestPageContentAnnotationsObserver
     : public PageContentAnnotationsService::PageContentAnnotationsObserver {
  public:
   void OnPageContentAnnotated(
-      const GURL& url,
+      const HistoryVisit& visit,
       const PageContentAnnotationsResult& result) override {
     last_page_content_annotations_result_ = result;
   }
@@ -235,7 +237,8 @@ class PageContentAnnotationsServiceBrowserTest : public InProcessBrowserTest {
           {
               {"write_to_history_service", "true"},
           }},
-         {features::kPageVisibilityPageContentAnnotations, {}}},
+         {features::kPageVisibilityPageContentAnnotations, {}},
+         {history::kVisitedLinksOn404, {}}},
         /*disabled_features=*/{
             optimization_guide::features::kPreventLongRunningPredictionModels});
   }
@@ -487,6 +490,25 @@ IN_PROC_BROWSER_TEST_F(PageContentAnnotationsServiceBrowserTest,
       "OptimizationGuide.PageContentAnnotationsService.ContentAnnotated", 0);
 }
 
+IN_PROC_BROWSER_TEST_F(PageContentAnnotationsServiceBrowserTest,
+                       404VisitIgnored) {
+  base::HistogramTester histogram_tester;
+  ukm::TestAutoSetUkmRecorder ukm_recorder;
+
+#if BUILDFLAG(BUILD_WITH_TFLITE_LIB)
+  TestPageContentAnnotator test_annotator;
+  test_annotator.UseVisibilityScores(std::nullopt, {{std::string(), 0.5}});
+  service()->OverridePageContentAnnotatorForTesting(&test_annotator);
+#endif
+
+  GURL url(embedded_test_server()->GetURL("a.test", "/page404.html"));
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), url));
+  base::RunLoop().RunUntilIdle();
+
+  histogram_tester.ExpectTotalCount(
+      "OptimizationGuide.PageContentAnnotationsService.ContentAnnotated", 0);
+}
+
 #if BUILDFLAG(BUILD_WITH_TFLITE_LIB)
 IN_PROC_BROWSER_TEST_F(PageContentAnnotationsServiceBrowserTest,
                        ENPageVisibilityModel_GoldenData) {
@@ -640,6 +662,11 @@ IN_PROC_BROWSER_TEST_F(PageContentAnnotationsServiceBrowserTest,
             observer.last_page_content_annotations_result_->GetType());
   EXPECT_NE(-1.0, observer.last_page_content_annotations_result_
                       ->GetContentVisibilityScore());
+  EXPECT_TRUE(
+      PageContentAnnotationsWebContentsObserver::GetOrCreateForWebContents(
+          browser()->tab_strip_model()->GetActiveWebContents())
+          ->content_visibility_score()
+          .has_value());
 }
 
 class PageContentAnnotationsServiceRemoteMetadataBrowserTest
@@ -800,9 +827,7 @@ class PageContentAnnotationsServiceSalientImageMetadataBrowserTest
  public:
   PageContentAnnotationsServiceSalientImageMetadataBrowserTest() {
     scoped_feature_list_.InitWithFeaturesAndParameters(
-        {{features::kPageContentAnnotations, {}},
-         {features::kPageContentAnnotationsPersistSalientImageMetadata,
-          {{"supported_countries", "*"}, {"supported_locales", "*"}}}},
+        {{features::kPageContentAnnotations, {}}},
         /*disabled_features=*/{});
     set_load_model_on_startup(false);
   }
@@ -940,8 +965,15 @@ IN_PROC_BROWSER_TEST_F(PageContentAnnotationsServiceNoHistoryTest,
   EXPECT_FALSE(ModelAnnotationsFieldsAreSetForURL(url));
 }
 
+// TODO(crbug.com/451682393): Disabled on Linux dbg due to flakiness.
+#if BUILDFLAG(IS_LINUX) && !defined(NDEBUG)
+#define MAYBE_ModelExecutesAndUsesCachedResult \
+  DISABLED_ModelExecutesAndUsesCachedResult
+#else
+#define MAYBE_ModelExecutesAndUsesCachedResult ModelExecutesAndUsesCachedResult
+#endif
 IN_PROC_BROWSER_TEST_F(PageContentAnnotationsServiceNoHistoryTest,
-                       ModelExecutesAndUsesCachedResult) {
+                       MAYBE_ModelExecutesAndUsesCachedResult) {
   TestPageContentAnnotator test_annotator;
   test_annotator.UseVisibilityScores(std::nullopt, {{"Test Page", 0.5}});
   service()->OverridePageContentAnnotatorForTesting(&test_annotator);
@@ -1372,11 +1404,11 @@ IN_PROC_BROWSER_TEST_F(PageContentAnnotationsServiceContentExtractionTest,
   optimization_guide::RetryForHistogramUntilCountReached(
       &histogram_tester, "OptimizationGuide.AIPageContent.TotalLatency", 1);
   histogram_tester.ExpectTotalCount(
-      "OptimizationGuide.AnnotatedPageContent.TotalSize2", 1);
+      "OptimizationGuide.AnnotatedPageContent.TotalSize2.Default", 1);
   histogram_tester.ExpectTotalCount(
       "OptimizationGuide.AnnotatedPageContent.TotalWordCount", 1);
   histogram_tester.ExpectTotalCount(
-      "OptimizationGuide.AnnotatedPageContent.TotalNodeCount", 1);
+      "OptimizationGuide.AnnotatedPageContent.TotalNodeCount.Default", 1);
   histogram_tester.ExpectTotalCount(
       "OptimizationGuide.AnnotatedPageContent.ComputeMetricsLatency", 1);
 
@@ -1449,11 +1481,9 @@ class PageContentAnnotationsServiceContentExtractionResponseCodeTest
 
     bool are_404_navigations_saved_to_history = GetParam();
     if (are_404_navigations_saved_to_history) {
-      enabled_features_with_params.push_back(
-          {blink::features::kVisitedLinksOnErrorNavigation, {}});
+      enabled_features_with_params.push_back({history::kVisitedLinksOn404, {}});
     } else {
-      disabled_features.push_back(
-          blink::features::kVisitedLinksOnErrorNavigation);
+      disabled_features.push_back(history::kVisitedLinksOn404);
     }
 
     scoped_feature_list_.InitWithFeaturesAndParameters(
@@ -1547,11 +1577,11 @@ IN_PROC_BROWSER_TEST_P(
   // that brought us to the current document, so we should *not* trigger a page
   // content extraction from this navigation.
   histogram_tester.ExpectTotalCount(
-      "OptimizationGuide.AnnotatedPageContent.TotalSize2", 0);
+      "OptimizationGuide.AnnotatedPageContent.TotalSize2.Default", 0);
   histogram_tester.ExpectTotalCount(
       "OptimizationGuide.AnnotatedPageContent.TotalWordCount", 0);
   histogram_tester.ExpectTotalCount(
-      "OptimizationGuide.AnnotatedPageContent.TotalNodeCount", 0);
+      "OptimizationGuide.AnnotatedPageContent.TotalNodeCount.Default", 0);
   histogram_tester.ExpectTotalCount(
       "OptimizationGuide.AnnotatedPageContent.ComputeMetricsLatency", 0);
 
@@ -1686,6 +1716,55 @@ IN_PROC_BROWSER_TEST_F(
   // Make sure cached content is cleared with a new navigation.
   ASSERT_FALSE(service->GetExtractedPageContentAndEligibilityForPage(
       web_contents->GetPrimaryPage()));
+}
+
+class PageContentAnnotationsServiceContentExtractionTestActionable
+    : public InProcessBrowserTest {
+ public:
+  virtual void InitializeFeatureList() {
+    scoped_feature_list_.InitAndEnableFeatureWithParameters(
+        features::kAnnotatedPageContentExtraction,
+        {{"capture_delay", "0s"}, {"mode", "actionable"}});
+  }
+
+  void SetUp() override {
+    InitializeFeatureList();
+    InProcessBrowserTest::SetUp();
+  }
+
+  void SetUpOnMainThread() override {
+    host_resolver()->AddRule("*", "127.0.0.1");
+    InProcessBrowserTest::SetUpOnMainThread();
+
+    embedded_test_server()->ServeFilesFromSourceDirectory(
+        GetChromeTestDataDir());
+    ASSERT_TRUE(embedded_test_server()->Start());
+  }
+
+ protected:
+  base::test::ScopedFeatureList scoped_feature_list_;
+};
+
+IN_PROC_BROWSER_TEST_F(
+    PageContentAnnotationsServiceContentExtractionTestActionable,
+    Basic) {
+  FakeExtractionServiceObserver observer;
+  auto* service =
+      PageContentExtractionServiceFactory::GetForProfile(browser()->profile());
+  service->AddObserver(&observer);
+
+  content::WebContents* web_contents =
+      browser()->tab_strip_model()->GetActiveWebContents();
+  GURL url(embedded_test_server()->GetURL("a.test",
+                                          "/optimization_guide/hello.html"));
+  content::NavigateToURLBlockUntilNavigationsComplete(web_contents, url, 1);
+
+  observer.Wait();
+  auto& page_content = observer.page_content_future_.Get();
+  EXPECT_TRUE(page_content.IsInitialized());
+  EXPECT_EQ(page_content.mode(),
+            optimization_guide::proto::
+                ANNOTATED_PAGE_CONTENT_MODE_ACTIONABLE_ELEMENTS);
 }
 
 }  // namespace page_content_annotations

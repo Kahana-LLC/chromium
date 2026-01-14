@@ -5,6 +5,8 @@
 package org.chromium.chrome.browser.ui.browser_window;
 
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.mockingDetails;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import android.graphics.Rect;
@@ -26,12 +28,12 @@ import org.chromium.build.annotations.NullMarked;
 @NullMarked
 final class AndroidBaseWindowNativeUnitTestSupport {
     private final AndroidBaseWindow mAndroidBaseWindow;
-    private final ChromeAndroidTask mMockChromeAndroidTask;
+    private final ChromeAndroidTask mChromeAndroidTask;
 
     @CalledByNative
     private AndroidBaseWindowNativeUnitTestSupport() {
-        mMockChromeAndroidTask = mock(ChromeAndroidTask.class);
-        mAndroidBaseWindow = new AndroidBaseWindow(mMockChromeAndroidTask);
+        mChromeAndroidTask = mock(ChromeAndroidTask.class);
+        mAndroidBaseWindow = new AndroidBaseWindow(mChromeAndroidTask);
     }
 
     @CalledByNative
@@ -50,7 +52,14 @@ final class AndroidBaseWindowNativeUnitTestSupport {
     }
 
     @CalledByNative
+    private void verifyBoundsToSet(int left, int top, int right, int bottom) {
+        assert mockingDetails(mChromeAndroidTask).isMock();
+        verify(mChromeAndroidTask).setBoundsInDp(new Rect(left, top, right, bottom));
+    }
+
+    @CalledByNative
     private void setFakeBounds(int left, int top, int right, int bottom) {
-        when(mMockChromeAndroidTask.getBounds()).thenReturn(new Rect(left, top, right, bottom));
+        assert mockingDetails(mChromeAndroidTask).isMock();
+        when(mChromeAndroidTask.getBoundsInDp()).thenReturn(new Rect(left, top, right, bottom));
     }
 }

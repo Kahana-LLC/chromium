@@ -12,13 +12,12 @@
 #include "chrome/browser/extensions/activity_log/activity_log.h"
 #include "chrome/browser/extensions/extension_action_runner.h"
 #include "chrome/browser/extensions/extension_tab_util.h"
-#include "chrome/browser/extensions/permissions/active_tab_permission_granter.h"
-#include "chrome/browser/extensions/permissions/site_permissions_helper.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/sessions/session_tab_helper_factory.h"
 #include "chrome/common/buildflags.h"
 #include "components/sessions/content/session_tab_helper.h"
 #include "content/public/browser/back_forward_cache.h"
+#include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_view_host.h"
@@ -27,7 +26,10 @@
 #include "extensions/browser/api/declarative/rules_registry_service.h"
 #include "extensions/browser/api/declarative_content/content_rules_registry.h"
 #include "extensions/browser/extension_web_contents_observer.h"
+#include "extensions/browser/permissions/active_tab_permission_granter.h"
+#include "extensions/browser/permissions/site_permissions_helper.h"
 #include "extensions/browser/permissions_manager.h"
+#include "extensions/buildflags/buildflags.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_resource.h"
 #include "extensions/common/manifest.h"
@@ -41,6 +43,8 @@
 #include "chrome/browser/sessions/session_service.h"
 #include "chrome/browser/sessions/session_service_factory.h"
 #endif
+
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
 
 using content::WebContents;
 
@@ -117,15 +121,14 @@ void TabHelper::SetReloadRequired(
     case PermissionsManager::UserSiteSetting::kBlockAllExtensions: {
       // A reload is required if any extension that had site access will lose
       // it.
-      content::WebContents* web_contents = GetVisibleWebContents();
       SitePermissionsHelper permissions_helper(profile_);
       const ExtensionSet& extensions =
           ExtensionRegistry::Get(profile_)->enabled_extensions();
       reload_required_ = std::ranges::any_of(
-          extensions, [&permissions_helper,
-                       web_contents](scoped_refptr<const Extension> extension) {
+          extensions, [&permissions_helper, contents = web_contents()](
+                          scoped_refptr<const Extension> extension) {
             return permissions_helper.GetSiteInteraction(*extension,
-                                                         web_contents) ==
+                                                         contents) ==
                    SitePermissionsHelper::SiteInteraction::kGranted;
           });
       break;
@@ -224,12 +227,8 @@ void TabHelper::WebContentsDestroyed() {
   reload_required_ = false;
 }
 
-WindowController* TabHelper::GetExtensionWindowController() const {
+WindowController* TabHelper::GetExtensionWindowController() {
   return ExtensionTabUtil::GetWindowControllerOfTab(web_contents());
-}
-
-WebContents* TabHelper::GetAssociatedWebContents() const {
-  return web_contents();
 }
 
 void TabHelper::OnExtensionLoaded(content::BrowserContext* browser_context,

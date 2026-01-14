@@ -89,7 +89,7 @@ bool HasNonTrivialSpellingGrammarStyles(const FragmentItem& fragment_item,
                                         PseudoId pseudo) {
   DCHECK(pseudo == kPseudoIdSpellingError || pseudo == kPseudoIdGrammarError);
   if (const ComputedStyle* pseudo_style =
-          HighlightStyleUtils::HighlightPseudoStyle(node, originating_style,
+          HighlightStyleUtils::HighlightPseudoStyle(originating_style,
                                                     pseudo)) {
     const Document& document = node->GetDocument();
     // If the ‘color’, ‘-webkit-text-fill-color’, ‘-webkit-text-stroke-color’,
@@ -304,8 +304,8 @@ void HighlightPainter::SelectionPaintState::ComputeSelectionStyle(
     Node* node,
     const PaintInfo& paint_info,
     const TextPaintStyle& text_style) {
-  const ComputedStyle* pseudo_style = HighlightStyleUtils::HighlightPseudoStyle(
-      node, style, kPseudoIdSelection);
+  const ComputedStyle* pseudo_style =
+      HighlightStyleUtils::HighlightPseudoStyle(style, kPseudoIdSelection);
   selection_style_ = HighlightStyleUtils::HighlightPaintingStyle(
       document, style, pseudo_style, node, kPseudoIdSelection, text_style,
       paint_info, SearchTextIsActiveMatch::kNo);
@@ -396,11 +396,9 @@ void HighlightPainter::SelectionPaintState::
 // GetNode() for first-letter fragment returns null because it is anonymous.
 // Use AssociatedTextNode() of LayoutTextFragment to get the associated node.
 static Node* AssociatedNode(const LayoutObject* layout_object) {
-  if (RuntimeEnabledFeatures::PaintHighlightsForFirstLetterEnabled()) {
-    if (auto* layout_text_fragment =
-            DynamicTo<LayoutTextFragment>(layout_object)) {
-      return layout_text_fragment->AssociatedTextNode();
-    }
+  if (auto* layout_text_fragment =
+          DynamicTo<LayoutTextFragment>(layout_object)) {
+    return layout_text_fragment->AssociatedTextNode();
   }
   return layout_object->GetNode();
 }
@@ -490,8 +488,9 @@ HighlightPainter::HighlightPainter(
         originating_text_style_, paint_info_, selection_status, custom_,
         grammar_, spelling_, target_, search_);
     Vector<HighlightEdge> edges = HighlightOverlay::ComputeEdges(
-        node_, fragment_item_.IsGeneratedText(), fragment_dom_offsets_, layers_,
-        selection_status, custom_, grammar_, spelling_, target_, search_);
+        node_, layout_object_, fragment_item_.IsGeneratedText(),
+        fragment_dom_offsets_, layers_, selection_status, custom_, grammar_,
+        spelling_, target_, search_);
     parts_ =
         HighlightOverlay::ComputeParts(fragment_paint_info_, layers_, edges);
 
@@ -545,7 +544,7 @@ void HighlightPainter::PaintNonCssMarkers(Phase phase) {
   const StringView text = cursor_.CurrentText();
 
   const auto* text_node = DynamicTo<Text>(node_);
-  const MarkerRangeMappingContext mapping_context(*text_node,
+  const MarkerRangeMappingContext mapping_context(*text_node, *layout_object_,
                                                   *fragment_dom_offsets_);
   for (const DocumentMarker* marker : markers_) {
     std::optional<TextOffsetRange> marker_offsets =
@@ -658,7 +657,7 @@ HighlightPainter::Case HighlightPainter::ComputePaintCase() const {
 
   if (selection_ && spelling_.empty() && grammar_.empty()) {
     const ComputedStyle* pseudo_style =
-        HighlightStyleUtils::HighlightPseudoStyle(node_, originating_style_,
+        HighlightStyleUtils::HighlightPseudoStyle(originating_style_,
                                                   kPseudoIdSelection);
 
     // If we only have a selection, and there are no selection or originating
@@ -709,7 +708,7 @@ void HighlightPainter::FastPaintSpellingGrammarDecorations(
     const Text& text_node,
     const StringView& text,
     const DocumentMarkerVector& markers) {
-  const MarkerRangeMappingContext mapping_context(text_node,
+  const MarkerRangeMappingContext mapping_context(text_node, *layout_object_,
                                                   *fragment_dom_offsets_);
   for (const DocumentMarker* marker : markers) {
     std::optional<TextOffsetRange> marker_offsets =
@@ -731,9 +730,9 @@ void HighlightPainter::PaintOneSpellingGrammarDecoration(
     return;
   }
 
-  if (!text_painter_.GetSvgState()) {
+  if (!fragment_item_.IsSvgText()) {
     if (const auto* pseudo_style = HighlightStyleUtils::HighlightPseudoStyle(
-            node_, originating_style_, PseudoFor(type))) {
+            originating_style_, PseudoFor(type))) {
       const TextPaintStyle text_style =
           HighlightStyleUtils::HighlightPaintingStyle(
               node_->GetDocument(), originating_style_, pseudo_style, node_,
@@ -937,9 +936,9 @@ void HighlightPainter::PaintHighlightOverlays(
       // double painting of ligatures for SVG so as to correctly handle
       // transformed text (include text paths). This might be fixable by
       // transforming the ink overflow before using it to expamd the clip.
-      TextPainter::SvgTextPaintState* svg_state = text_painter_.GetSvgState();
-      if (svg_state && part.type == HighlightLayerType::kSelection)
-          [[unlikely]] {
+      if (fragment_item_.IsSvgText() &&
+          part.type == HighlightLayerType::kSelection) [[unlikely]] {
+        TextPainter::SvgTextPaintState* svg_state = text_painter_.GetSvgState();
         // SVG text painting needs to know it is painting selection.
         is_painting_selection_reset.emplace(&svg_state->is_painting_selection_,
                                             true);
@@ -1126,7 +1125,7 @@ void HighlightPainter::PaintDecorationsExceptLineThrough(
     // or crash if asked to paint decorations introduced by highlight pseudos.
     // TODO(crbug.com/1147859) is SVG spec ready for highlight decorations?
     // TODO(crbug.com/1147859) https://github.com/w3c/svgwg/issues/894
-    if (text_painter_.GetSvgState() &&
+    if (fragment_item_.IsSvgText() &&
         decoration.type != HighlightLayerType::kOriginating) {
       continue;
     }
@@ -1182,7 +1181,7 @@ void HighlightPainter::PaintDecorationsOnlyLineThrough(
     // or crash if asked to paint decorations introduced by highlight pseudos.
     // TODO(crbug.com/1147859) is SVG spec ready for highlight decorations?
     // TODO(crbug.com/1147859) https://github.com/w3c/svgwg/issues/894
-    if (text_painter_.GetSvgState() &&
+    if (fragment_item_.IsSvgText() &&
         decoration.type != HighlightLayerType::kOriginating) {
       continue;
     }

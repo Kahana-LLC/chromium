@@ -8,9 +8,9 @@
 #import "base/strings/string_util.h"
 #import "base/strings/sys_string_conversions.h"
 #import "base/test/ios/wait_util.h"
-#import "ios/chrome/browser/browser_container/ui_bundled/edit_menu_app_interface.h"
-#import "ios/chrome/browser/browser_container/ui_bundled/edit_menu_matchers.h"
-#import "ios/chrome/browser/popup_menu/ui_bundled/popup_menu_constants.h"
+#import "ios/chrome/browser/browser_content/ui_bundled/edit_menu_app_interface.h"
+#import "ios/chrome/browser/browser_content/ui_bundled/edit_menu_matchers.h"
+#import "ios/chrome/browser/popup_menu/public/popup_menu_constants.h"
 #import "ios/chrome/browser/reader_mode/model/features.h"
 #import "ios/chrome/browser/reader_mode/ui/constants.h"
 #import "ios/chrome/browser/search_engines/model/search_engines_app_interface.h"
@@ -86,9 +86,9 @@ std::unique_ptr<net::test_server::HttpResponse> StandardResponse(
   http_response->set_code(net::HTTP_OK);
   GURL request_url = request.GetURL();
 
-  if (request_url.path_piece() == kBasicSelectionUrl) {
+  if (request_url.path() == kBasicSelectionUrl) {
     http_response->set_content(kBasicSelectionHtmlTemplate);
-  } else if (request_url.path_piece() == kSearchResultUrl) {
+  } else if (request_url.path() == kSearchResultUrl) {
     std::string html = kSearchResultHtmlTemplate;
     std::string query;
     bool has_query = net::GetValueForKeyInQuery(request_url, "q", &query);
@@ -116,6 +116,7 @@ std::unique_ptr<net::test_server::HttpResponse> StandardResponse(
 
   if ([self isRunningTest:@selector(testSearchWithReaderMode)]) {
     config.features_enabled.push_back(kEnableReaderMode);
+    config.features_enabled.push_back(kEnableReaderModeInUS);
   }
   return config;
 }
@@ -181,9 +182,9 @@ std::unique_ptr<net::test_server::HttpResponse> StandardResponse(
   [self loadPage];
 
   // Open Reader Mode UI.
-  [ChromeEarlGrey showReaderMode];
-  GREYAssertTrue([ChromeEarlGrey waitUntilReaderModeWebStateIsReady],
-                 @"Reader mode content could not be loaded");
+  GREYAssertTrue(
+      [ChromeEarlGrey showReaderModeAndWaitUntilReaderModeWebStateIsReady],
+      @"Reader mode content could not be loaded");
 
   // Wait for Reader Mode UI to appear on-screen.
   [ChromeEarlGrey

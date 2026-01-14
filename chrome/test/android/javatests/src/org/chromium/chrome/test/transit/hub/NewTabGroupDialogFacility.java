@@ -14,18 +14,18 @@ import static org.hamcrest.CoreMatchers.allOf;
 import static org.hamcrest.CoreMatchers.startsWith;
 
 import static org.chromium.base.ThreadUtils.runOnUiThreadBlocking;
+import static org.chromium.base.test.transit.ViewElement.inDialogOption;
+import static org.chromium.base.test.transit.ViewElement.newOptions;
 import static org.chromium.base.test.transit.ViewSpec.viewSpec;
 
 import android.content.Context;
 import android.view.View;
 import android.widget.EditText;
 
-import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
 import org.hamcrest.Matcher;
 
-import org.chromium.base.Log;
 import org.chromium.base.Token;
 import org.chromium.base.test.transit.Element;
 import org.chromium.base.test.transit.Facility;
@@ -37,14 +37,15 @@ import org.chromium.chrome.browser.tabmodel.TabGroupColorUtils;
 import org.chromium.chrome.browser.tabmodel.TabGroupModelFilter;
 import org.chromium.chrome.browser.tabmodel.TabModel;
 import org.chromium.chrome.browser.tabmodel.TabModelUtils;
-import org.chromium.chrome.browser.tasks.tab_management.ColorPickerUtils;
 import org.chromium.chrome.test.R;
 import org.chromium.chrome.test.transit.ChromeActivityTabModelBoundStation;
 import org.chromium.chrome.test.transit.SoftKeyboardFacility;
 import org.chromium.chrome.test.transit.tabmodel.TabGroupCreatedCondition;
+import org.chromium.chrome.test.transit.tabmodel.TabGroupExistsCondition;
 import org.chromium.chrome.test.transit.tabmodel.TabGroupUtil;
 import org.chromium.chrome.test.util.TabBinningUtil;
 import org.chromium.components.tab_groups.TabGroupColorId;
+import org.chromium.components.tab_groups.TabGroupColorPickerUtils;
 
 import java.util.List;
 
@@ -64,8 +65,6 @@ public class NewTabGroupDialogFacility<
     public ViewElement<View> doneButtonElement;
     private @Nullable String mTitle;
     private @Nullable List<Integer> mTabIdsToGroup;
-
-    private static final String TAG = "TransitLayer";
 
     /** Constructor. Expects no particular title or selected color. */
     public NewTabGroupDialogFacility(SoftKeyboardFacility softKeyboard) {
@@ -100,15 +99,19 @@ public class NewTabGroupDialogFacility<
         if (mTabIdsToGroup == null) {
             initTabGroupCreatedCondition();
         } else {
-            titleInputElement = declareView(createTitleViewSpec());
+            titleInputElement = declareView(createTitleViewSpec(), inDialogOption());
+            declareEnterCondition(
+                    new TabGroupExistsCondition(
+                            getHostStation().tabGroupModelFilterElement, mTabIdsToGroup));
         }
 
         dialogElement =
                 declareView(
                         withId(R.id.visual_data_dialog_layout),
-                        ViewElement.displayingAtLeastOption(80));
+                        newOptions().inDialog().displayingAtLeast(80).build());
         declareView(
-                viewSpec(allOf(withId(R.id.visual_data_dialog_title), withText("New tab group"))));
+                viewSpec(allOf(withId(R.id.visual_data_dialog_title), withText("New tab group"))),
+                inDialogOption());
 
         // TODO(crbug.com/346377124): Partially cut off in android_30_google_apis_x86.textpb
         declareView(withId(R.id.color_picker_container), ViewElement.displayingAtLeastOption(50));
@@ -121,19 +124,18 @@ public class NewTabGroupDialogFacility<
                 colorElements[i] =
                         declareView(
                                 colorPickerIconSpec(color, color.equals(mSelectedColor)),
-                                ViewElement.newOptions().unscoped().displayingAtLeast(60).build());
+                                newOptions().inDialog().unscoped().displayingAtLeast(60).build());
             } else {
                 colorElements[i] =
                         declareView(
                                 colorPickerIconSpec(color, /* selected= */ null),
-                                ViewElement.newOptions().unscoped().displayingAtLeast(60).build());
+                                newOptions().inDialog().unscoped().displayingAtLeast(60).build());
             }
         }
 
-        doneButtonElement = declareView(withId(R.id.positive_button));
+        doneButtonElement = declareView(withId(R.id.positive_button), inDialogOption());
     }
 
-    @NonNull
     private ViewSpec<View> createTitleViewSpec() {
         return viewSpec(
                 withId(R.id.title_input_text), isAssignableFrom(EditText.class), withText(mTitle));
@@ -147,13 +149,14 @@ public class NewTabGroupDialogFacility<
         declareElementFactory(
                 tabGroupIdElement,
                 delayedElements -> {
-                    TabGroupModelFilter filter = mHostStation.tabGroupModelFilterElement.get();
+                    TabGroupModelFilter filter = mHostStation.tabGroupModelFilterElement.value();
                     List<Tab> tabsInGroup =
                             runOnUiThreadBlocking(
-                                    () -> filter.getTabsInGroup(tabGroupIdElement.get()));
+                                    () -> filter.getTabsInGroup(tabGroupIdElement.value()));
                     mTabIdsToGroup = TabModelUtils.getTabIds(tabsInGroup);
                     mTitle = TabGroupUtil.getNumberOfTabsString(mTabIdsToGroup.size());
-                    titleInputElement = delayedElements.declareView(createTitleViewSpec());
+                    titleInputElement =
+                            delayedElements.declareView(createTitleViewSpec(), inDialogOption());
                 });
     }
 
@@ -162,7 +165,8 @@ public class NewTabGroupDialogFacility<
         Context context = mHostStation.getActivity();
         String colorName =
                 context.getString(
-                        ColorPickerUtils.getTabGroupColorPickerItemColorAccessibilityString(color));
+                        TabGroupColorPickerUtils.getTabGroupColorPickerItemColorAccessibilityString(
+                                color));
         Matcher<View> contentDescriptionMatcher;
         if (selected != null) {
             contentDescriptionMatcher =
@@ -274,13 +278,8 @@ public class NewTabGroupDialogFacility<
 
     private void ensureSoftKeyboardClosed() {
         if (mSoftKeyboard.getPhase() == Phase.ACTIVE) {
-            Log.i(TAG, "SoftKeyboardFacility active, try to close soft keyboard.");
             mSoftKeyboard.close(dialogElement);
         } else if (mSoftKeyboard.getPhase() == Phase.FINISHED) {
-            Log.i(
-                    TAG,
-                    "SoftKeyboardFacility already finished, won't try to close soft keyboard"
-                            + " again.");
             // Do nothing as the soft keyboard has already been closed
         } else {
             throw new IllegalArgumentException(

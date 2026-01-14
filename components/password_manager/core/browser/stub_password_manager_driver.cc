@@ -32,7 +32,8 @@ void StubPasswordManagerDriver::FocusNextFieldAfterPasswords() {}
 void StubPasswordManagerDriver::FillField(
     autofill::FieldRendererId triggering_field_id,
     const std::u16string& value,
-    autofill::FieldPropertiesFlags field_properties) {}
+    autofill::FieldPropertiesFlags field_properties,
+    base::OnceCallback<void(bool)> success_callback) {}
 
 void StubPasswordManagerDriver::FillSuggestion(
     const std::u16string& username,
@@ -83,8 +84,16 @@ StubPasswordManagerDriver::GetPasswordAutofillManager() {
   return nullptr;
 }
 
+bool StubPasswordManagerDriver::IsDirectChildOfPrimaryMainFrame() const {
+  return false;
+}
+
 bool StubPasswordManagerDriver::IsInPrimaryMainFrame() const {
   return true;
+}
+
+bool StubPasswordManagerDriver::IsNestedWithinFencedFrame() const {
+  return false;
 }
 
 bool StubPasswordManagerDriver::CanShowAutofillUi() const {
@@ -106,6 +115,14 @@ const url::Origin& StubPasswordManagerDriver::GetLastCommittedOrigin() const {
 gfx::RectF StubPasswordManagerDriver::TransformToRootCoordinates(
     const gfx::RectF& bounds_in_frame_coordinates) {
   return gfx::RectF();
+}
+
+void StubPasswordManagerDriver::CheckViewAreaVisible(
+    autofill::FieldRendererId field_id,
+    base::OnceCallback<void(bool)>) {}
+
+autofill::AutofillDriver* StubPasswordManagerDriver::GetAutofillDriver() const {
+  return nullptr;
 }
 
 base::WeakPtr<PasswordManagerDriver> StubPasswordManagerDriver::AsWeakPtr() {

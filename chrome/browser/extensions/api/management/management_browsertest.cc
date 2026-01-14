@@ -4,7 +4,6 @@
 
 #include <stddef.h>
 
-#include "base/containers/contains.h"
 #include "base/files/file_util.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
@@ -19,11 +18,9 @@
 #include "chrome/browser/extensions/extension_browsertest.h"
 #include "chrome/browser/extensions/extension_management.h"
 #include "chrome/browser/extensions/extension_service.h"
-#include "chrome/browser/extensions/install_verifier.h"
 #include "chrome/browser/extensions/updater/extension_updater.h"
 #include "chrome/browser/policy/policy_test_utils.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/ui/browser.h"
 #include "chrome/common/url_constants.h"
 #include "components/policy/core/browser/browser_policy_connector.h"
 #include "components/policy/core/common/mock_configuration_policy_provider.h"
@@ -43,12 +40,16 @@
 #include "extensions/browser/extension_registrar.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_system.h"
+#include "extensions/browser/install_verifier.h"
 #include "extensions/browser/pending_extension_manager.h"
 #include "extensions/browser/test_extension_registry_observer.h"
 #include "extensions/browser/updater/extension_downloader.h"
+#include "extensions/buildflags/buildflags.h"
 #include "extensions/common/mojom/view_type.mojom.h"
 #include "extensions/test/extension_test_message_listener.h"
 #include "testing/gmock/include/gmock/gmock.h"
+
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
 
 using content::BrowserThread;
 using extensions::Extension;
@@ -393,7 +394,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionManagementTest, MAYBE_AutoUpdate) {
     ASSERT_TRUE(extension);
     ASSERT_EQ("2.0", extension->VersionString());
     ASSERT_TRUE(install_finished);
-    ASSERT_TRUE(base::Contains(updates, "ogjcoiohnmldgjemafoockdghcjciccf"));
+    ASSERT_TRUE(updates.contains("ogjcoiohnmldgjemafoockdghcjciccf"));
   }
 
   // Now try doing an update to version 3, which has been incorrectly
@@ -416,7 +417,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionManagementTest, MAYBE_AutoUpdate) {
     params2.callback = run_loop.QuitClosure();
     updater->CheckNow(std::move(params2));
     run_loop.Run();
-    ASSERT_TRUE(base::Contains(updates, "ogjcoiohnmldgjemafoockdghcjciccf"));
+    ASSERT_TRUE(updates.contains("ogjcoiohnmldgjemafoockdghcjciccf"));
   }
 
   // Make sure the extension state is the same as before.
@@ -502,7 +503,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionManagementTest,
   EnableExtension(extension->id());
   EXPECT_TRUE(listener2.WaitUntilSatisfied());
   ASSERT_TRUE(install_finished);
-  ASSERT_TRUE(base::Contains(updates, "ogjcoiohnmldgjemafoockdghcjciccf"));
+  ASSERT_TRUE(updates.contains("ogjcoiohnmldgjemafoockdghcjciccf"));
 }
 
 IN_PROC_BROWSER_TEST_F(ExtensionManagementTest, ExternalUrlUpdate) {

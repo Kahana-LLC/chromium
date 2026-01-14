@@ -13,6 +13,7 @@
 #include "chrome/browser/password_manager/password_change_delegate.h"
 #include "components/keyed_service/core/keyed_service.h"
 #include "components/password_manager/core/browser/password_change_service_interface.h"
+#include "components/password_manager/core/browser/password_form.h"
 
 class GURL;
 
@@ -37,6 +38,28 @@ class PasswordManagerSettingsService;
 
 class PrefService;
 
+// Password change availability state used for UMA. Corresponds to
+// `PasswordChangeAvailability` in enums.xml.
+//
+// These values are persisted to logs.
+// Entries should not be renumbered and numeric values should never be reused.
+// LINT.IfChange(PasswordChangeAvailability)
+enum class PasswordChangeAvailability {
+  kAvailable = 0,
+  kPasswordGenerationDisabled = 1,
+  kModelExecutionNotAllowed = 2,
+  kPasswordSavingDisabled = 3,
+  kDisabledByPolicy = 4,
+  kFeatureDisabled = 5,
+  kUnsupportedLanguage = 6,
+  kUnsupportedCountryCode = 7,
+  kNotSupportedSite = 8,
+  kNoSavedPasswords = 9,
+  kThrottled = 10,
+  kMaxValue = kThrottled,
+};
+// LINT.ThenChange(/tools/metrics/histograms/metadata/password/enums.xml:PasswordChangeAvailability)
+
 class ChromePasswordChangeService
     : public KeyedService,
       public password_manager::PasswordChangeServiceInterface,
@@ -60,11 +83,8 @@ class ChromePasswordChangeService
   ~ChromePasswordChangeService() override;
 
   // Indicates that password change will be proposed to the user for a given
-  // `url`, `username` and `password`. `originator` belongs to a tab which
-  // initiated the process.
-  virtual void OfferPasswordChangeUi(const GURL& url,
-                                     const std::u16string& username,
-                                     const std::u16string& password,
+  // `credentials`. `originator` belongs to a tab which initiated the process.
+  virtual void OfferPasswordChangeUi(password_manager::PasswordForm credentials,
                                      content::WebContents* originator);
 
   // Responds with PasswordChangeDelegate for a given `web_contents`.
@@ -93,6 +113,11 @@ class ChromePasswordChangeService
 
   // KeyedService impl.
   void Shutdown() override;
+
+  PasswordChangeAvailability GetGeneralAvailability() const;
+  PasswordChangeAvailability GetPerSiteAvailability(
+      const GURL& url,
+      const autofill::LanguageCode& page_language) const;
 
   const raw_ptr<PrefService> pref_service_;
   const raw_ptr<affiliations::AffiliationService> affiliation_service_;

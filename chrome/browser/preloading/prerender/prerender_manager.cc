@@ -11,6 +11,8 @@
 #include "base/functional/bind.h"
 #include "base/location.h"
 #include "base/metrics/histogram_functions.h"
+#include "base/system/sys_info.h"
+#include "build/build_config.h"
 #include "chrome/browser/browser_features.h"
 #include "chrome/browser/headless/headless_mode_util.h"
 #include "chrome/browser/preloading/chrome_preloading.h"
@@ -22,10 +24,14 @@
 #include "chrome/browser/search_engines/template_url_service_factory.h"
 #include "components/omnibox/browser/autocomplete_match.h"
 #include "components/page_load_metrics/browser/navigation_handle_user_data.h"
+#include "components/page_load_metrics/google/browser/prerender_prewarm_navigation_data.h"
 #include "components/search_engines/template_url_service.h"
+#include "components/tabs/public/tab_interface.h"
 #include "content/public/browser/devtools_agent_host.h"
+#include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/navigation_handle.h"
+#include "content/public/browser/preload_pipeline_info.h"
 #include "content/public/browser/preloading.h"
 #include "content/public/browser/preloading_data.h"
 #include "content/public/browser/prerender_handle.h"
@@ -36,6 +42,16 @@
 #include "content/public/common/content_features.h"
 #include "net/base/url_util.h"
 #include "url/gurl.h"
+
+#if !BUILDFLAG(IS_ANDROID)
+#include "chrome/browser/ui/browser.h"
+#include "chrome/browser/ui/browser_finder.h"
+#include "chrome/browser/ui/web_applications/app_browser_controller.h"
+#endif
+
+#if BUILDFLAG(IS_CHROMEOS)
+#include "chromeos/components/kiosk/kiosk_utils.h"
+#endif
 
 namespace internal {
 const char kHistogramPrerenderPredictionStatusDefaultSearchEngine[] =
@@ -67,8 +83,6 @@ content::PreloadingFailureReason ToPreloadingFailureReason(
 }
 
 }  // namespace
-
-PrerenderManager::~PrerenderManager() = default;
 
 class PrerenderManager::SearchPrerenderTask {
  public:
@@ -159,6 +173,8 @@ class PrerenderManager::SearchPrerenderTask {
   const GURL prerendered_canonical_search_url_;
 };
 
+PrerenderManager::~PrerenderManager() = default;
+
 void PrerenderManager::DidFinishNavigation(
     content::NavigationHandle* navigation_handle) {
   if (!navigation_handle->HasCommitted() ||
@@ -212,7 +228,8 @@ PrerenderManager::StartPrerenderDirectUrlInput(
       content::PreloadPipelineInfo::Create(
           /*planned_max_preloading_type=*/content::PreloadingType::kPrerender),
       &preloading_attempt,
-      /*url_match_predicate=*/{}, /*prerender_navigation_handle_callback=*/{},
+      /*url_match_predicate=*/{},
+      /*prerender_navigation_handle_callback=*/{},
       /*allow_reuse=*/false);
 
   if (direct_url_input_prerender_handle_) {
@@ -262,7 +279,9 @@ bool PrerenderManager::MaybeStartPrewarmSearchResult() {
           [](const GURL& url, const std::optional<content::UrlMatchType>&) {
             return false;
           }),
-      /*prerender_navigation_handle_callback=*/{},
+      base::BindRepeating(
+          &PrerenderManager::OnSearchPrewarmPrerenderNavigationHandle,
+          GetWeakPtr()),
       /*allow_reuse=*/true);
 
   return search_prewarm_handle_ != nullptr;
@@ -413,13 +432,17 @@ void PrerenderManager::ResetPrerenderHandlesOnPrimaryPageChanged(
 
 PrerenderManager::PrewarmDecision PrerenderManager::ShouldPrewarm(
     GURL& prewarm_url) {
-  if (search_prewarm_handle_) {
+  if (search_prewarm_handle_ || HasSearchResultPagePrerendered()) {
     return PrewarmDecision::kAlreadyExists;
   }
   if (!base::FeatureList::IsEnabled(features::kPrewarm)) {
     return PrewarmDecision::kDisabled;
   }
-  if (headless::IsHeadlessMode() || headless::IsOldHeadlessMode()) {
+  if (static_cast<uint64_t>(features::kMinMemoryThresholdMb.Get()) >
+      base::SysInfo::AmountOfTotalPhysicalMemory().InMiB()) {
+    return PrewarmDecision::kLowMemory;
+  }
+  if (headless::IsHeadlessMode()) {
     return PrewarmDecision::kInHeadlessMode;
   }
   if (content::DevToolsAgentHost::IsDebuggerAttached(web_contents()) &&
@@ -460,7 +483,36 @@ PrerenderManager::PrewarmDecision PrerenderManager::ShouldPrewarm(
     return PrewarmDecision::kInPictureInPicture;
   }
 
+#if !BUILDFLAG(IS_ANDROID)
+  if (auto* tab = tabs::TabInterface::MaybeGetFromContents(web_contents())) {
+    if (web_app::AppBrowserController::IsIsolatedWebApp(
+            tab->GetBrowserWindowInterface())) {
+      // Disable the feature in the Isolated Web App window as it disallows
+      // cross-origin navigation.
+      return PrewarmDecision::kInIsolatedWebApp;
+    }
+  }
+#endif  // !BUILDFLAG(IS_ANDROID)
+
+#if BUILDFLAG(IS_CHROMEOS)
+  if (chromeos::IsKioskSession()) {
+    return PrewarmDecision::kInKioskSession;
+  }
+#endif  // BUILDFLAG(IS_CHROMEOS)
+
   return PrewarmDecision::kReady;
+}
+
+void PrerenderManager::OnSearchPrewarmPrerenderNavigationHandle(
+    content::NavigationHandle& navigation_handle) {
+  // Set the PrerenderPrewarmNavigationData for the navigation. This is used to
+  // determine if a navigation is a DSE prewarm navigation, and if the
+  // navigation happened after a DSE prewarm. Note that `prerender_host_reused`
+  // is set to false here because this is a new navigation and we are not
+  // certain if this is a prerender navigation or not yet.
+  page_load_metrics::PrerenderPrewarmNavigationData::GetOrCreate(
+      &navigation_handle,
+      /*prewarm_committed=*/true);
 }
 
 PrerenderManager::PrerenderManager(content::WebContents* web_contents)

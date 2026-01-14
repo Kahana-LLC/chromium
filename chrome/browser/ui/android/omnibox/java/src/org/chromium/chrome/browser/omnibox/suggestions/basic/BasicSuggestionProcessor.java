@@ -78,7 +78,7 @@ public class BasicSuggestionProcessor extends BaseSuggestionViewProcessor {
                 return 0;
 
             case SuggestTemplateInfo.IconType.HISTORY_VALUE:
-                return R.drawable.ic_history_googblue_24dp;
+                return R.drawable.ic_history_24dp;
 
             case SuggestTemplateInfo.IconType.SEARCH_LOOP_VALUE:
                 return R.drawable.ic_suggestion_magnifier;
@@ -88,6 +88,10 @@ public class BasicSuggestionProcessor extends BaseSuggestionViewProcessor {
 
             case SuggestTemplateInfo.IconType.TRENDING_VALUE:
                 return R.drawable.trending_up_black_24dp;
+
+            case SuggestTemplateInfo.IconType.SUB_ARROW_RIGHT_VALUE:
+                // TODO(crbug.com/437177158): Replace with the correct symbol when it's available.
+                return R.drawable.ic_suggestion_magnifier;
 
             default: // Icon type is specified, but not recognized
                 assert false : "Unrecognized IconType: " + iconType;
@@ -103,7 +107,7 @@ public class BasicSuggestionProcessor extends BaseSuggestionViewProcessor {
 
             case OmniboxSuggestionType.SEARCH_SUGGEST_PERSONALIZED:
             case OmniboxSuggestionType.SEARCH_HISTORY:
-                return R.drawable.ic_history_googblue_24dp;
+                return R.drawable.ic_history_24dp;
 
             default:
                 if (suggestionSubtypes.contains(/* SUBTYPE_TRENDS= */ 143)) {
@@ -125,7 +129,7 @@ public class BasicSuggestionProcessor extends BaseSuggestionViewProcessor {
             }
         } else if (
         /* !isSearchSuggestion && */ mBookmarkState.isBookmarked(suggestion.getUrl())) {
-            icon = R.drawable.star_outline_24dp;
+            icon = R.drawable.ic_star_24dp;
         }
 
         return icon == 0
@@ -173,7 +177,7 @@ public class BasicSuggestionProcessor extends BaseSuggestionViewProcessor {
                         .getTextWithoutAutocomplete()
                         .trim()
                         .equalsIgnoreCase(suggestion.getDisplayText())) {
-            setTabSwitchOrRefineAction(model, input, suggestion, position);
+            setRemoveOrRefineAction(model, input, suggestion, position);
         }
     }
 

@@ -37,12 +37,14 @@
 #include "components/cronet/cronet_prefs_manager.h"
 #include "components/cronet/host_cache_persistence_manager.h"
 #include "components/cronet/url_request_context_config.h"
+#include "net/base/completion_once_callback.h"
 #include "net/base/ip_address.h"
 #include "net/base/load_flags.h"
 #include "net/base/logging_network_change_observer.h"
 #include "net/base/net_errors.h"
 #include "net/base/network_delegate_impl.h"
 #include "net/base/network_isolation_key.h"
+#include "net/base/proxy_delegate.h"
 #include "net/base/url_util.h"
 #include "net/cert/caching_cert_verifier.h"
 #include "net/cert/cert_verifier.h"
@@ -574,16 +576,18 @@ void CronetContext::NetworkTasks::MaybeDestroyURLRequestContext(
   // Default network context is never deleted.
   if (network == net::handles::kInvalidNetworkHandle)
     return;
-  if (!contexts_.contains(network))
+  auto it = contexts_.find(network);
+  if (it == contexts_.end()) {
     return;
+  }
 
-  auto& context = contexts_[network];
+  auto& context = it->second;
   // For a URLRequestContext to be destroyed, two conditions must be satisfied:
   // 1. The network associated to that context must be no longer connected
   // 2. There must be no URLRequests associated to that context
   if (context->url_requests()->size() == 0 &&
       IsNetworkNoLongerConnected(network)) {
-    contexts_.erase(network);
+    contexts_.erase(it);
   }
 }
 
@@ -777,16 +781,18 @@ void CronetContext::NetworkTasks::OnNetworkDisconnected(
     net::handles::NetworkHandle network) {
   DCHECK_CALLED_ON_VALID_THREAD(network_thread_checker_);
 
-  if (!contexts_.contains(network))
+  auto it = contexts_.find(network);
+  if (it == contexts_.end()) {
     return;
+  }
 
-  auto& context = contexts_[network];
+  auto& context = it->second;
   // After `network` disconnects, we can delete the URLRequestContext
   // associated with it only if it has no pending URLRequests.
   // If there are, their destruction procedure will take care of destroying
   // this context (see MaybeDestroyURLRequestContext for more info).
   if (context->url_requests()->size() == 0)
-    contexts_.erase(network);
+    contexts_.erase(it);
 }
 
 void CronetContext::NetworkTasks::OnNetworkConnected(
@@ -880,18 +886,20 @@ void CronetContext::NetworkTasks::StopNetLogCompleted() {
   callback_->OnStopNetLogCompleted();
 }
 
-bool CronetContext::NetworkTasks::OnBeforeTunnelRequest(
+void CronetContext::NetworkTasks::OnBeforeTunnelRequest(
     int chain_id,
-    net::HttpRequestHeaders* extra_headers) {
+    net::ProxyDelegate::OnBeforeTunnelRequestCallback callback) {
   DCHECK_CALLED_ON_VALID_THREAD(network_thread_checker_);
-  return callback_->OnBeforeTunnelRequest(chain_id, extra_headers);
+  callback_->OnBeforeTunnelRequest(chain_id, std::move(callback));
 }
 
-bool CronetContext::NetworkTasks::OnTunnelHeadersReceived(
+void CronetContext::NetworkTasks::OnTunnelHeadersReceived(
     int chain_id,
-    const net::HttpResponseHeaders& response_headers) {
+    const net::HttpResponseHeaders& response_headers,
+    net::CompletionOnceCallback callback) {
   DCHECK_CALLED_ON_VALID_THREAD(network_thread_checker_);
-  return callback_->OnTunnelHeadersReceived(chain_id, response_headers);
+  callback_->OnTunnelHeadersReceived(chain_id, response_headers,
+                                     std::move(callback));
 }
 
 base::Value CronetContext::NetworkTasks::GetNetLogInfo() const {

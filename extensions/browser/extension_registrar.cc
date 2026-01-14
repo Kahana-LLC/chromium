@@ -4,8 +4,8 @@
 
 #include "extensions/browser/extension_registrar.h"
 
+#include "base/check_is_test.h"
 #include "base/check_op.h"
-#include "base/containers/contains.h"
 #include "base/debug/alias.h"
 #include "base/feature_list.h"
 #include "base/functional/bind.h"
@@ -49,8 +49,9 @@ namespace extensions {
 namespace {
 
 BASE_FEATURE(kExtensionUpdatesImmediatelyUnregisterWorker,
-             "ExtensionUpdatesImmediatelyUnregisterWorker",
              base::FEATURE_ENABLED_BY_DEFAULT);
+
+bool g_disable_lazy_context_spinup_for_test = false;
 
 }  // namespace
 
@@ -97,6 +98,8 @@ void ExtensionRegistrar::Init(
   // there's a KeyedService cycle between DelayedInstallManager and
   // ExtensionRegistrar.
   delayed_install_manager_ = DelayedInstallManager::Get(browser_context_);
+  delayed_install_manager_observation_.Reset();
+  delayed_install_manager_observation_.Observe(delayed_install_manager_);
 }
 
 bool ExtensionRegistrar::IsInitialized() const {
@@ -113,7 +116,13 @@ void ExtensionRegistrar::Shutdown() {
   // the `ExtensionSystem` keyed service is destroyed.
   extension_system_ = nullptr;
   delegate_ = nullptr;
+  delayed_install_manager_observation_.Reset();
   delayed_install_manager_ = nullptr;
+}
+
+void ExtensionRegistrar::OnDelayedInstallFinished(
+    scoped_refptr<const Extension> extension) {
+  FinishInstallation(extension.get());
 }
 
 void ExtensionRegistrar::AddExtension(
@@ -288,8 +297,15 @@ void ExtensionRegistrar::RemoveExtension(const ExtensionId& extension_id,
   reloading_extensions_.erase(extension->id());
 
   if (registry_->enabled_extensions().Contains(extension_id)) {
+    // Put the pending removal extension in disabled set because underlying
+    // code of `DeactivateExtension` needs to access it.
+    // See https://crbug.com/443038597
+    registry_->AddDisabled(extension);
+
     registry_->RemoveEnabled(extension_id);
     DeactivateExtension(extension.get(), reason);
+
+    registry_->RemoveDisabled(extension_id);
   } else {
     // The extension was already deactivated from the call to
     // DisableExtension().
@@ -494,7 +510,7 @@ base::flat_set<int> ExtensionRegistrar::GetDisableReasonsOnInstalled(
     // the initial install if it is supposed to be, and this allows us to turn
     // this on for other platforms without disabling already-installed
     // extensions.
-    if (extension->GetType() != Manifest::TYPE_HOSTED_APP &&
+    if (extension->GetType() != Manifest::Type::kHostedApp &&
         Manifest::IsExternalLocation(extension->location()) &&
         !extension_prefs_->IsExternalExtensionAcknowledged(extension->id()) &&
         !is_update_from_same_type) {
@@ -808,8 +824,7 @@ void ExtensionRegistrar::OnBlocklistStateAdded(
   if (blocklist_prefs::HasAcknowledgedBlocklistState(
           extension_id, BitMapBlocklistState::BLOCKLISTED_MALWARE,
           extension_prefs_)) {
-    DCHECK(base::Contains(registry_->blocklisted_extensions().GetIDs(),
-                          extension_id));
+    DCHECK(registry_->blocklisted_extensions().GetIDs().contains(extension_id));
     return;
   }
 
@@ -835,6 +850,19 @@ void ExtensionRegistrar::OnGreylistStateRemoved(
                                                    extension_prefs_);
   RemoveDisableReasonAndMaybeEnable(extension_id,
                                     disable_reason::DISABLE_GREYLIST);
+
+  // A user can enable and disable a force-installed extension while it is
+  // greylisted. If a user disables an extension while greylisted, the
+  // extension gets a DISABLE_USER_ACTION disable reason assigned to it. So
+  // remove the DISABLE_USER_ACTION disable reason as well when a
+  // force-installed extension gets "un-greylisted" to allow the extension
+  // to be re-enabled.
+  const Extension* extension = registry_->GetInstalledExtension(extension_id);
+  if (extension && extension_system_->management_policy()->MustRemainEnabled(
+                       extension, nullptr)) {
+    RemoveDisableReasonAndMaybeEnable(extension_id,
+                                      disable_reason::DISABLE_USER_ACTION);
+  }
 }
 
 void ExtensionRegistrar::OnGreylistStateAdded(const std::string& extension_id,
@@ -879,7 +907,17 @@ void ExtensionRegistrar::GreylistExtensionForTest(
     const BitMapBlocklistState& state) {
   blocklist_prefs::SetSafeBrowsingExtensionBlocklistState(extension_id, state,
                                                           extension_prefs_);
-  OnGreylistStateAdded(extension_id, state);
+  if (state == BitMapBlocklistState::NOT_BLOCKLISTED) {
+    OnGreylistStateRemoved(extension_id);
+  } else {
+    OnGreylistStateAdded(extension_id, state);
+  }
+}
+
+// static
+base::AutoReset<bool> ExtensionRegistrar::DisableLazyContextSpinupForTest() {
+  CHECK_IS_TEST();
+  return base::AutoReset<bool>(&g_disable_lazy_context_spinup_for_test, true);
 }
 
 void ExtensionRegistrar::OnUnpackedExtensionReloadFailed(
@@ -910,7 +948,7 @@ void ExtensionRegistrar::TerminateExtension(const ExtensionId& extension_id) {
   // even if it's not permanently installed.
   unloaded_extension_paths_[extension->id()] = extension->path();
 
-  DCHECK(!base::Contains(reloading_extensions_, extension->id()))
+  DCHECK(!reloading_extensions_.contains(extension->id()))
       << "Enabled extension shouldn't be marked for reloading";
 
   registry_->AddTerminated(extension);
@@ -1010,6 +1048,12 @@ void ExtensionRegistrar::ActivateExtension(const Extension* extension,
 
 void ExtensionRegistrar::DeactivateExtension(const Extension* extension,
                                              UnloadedExtensionReason reason) {
+  // NOTE: Call `TriggerOnUnloaded` before `DeactivateTaskQueueForExtension`.
+  // If an extension service worker is running, this stops it, which triggers a
+  // synchronous notification. This notification updates the
+  // `ServiceWorkerState` and untracks the worker from `ProcessManager`.
+  // `ServiceWorkerTaskQueue` can then operate in a consistent state, safely
+  // assuming the worker is no longer active.
   registry_->TriggerOnUnloaded(extension, reason);
   renderer_helper_->OnExtensionUnloaded(*extension);
   DeactivateTaskQueueForExtension(browser_context_, extension);
@@ -1195,10 +1239,13 @@ void ExtensionRegistrar::MaybeSpinUpLazyContext(const Extension* extension,
                                                 bool is_newly_added) {
   DCHECK(BackgroundInfo::HasLazyContext(extension));
 
+  if (g_disable_lazy_context_spinup_for_test) {
+    return;
+  }
+
   // For orphaned devtools, we will reconnect devtools to it later in
   // DidCreateMainFrameForBackgroundPage().
-  bool has_orphaned_dev_tools =
-      base::Contains(orphaned_dev_tools_, extension->id());
+  bool has_orphaned_dev_tools = orphaned_dev_tools_.contains(extension->id());
 
   // Reloading component extension does not trigger install, so RuntimeAPI won't
   // be able to detect its loading. Therefore, we need to spin up its lazy

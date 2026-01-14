@@ -42,9 +42,6 @@ BASE_DECLARE_FEATURE(kSupervisedUserBlockInterstitialV3);
 BASE_DECLARE_FEATURE(kEnableSupervisedUserVersionSignOutDialog);
 #endif
 
-// Allows reading SafeSites setting without extra supervised user guard.
-BASE_DECLARE_FEATURE(kDecoupleSafeSitesFromMainSwitch);
-
 #if BUILDFLAG(IS_ANDROID)
 // The flags below are used to control the local supervision feature on
 // Android. To read them, use accessors declared below.
@@ -70,17 +67,20 @@ BASE_DECLARE_FEATURE(kDecoupleSafeSitesFromMainSwitch);
 // kSupervisedUserSearchContentFiltersKillSwitch are subswitches of
 // kPropagateDeviceContentFiltersToSupervisedUser that control individual
 // content filter settings.
-//
-// - kSupervisedUserClearDeviceContentFiltersPrefsOnStartup is a kill switch
-// for clearing device content filters prefs from user store on startup.
+// - kSupervisedUserOverrideLocalSupervision is a convenience feature that will
+// disable effects of Android Parental Controls if the user is a Family Link
+// account. With the flag disabled, the browser strictly expects that at most
+// only of of Family Link or Android Parental Controls apply, and terminates the
+// browser otherwise.
 
 BASE_DECLARE_FEATURE(kAllowNonFamilyLinkUrlFilterMode);
 BASE_DECLARE_FEATURE(kPropagateDeviceContentFiltersToSupervisedUser);
 BASE_DECLARE_FEATURE(kSupervisedUserBrowserContentFiltersKillSwitch);
 BASE_DECLARE_FEATURE(kSupervisedUserSearchContentFiltersKillSwitch);
-BASE_DECLARE_FEATURE(kSupervisedUserClearDeviceContentFiltersPrefsOnStartup);
 BASE_DECLARE_FEATURE(kSupervisedUserInterstitialWithoutApprovals);
 BASE_DECLARE_FEATURE(kSupervisedUserLocalSupervisionPreview);
+BASE_DECLARE_FEATURE(
+    kSupervisedUserOverrideLocalSupervisionForFamilyLinkAccounts);
 
 // The major version of the build that supports local supervision.
 extern const base::FeatureParam<std::string>
@@ -96,6 +96,12 @@ bool UseInterstitialForLocalSupervision();
 // supervision.
 bool ClassifyUrlWithoutCredentialsForLocalSupervision();
 #endif
+
+// SupervisedUserUrlFilteringService does not use the PrefService indirection
+// (specifically, the SupervisedUserPrefStore) to get the URL filtering
+// settings. When enabled, all url filtering settings are read directly from the
+// related supervision services.
+BASE_DECLARE_FEATURE(kSupervisedUserUseUrlFilteringService);
 
 // Returns whether the V3 version of the URL filter interstitial is
 // enabled.

@@ -65,6 +65,7 @@
 #include "ui/gfx/geometry/size.h"
 #include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/controls/button/button.h"
+#include "ui/views/controls/link.h"
 #include "ui/views/controls/textfield/textfield.h"
 #include "ui/views/focus/focus_manager.h"
 #include "ui/views/test/test_widget_builder.h"
@@ -465,12 +466,12 @@ TEST_F(QuickInsertControllerTest, ToggleWidgetOpensUrlAfterLearnMore) {
 
   EXPECT_CALL(
       mock_new_window_delegate(),
-      OpenUrl(Property("host", &GURL::host_piece, "support.google.com"), _, _))
+      OpenUrl(Property("host", &GURL::host, "support.google.com"), _, _))
       .Times(1);
 
-  const views::Button* button = feature_tour.learn_more_button_for_testing();
-  ASSERT_NE(button, nullptr);
-  LeftClickOn(button);
+  const views::Link* link = feature_tour.learn_more_link_for_testing();
+  ASSERT_NE(link, nullptr);
+  LeftClickOn(link);
   views::test::WidgetDestroyedWaiter(feature_tour.widget_for_testing()).Wait();
 
   EXPECT_FALSE(controller().widget_for_testing());

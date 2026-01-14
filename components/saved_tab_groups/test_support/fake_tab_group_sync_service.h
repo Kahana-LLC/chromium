@@ -41,6 +41,9 @@ class FakeTabGroupSyncService : public TabGroupSyncService {
               const std::u16string& title,
               const GURL& url,
               std::optional<size_t> position) override;
+  void AddUrl(const base::Uuid& group_id,
+              const std::u16string& title,
+              const GURL& url) override;
   void NavigateTab(const LocalTabGroupID& group_id,
                    const LocalTabID& tab_id,
                    const GURL& url,
@@ -83,7 +86,7 @@ class FakeTabGroupSyncService : public TabGroupSyncService {
       const EitherGroupID& either_id) const override;
   std::vector<LocalTabGroupID> GetDeletedGroupIds() const override;
   std::optional<std::u16string> GetTitleForPreviouslyExistingSharedTabGroup(
-      const CollaborationId& collaboration_id) const override;
+      const syncer::CollaborationId& collaboration_id) const override;
   std::optional<LocalTabGroupID> OpenTabGroup(
       const base::Uuid& sync_group_id,
       std::unique_ptr<TabGroupActionContext> context) override;

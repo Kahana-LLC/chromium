@@ -6,7 +6,7 @@ package org.chromium.chrome.browser.ntp;
 
 import android.app.Activity;
 import android.content.Context;
-import android.content.res.Configuration;
+import android.content.res.ColorStateList;
 import android.content.res.Resources;
 import android.graphics.Point;
 import android.graphics.Rect;
@@ -18,8 +18,9 @@ import android.view.ViewGroup;
 import android.view.ViewStub;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
-import android.widget.TextView;
 
+import androidx.annotation.RawRes;
+import androidx.annotation.StyleRes;
 import androidx.annotation.VisibleForTesting;
 import androidx.core.widget.ImageViewCompat;
 
@@ -28,8 +29,6 @@ import org.chromium.base.CallbackController;
 import org.chromium.base.Log;
 import org.chromium.base.MathUtils;
 import org.chromium.base.TraceEvent;
-import org.chromium.base.supplier.ObservableSupplier;
-import org.chromium.base.supplier.Supplier;
 import org.chromium.build.annotations.Initializer;
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
@@ -37,6 +36,7 @@ import org.chromium.chrome.R;
 import org.chromium.chrome.browser.composeplate.ComposeplateCoordinator;
 import org.chromium.chrome.browser.composeplate.ComposeplateMetricsUtils;
 import org.chromium.chrome.browser.composeplate.ComposeplateUtils;
+import org.chromium.chrome.browser.device_lock.DeviceLockActivityLauncherImpl;
 import org.chromium.chrome.browser.feed.FeedSurfaceScrollDelegate;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.incognito.IncognitoUtils;
@@ -51,30 +51,42 @@ import org.chromium.chrome.browser.logo.LogoView;
 import org.chromium.chrome.browser.multiwindow.MultiWindowUtils;
 import org.chromium.chrome.browser.ntp.NewTabPage.OnSearchBoxScrollListener;
 import org.chromium.chrome.browser.ntp.search.SearchBoxCoordinator;
+import org.chromium.chrome.browser.ntp_customization.NtpCustomizationConfigManager;
 import org.chromium.chrome.browser.ntp_customization.NtpCustomizationUtils;
 import org.chromium.chrome.browser.omnibox.SearchEngineUtils;
 import org.chromium.chrome.browser.omnibox.status.StatusProperties;
 import org.chromium.chrome.browser.profiles.Profile;
+import org.chromium.chrome.browser.signin.SigninAndHistorySyncActivityLauncherImpl;
 import org.chromium.chrome.browser.suggestions.tile.MostVisitedTilesCoordinator;
+import org.chromium.chrome.browser.suggestions.tile.MostVisitedTilesLayout;
 import org.chromium.chrome.browser.suggestions.tile.TileGroup;
 import org.chromium.chrome.browser.suggestions.tile.TileGroup.Delegate;
-import org.chromium.chrome.browser.suggestions.tile.TilesLinearLayout;
 import org.chromium.chrome.browser.tab_ui.InvalidationAwareThumbnailProvider;
+import org.chromium.chrome.browser.ui.messages.snackbar.SnackbarManager;
 import org.chromium.chrome.browser.ui.native_page.TouchEnabledDelegate;
+import org.chromium.chrome.browser.ui.signin.signin_promo.NtpSigninPromoCoordinator;
+import org.chromium.chrome.browser.url_constants.UrlConstantResolver;
+import org.chromium.chrome.browser.url_constants.UrlConstantResolverFactory;
 import org.chromium.chrome.browser.util.BrowserUiUtils;
 import org.chromium.chrome.browser.util.BrowserUiUtils.ModuleTypeOnStartAndNtp;
+import org.chromium.components.browser_ui.bottomsheet.BottomSheetController;
 import org.chromium.components.browser_ui.widget.RoundedCornerOutlineProvider;
 import org.chromium.components.browser_ui.widget.displaystyle.DisplayStyleObserver;
-import org.chromium.components.browser_ui.widget.displaystyle.HorizontalDisplayStyle;
 import org.chromium.components.browser_ui.widget.displaystyle.UiConfig;
-import org.chromium.components.embedder_support.util.UrlConstants;
+import org.chromium.components.omnibox.AutocompleteRequestType;
 import org.chromium.components.omnibox.OmniboxFeatures;
+import org.chromium.components.signin.SigninFeatureMap;
+import org.chromium.components.signin.SigninFeatures;
 import org.chromium.content_public.browser.LoadUrlParams;
+import org.chromium.ui.base.ActivityResultTracker;
 import org.chromium.ui.base.MimeTypeUtils;
 import org.chromium.ui.base.WindowAndroid;
+import org.chromium.ui.modaldialog.ModalDialogManager;
 import org.chromium.ui.text.EmptyTextWatcher;
 import org.chromium.ui.util.ColorUtils;
 import org.chromium.url.GURL;
+
+import java.util.function.Supplier;
 
 /**
  * Layout for the new tab page. This positions the page elements in the correct vertical positions.
@@ -82,11 +94,13 @@ import org.chromium.url.GURL;
  */
 @NullMarked
 public class NewTabPageLayout extends LinearLayout
-        implements SearchEngineUtils.SearchBoxHintTextObserver {
+        implements SearchEngineUtils.SearchBoxHintTextObserver,
+                SearchEngineUtils.SearchEngineIconObserver {
     private static final String TAG = "NewTabPageLayout";
 
     private int mSearchBoxTwoSideMargin;
     private final Context mContext;
+    private final int mPaddingForShadowPx;
 
     private LogoCoordinator mLogoCoordinator;
     private LogoView mLogoView;
@@ -97,8 +111,13 @@ public class NewTabPageLayout extends LinearLayout
     private @Nullable OnSearchBoxScrollListener mSearchBoxScrollListener;
 
     private NewTabPageManager mManager;
+    private WindowAndroid mWindowAndroid;
     private Activity mActivity;
     private Profile mProfile;
+    private ActivityResultTracker mActivityResultTracker;
+    private BottomSheetController mBottomSheetController;
+    private Supplier<ModalDialogManager> mModalDialogManagerSupplier;
+    private SnackbarManager mSnackbarManager;
     private UiConfig mUiConfig;
     private @Nullable DisplayStyleObserver mDisplayStyleObserver;
     private CallbackController mCallbackController = new CallbackController();
@@ -130,7 +149,6 @@ public class NewTabPageLayout extends LinearLayout
     private boolean mTileCountChanged;
 
     private boolean mSnapshotTileGridChanged;
-    private WindowAndroid mWindowAndroid;
 
     /**
      * Vertical inset to add to the top and bottom of the search box bounds. May be 0 if no inset
@@ -140,50 +158,44 @@ public class NewTabPageLayout extends LinearLayout
 
     private FeedSurfaceScrollDelegate mScrollDelegate;
 
-    private final int mTileViewWidth;
-    private @Nullable Integer mInitialTileNum;
-    private @Nullable Boolean mIsMvtAllFilledLandscape;
-    private @Nullable Boolean mIsMvtAllFilledPortrait;
-    private final int mTileViewIntervalPaddingTablet;
-    private final int mTileViewEdgePaddingTablet;
+    private boolean mMvtContentFits;
     private float mTransitionEndOffset;
     private boolean mIsTablet;
-    private ObservableSupplier<Integer> mTabStripHeightSupplier;
-    private boolean mIsInNarrowWindowOnTablet;
+    private Supplier<Integer> mTabStripHeightSupplier;
     // This variable is only valid when the NTP surface is in tablet mode.
     private boolean mIsInMultiWindowModeOnTablet;
-    private View mFakeSearchBoxLayout;
-    private TextView mFakeSearchBoxEditText;
     private Callback<Logo> mOnLogoAvailableCallback;
     private boolean mIsComposeplateEnabled;
+    private boolean mIsComposeplateV2Enabled;
+    private boolean mIsComposeplatePolicyEnabled;
     private @Nullable Supplier<GURL> mComposeplateUrlSupplier;
     private OnClickListener mVoiceSearchButtonClickListener;
     private OnClickListener mLensButtonClickListener;
+    private View.@Nullable OnClickListener mComposeplateButtonClickListener;
     private @Nullable ComposeplateCoordinator mComposeplateCoordinator;
     // Previous visibility states for metrics.
     private @Nullable Boolean mPreviousVoiceSearchButtonVisible;
     private @Nullable Boolean mPreviousLensButtonVisible;
     private @Nullable ImageView mDseIconView;
-    private @Nullable SearchEngineUtils mSearchEngineUtils;
-    private SearchEngineUtils.@Nullable SearchEngineIconObserver mSearchEngineIconObserver;
+    private SearchEngineUtils mSearchEngineUtils;
     private final int mNtpSearchBoxTransitionStartOffset;
     private final int mNtpSearchBoxTopMarginWithoutLogo;
     private final int mFakeSearchBoxStartPadding;
     private final int mFakeSearchBoxStartPaddingWithDseLogo;
     private int mCurrentNtpFakeSearchBoxTransitionStartOffset;
     private int mTopInset;
+    private @Nullable OnLayoutChangeListener mOnLayoutChangeListener;
+    // TODO(crbug.com/451602301): remove @Nullable and all null checks once
+    // ENABLE_SEAMLESS_SIGNIN is removed after the experiment.
+    private @Nullable NtpSigninPromoCoordinator mSigninPromoCoordinator;
+
+    private @Nullable Boolean mIsWhiteBackgroundOnSearchBoxApplied;
 
     /** Constructor for inflating from XML. */
     public NewTabPageLayout(Context context, AttributeSet attrs) {
         super(context, attrs);
         mContext = context;
         Resources resources = getResources();
-        mTileViewWidth = resources.getDimensionPixelOffset(R.dimen.tile_view_width);
-        mTileViewIntervalPaddingTablet =
-                resources.getDimensionPixelOffset(R.dimen.tile_view_padding_interval_tablet);
-        mTileViewEdgePaddingTablet =
-                resources.getDimensionPixelOffset(R.dimen.tile_view_padding_edge_tablet);
-
         mNtpSearchBoxTopMarginWithoutLogo =
                 resources.getDimensionPixelSize(R.dimen.mvt_container_top_margin);
         mNtpSearchBoxTransitionStartOffset =
@@ -194,6 +206,9 @@ public class NewTabPageLayout extends LinearLayout
         mFakeSearchBoxStartPaddingWithDseLogo =
                 resources.getDimensionPixelSize(
                         R.dimen.fake_search_box_start_padding_with_dse_logo);
+        mPaddingForShadowPx =
+                resources.getDimensionPixelSize(
+                        R.dimen.composeplate_view_button_padding_for_shadow_bottom);
     }
 
     @Override
@@ -207,8 +222,6 @@ public class NewTabPageLayout extends LinearLayout
         // TODO(crbug.com/347509698): Remove the log statements after fixing the bug.
         Log.i(TAG, "NewTabPageLayout.onFinishInflate before insertSiteSectionView");
 
-        mFakeSearchBoxLayout = findViewById(R.id.search_box);
-        mFakeSearchBoxEditText = findViewById(R.id.search_box_text);
         initializeSiteSectionView();
 
         Log.i(TAG, "NewTabPageLayout.onFinishInflate after insertSiteSectionView");
@@ -231,6 +244,10 @@ public class NewTabPageLayout extends LinearLayout
      * @param lifecycleDispatcher Activity lifecycle dispatcher.
      * @param profile The {@link Profile} associated with the NTP.
      * @param windowAndroid An instance of a {@link WindowAndroid}.
+     * @param activityResultTracker Tracker of activity results.
+     * @param bottomSheetController Used to interact with the bottom sheet.
+     * @param modalDialogManagerSupplier Supplies the {@link ModalDialogManager}.
+     * @param snackbarManager Manages snackbars shown in the app.
      * @param isTablet {@code true} if the NTP surface is in tablet mode.
      * @param tabStripHeightSupplier Supplier of the tab strip height.
      */
@@ -247,8 +264,12 @@ public class NewTabPageLayout extends LinearLayout
             ActivityLifecycleDispatcher lifecycleDispatcher,
             Profile profile,
             WindowAndroid windowAndroid,
+            ActivityResultTracker activityResultTracker,
+            BottomSheetController bottomSheetController,
+            Supplier<ModalDialogManager> modalDialogManagerSupplier,
+            SnackbarManager snackbarManager,
             boolean isTablet,
-            ObservableSupplier<Integer> tabStripHeightSupplier,
+            Supplier<Integer> tabStripHeightSupplier,
             Supplier<GURL> composeplateUrlSupplier) {
         TraceEvent.begin(TAG + ".initialize()");
         mScrollDelegate = scrollDelegate;
@@ -257,9 +278,19 @@ public class NewTabPageLayout extends LinearLayout
         mProfile = profile;
         mUiConfig = uiConfig;
         mWindowAndroid = windowAndroid;
+        mActivityResultTracker = activityResultTracker;
+        mBottomSheetController = bottomSheetController;
+        mModalDialogManagerSupplier = modalDialogManagerSupplier;
+        mSnackbarManager = snackbarManager;
         mIsTablet = isTablet;
         mTabStripHeightSupplier = tabStripHeightSupplier;
         mIsComposeplateEnabled = ComposeplateUtils.isComposeplateEnabled(mIsTablet, profile);
+        mSearchEngineUtils = SearchEngineUtils.getForProfile(mProfile);
+        mIsComposeplateV2Enabled =
+                mIsComposeplateEnabled
+                        && ChromeFeatureList.sAndroidComposeplateV2Enabled.getValue();
+        mIsComposeplatePolicyEnabled =
+                mIsComposeplateV2Enabled && ComposeplateUtils.isEnabledByPolicy(profile);
         if (mIsComposeplateEnabled) {
             mComposeplateUrlSupplier = composeplateUrlSupplier;
         }
@@ -282,6 +313,10 @@ public class NewTabPageLayout extends LinearLayout
         mSearchBoxCoordinator = new SearchBoxCoordinator(getContext(), this);
         mSearchBoxCoordinator.initialize(
                 lifecycleDispatcher, mProfile.isOffTheRecord(), mWindowAndroid);
+        if (mIsComposeplateV2Enabled) {
+            mSearchBoxCoordinator.setHeight(
+                    getResources().getDimensionPixelSize(R.dimen.ntp_search_box_height_tall));
+        }
         int searchBoxHeight = mSearchBoxCoordinator.getView().getLayoutParams().height;
         mSearchBoxBoundsVerticalInset =
                 (searchBoxHeight
@@ -294,7 +329,7 @@ public class NewTabPageLayout extends LinearLayout
                                 .getDimensionPixelSize(R.dimen.ntp_search_box_transition_end_offset)
                         : 0;
 
-        updateSearchBoxWidth();
+        updateSearchBoxTwoSideMargin();
         initializeLogoCoordinator(searchProviderHasLogo, searchProviderIsGoogle);
         initializeMostVisitedTilesCoordinator(
                 mProfile, lifecycleDispatcher, tileGroupDelegate, touchEnabledDelegate);
@@ -303,11 +338,20 @@ public class NewTabPageLayout extends LinearLayout
         initializeVoiceSearchButton();
         initializeLensButton();
         initializeComposeplate();
+
+        // This should be called after both mSearchBoxCoordinator and mComposeplateCoordinator are
+        // initialized.
+        onCustomizedBackgroundChanged(
+                NtpCustomizationUtils.shouldApplyWhiteBackgroundOnSearchBox());
+
         updateActionButtonVisibility();
         initializeLayoutChangeListener();
+        if (SigninFeatureMap.isEnabled(SigninFeatures.ENABLE_SEAMLESS_SIGNIN)) {
+            initializeSigninPromoCoordinator();
+        }
 
         // Initialize Searchbox observers
-        SearchEngineUtils.getForProfile(mProfile).addSearchBoxHintTextObserver(this);
+        mSearchEngineUtils.addSearchBoxHintTextObserver(this);
 
         manager.addDestructionObserver(NewTabPageLayout.this::onDestroy);
         mInitialized = true;
@@ -317,6 +361,10 @@ public class NewTabPageLayout extends LinearLayout
 
     public void reload() {
         // TODO(crbug.com/41487877): Add handler in Magic Stack and dispatcher.
+    }
+
+    public void enableSearchBoxEditText(boolean enable) {
+        mSearchBoxCoordinator.enableSearchBoxEditText(enable);
     }
 
     /**
@@ -330,23 +378,25 @@ public class NewTabPageLayout extends LinearLayout
     private void initializeSearchBoxTextView() {
         TraceEvent.begin(TAG + ".initializeSearchBoxTextView()");
 
-        mSearchBoxCoordinator.setSearchBoxClickListener(v -> mManager.focusSearchBox(false, null));
+        mSearchBoxCoordinator.setSearchBoxClickListener(
+                v -> mManager.focusSearchBox(false, AutocompleteRequestType.SEARCH, null));
 
         // @TODO(crbug.com/41492572): Add test case for search box OnDragListener.
         mSearchBoxCoordinator.setSearchBoxDragListener(
                 new OnDragListener() {
                     @Override
                     public boolean onDrag(View view, DragEvent dragEvent) {
-                        // Disable search box EditText when browser content is dropped.
-                        if (!MimeTypeUtils.clipDescriptionHasBrowserContent(
-                                dragEvent.getClipDescription())) {
-                            return false;
-                        } else {
-                            if (dragEvent.getAction() == DragEvent.ACTION_DRAG_STARTED) {
-                                view.setEnabled(false);
-                            } else if (dragEvent.getAction() == DragEvent.ACTION_DRAG_ENDED) {
-                                view.setEnabled(true);
-                            }
+                        // Disable search box EditText when browser content is dropped, its
+                        // re-enabled in {@link ChromeTabbedOnDragListener}, since a disabled view
+                        // will stop receiving further drag events. Given the child-first drag event
+                        // dispatch, disabling the TextView at ACTION_DRAG_STARTED is necessary to
+                        // prevent it from registering as a drop target and consuming the
+                        // ACTION_DROP event, thereby ensuring {@link ChromeTabbedOnDragListener}
+                        // receives it.
+                        if (MimeTypeUtils.clipDescriptionHasBrowserContent(
+                                        dragEvent.getClipDescription())
+                                && dragEvent.getAction() == DragEvent.ACTION_DRAG_STARTED) {
+                            enableSearchBoxEditText(false);
                         }
                         return false;
                     }
@@ -357,7 +407,8 @@ public class NewTabPageLayout extends LinearLayout
                     @Override
                     public void afterTextChanged(Editable s) {
                         if (s.length() == 0) return;
-                        mManager.focusSearchBox(false, s.toString());
+                        mManager.focusSearchBox(
+                                false, AutocompleteRequestType.SEARCH, s.toString());
                         mSearchBoxCoordinator.setSearchText("");
                     }
                 });
@@ -365,34 +416,27 @@ public class NewTabPageLayout extends LinearLayout
     }
 
     private void initializeDseIconView(boolean shouldShowDesIconView) {
-        mDseIconView = mFakeSearchBoxLayout.findViewById(R.id.search_box_engine_icon);
-        if (mIsOmniboxMobileParityUpdateV2Enabled) {
-            // Configures icon rounding.
-            mDseIconView.setOutlineProvider(
-                    new RoundedCornerOutlineProvider(
-                            getResources()
-                                            .getDimensionPixelSize(
-                                                    R.dimen
-                                                            .omnibox_search_engine_logo_composed_size)
-                                    / 2));
-            mDseIconView.setClipToOutline(true);
-            mDseIconView.setScaleType(ImageView.ScaleType.FIT_XY);
+        View fakeSearchBoxLayout = findViewById(R.id.search_box);
+        mDseIconView = fakeSearchBoxLayout.findViewById(R.id.search_box_engine_icon);
 
-            // Registers to receive DSE's icon.
-            assert mSearchEngineIconObserver == null;
-            mSearchEngineIconObserver = newIcon -> onSearchEngineIconChanged(newIcon);
-            mSearchEngineUtils = SearchEngineUtils.getForProfile(mProfile);
-            mSearchEngineUtils.addIconObserver(mSearchEngineIconObserver);
-        }
+        // Configures icon rounding.
+        mDseIconView.setOutlineProvider(
+                new RoundedCornerOutlineProvider(
+                        getResources()
+                                        .getDimensionPixelSize(
+                                                R.dimen.omnibox_search_engine_logo_composed_size)
+                                / 2));
+        mDseIconView.setClipToOutline(true);
+        mSearchEngineUtils.addIconObserver(this);
         ImageViewCompat.setImageTintList(mDseIconView, null);
-
         setDseIconViewVisibility(shouldShowDesIconView);
     }
 
-    private void onSearchEngineIconChanged(StatusProperties.@Nullable StatusIconResource newIcon) {
+    @Override
+    public void onSearchEngineIconChanged(StatusProperties.@Nullable StatusIconResource newIcon) {
         if (mDseIconView == null) return;
         if (newIcon == null) {
-            mDseIconView.setImageResource(R.drawable.ic_search);
+            mDseIconView.setImageResource(R.drawable.ic_search_24dp);
             return;
         }
 
@@ -407,6 +451,12 @@ public class NewTabPageLayout extends LinearLayout
         mDseIconView.setImageDrawable(newIcon.getDrawable(mContext, mContext.getResources()));
     }
 
+    @Override
+    public void onSearchBoxHintTextChanged() {
+        mSearchBoxCoordinator.setSearchBoxHintText(
+                mSearchEngineUtils.getOmniboxHintText(AutocompleteRequestType.SEARCH));
+    }
+
     private void setDseIconViewVisibility(boolean isVisible) {
         if (mDseIconView == null) return;
 
@@ -414,35 +464,40 @@ public class NewTabPageLayout extends LinearLayout
         if (mDseIconView.getVisibility() == visibility) return;
 
         mDseIconView.setVisibility(visibility);
+        boolean shouldApplyWhiteBackground =
+                NtpCustomizationUtils.shouldApplyWhiteBackgroundOnSearchBox();
 
         if (isVisible) {
-            mFakeSearchBoxLayout.setPaddingRelative(
-                    mFakeSearchBoxStartPaddingWithDseLogo,
-                    mFakeSearchBoxLayout.getPaddingTop(),
-                    mFakeSearchBoxLayout.getPaddingEnd(),
-                    mFakeSearchBoxLayout.getPaddingBottom());
-            mFakeSearchBoxEditText.setTextAppearance(
-                    R.style.TextAppearance_FakeSearchBoxTextMedium);
+            mSearchBoxCoordinator.setStartPadding(mFakeSearchBoxStartPaddingWithDseLogo);
+            if (shouldApplyWhiteBackground) {
+                mSearchBoxCoordinator.setSearchBoxTextAppearance(
+                        R.style.TextAppearance_FakeSearchBoxTextMediumDark);
+            } else {
+                mSearchBoxCoordinator.setSearchBoxTextAppearance(
+                        R.style.TextAppearance_FakeSearchBoxTextMedium);
+            }
         } else {
-            mFakeSearchBoxLayout.setPaddingRelative(
-                    mFakeSearchBoxStartPadding,
-                    mFakeSearchBoxLayout.getPaddingTop(),
-                    mFakeSearchBoxLayout.getPaddingEnd(),
-                    mFakeSearchBoxLayout.getPaddingBottom());
-            mFakeSearchBoxEditText.setTextAppearance(R.style.TextAppearance_FakeSearchBoxText);
+            mSearchBoxCoordinator.setStartPadding(mFakeSearchBoxStartPadding);
+            if (shouldApplyWhiteBackground) {
+                mSearchBoxCoordinator.setSearchBoxTextAppearance(
+                        R.style.TextAppearance_FakeSearchBoxTextDark);
+            } else {
+                mSearchBoxCoordinator.setSearchBoxTextAppearance(
+                        R.style.TextAppearance_FakeSearchBoxText);
+            }
         }
     }
 
     private void initializeVoiceSearchButton() {
         TraceEvent.begin(TAG + ".initializeVoiceSearchButton()");
-        mVoiceSearchButtonClickListener = v -> mManager.focusSearchBox(true, null);
+        mVoiceSearchButtonClickListener =
+                v -> mManager.focusSearchBox(true, AutocompleteRequestType.SEARCH, null);
         mSearchBoxCoordinator.addVoiceSearchButtonClickListener(mVoiceSearchButtonClickListener);
         TraceEvent.end(TAG + ".initializeVoiceSearchButton()");
     }
 
     private void initializeLensButton() {
         TraceEvent.begin(TAG + ".initializeLensButton()");
-        // TODO(b/181067692): Report user action for this click.
         mLensButtonClickListener =
                 v -> {
                     LensMetrics.recordClicked(LensEntryPoint.NEW_TAB_PAGE);
@@ -455,61 +510,89 @@ public class NewTabPageLayout extends LinearLayout
     private void initializeComposeplate() {
         if (!mIsComposeplateEnabled) return;
 
-        View.OnClickListener composeplateButtonClickListener =
-                v -> {
-                    if (mComposeplateUrlSupplier == null
-                            || !mComposeplateUrlSupplier.hasValue()
-                            || mComposeplateUrlSupplier.get() == null) {
-                        return;
-                    }
-                    mManager.getNativePageHost()
-                            .loadUrl(
-                                    new LoadUrlParams(mComposeplateUrlSupplier.get()),
-                                    /* incognito= */ false);
-                };
-        mSearchBoxCoordinator.setComposeplateButtonClickListener(
-                createEnhancedClickListener(composeplateButtonClickListener));
-        int iconRawResId =
-                ColorUtils.inNightMode(mContext)
-                        ? R.raw.composeplate_loop_dark
-                        : R.raw.composeplate_loop_light;
-        mSearchBoxCoordinator.setComposeplateButtonIconRawResId(iconRawResId);
+        boolean shouldApplyWhiteBackgroundOnSearchBox =
+                NtpCustomizationUtils.shouldApplyWhiteBackgroundOnSearchBox();
+        ColorStateList colorStateList =
+                NtpCustomizationUtils.getSearchBoxIconColorTint(
+                        mContext, shouldApplyWhiteBackgroundOnSearchBox);
+        @StyleRes
+        int textStyleResId =
+                NtpCustomizationUtils.getSearchBoxTextStyleResId(
+                        shouldApplyWhiteBackgroundOnSearchBox);
 
-        ViewGroup composeplateView =
-                (ViewGroup) ((ViewStub) findViewById(R.id.composeplate_view_stub)).inflate();
-        mComposeplateCoordinator = new ComposeplateCoordinator(composeplateView, mProfile);
+        if (!mIsComposeplateV2Enabled) {
+            mComposeplateButtonClickListener =
+                    view -> {
+                        onComposeplateButtonClicked(view);
+                        ComposeplateMetricsUtils.recordFakeSearchBoxComposeplateButtonClick();
+                    };
+            mSearchBoxCoordinator.setComposeplateButtonClickListener(
+                    mComposeplateButtonClickListener);
+            @RawRes
+            int iconRawResId =
+                    !shouldApplyWhiteBackgroundOnSearchBox && ColorUtils.inNightMode(mContext)
+                            ? R.raw.composeplate_loop_dark
+                            : R.raw.composeplate_loop_light;
+            mSearchBoxCoordinator.setComposeplateButtonIconRawResId(iconRawResId);
 
-        assert mVoiceSearchButtonClickListener != null && mLensButtonClickListener != null;
-        mComposeplateCoordinator.setVoiceSearchClickListener(mVoiceSearchButtonClickListener);
-        mComposeplateCoordinator.setLensClickListener(mLensButtonClickListener);
+            ViewStub composeplateViewStub = findViewById(R.id.composeplate_view_stub);
+            ViewGroup composeplateView = (ViewGroup) composeplateViewStub.inflate();
+            mComposeplateCoordinator =
+                    new ComposeplateCoordinator(
+                            composeplateView, mProfile, colorStateList, textStyleResId);
+            assert mVoiceSearchButtonClickListener != null && mLensButtonClickListener != null;
+            mComposeplateCoordinator.setVoiceSearchClickListener(mVoiceSearchButtonClickListener);
+            mComposeplateCoordinator.setLensClickListener(mLensButtonClickListener);
+            mComposeplateCoordinator.setIncognitoClickListener(this::onIncognitoButtonClicked);
+            return;
+        }
+
+        ViewStub composeplateViewStub = findViewById(R.id.composeplate_view_v2_stub);
+        ViewGroup composeplateView = (ViewGroup) composeplateViewStub.inflate();
+        if (ChromeFeatureList.sNewTabPageCustomizationV2.isEnabled()) {
+            // TODO(https://crbug.com/423579377): Moves the layout parameters to
+            //  composeplate_view_layout_v2.xml after the feature NewTabPageCustomizationV2 is
+            //  launched.
+            NewTabPageUtils.applyUpdatedLayoutParamsForComposeplateView(composeplateView);
+        }
+        mComposeplateCoordinator =
+                new ComposeplateCoordinator(
+                        composeplateView, mProfile, colorStateList, textStyleResId);
         mComposeplateCoordinator.setIncognitoClickListener(this::onIncognitoButtonClicked);
+        // Don't log click metrics in this listener, since the mComposeplateCoordinator will
+        // log.
+        mComposeplateButtonClickListener = this::onComposeplateButtonClicked;
+        mComposeplateCoordinator.setComposeplateButtonClickListener(
+                mComposeplateButtonClickListener);
+    }
+
+    private void onComposeplateButtonClicked(View view) {
+        if (OmniboxFeatures.sOmniboxMultimodalInput.isEnabled()
+                && !mIsTablet
+                && mIsComposeplatePolicyEnabled) {
+            mManager.focusSearchBox(false, AutocompleteRequestType.AI_MODE, null);
+            return;
+        }
+
+        if (mComposeplateUrlSupplier == null) return;
+
+        GURL composeplateUrl = mComposeplateUrlSupplier.get();
+        if (composeplateUrl == null) return;
+
+        mManager.getNativePageHost()
+                .loadUrl(new LoadUrlParams(composeplateUrl), /* incognito= */ false);
     }
 
     private void onIncognitoButtonClicked(View view) {
         if (!IncognitoUtils.isIncognitoModeEnabled(mProfile)) return;
 
-        mManager.getNativePageHost().loadUrl(new LoadUrlParams(UrlConstants.NTP_URL), true);
-    }
-
-    /**
-     * Wraps the given {@link View.OnClickListener} to record the click metric before invoking the
-     * original listener.
-     *
-     * @param originalListener The original click listener to be wrapped.
-     */
-    private View.OnClickListener createEnhancedClickListener(
-            View.OnClickListener originalListener) {
-        return v -> {
-            if (originalListener != null) {
-                originalListener.onClick(v);
-            }
-            ComposeplateMetricsUtils.recordFakeSearchBoxComposeplateButtonClick();
-        };
+        UrlConstantResolver resolver = UrlConstantResolverFactory.getForProfile(mProfile);
+        mManager.getNativePageHost().loadUrl(new LoadUrlParams(resolver.getNtpUrl()), true);
     }
 
     private void initializeLayoutChangeListener() {
         TraceEvent.begin(TAG + ".initializeLayoutChangeListener()");
-        addOnLayoutChangeListener(
+        mOnLayoutChangeListener =
                 (v, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) -> {
                     int oldHeight = oldBottom - oldTop;
                     int newHeight = bottom - top;
@@ -525,7 +608,8 @@ public class NewTabPageLayout extends LinearLayout
                     // The positioning of elements may have been changed (since the elements expand
                     // to fill the available vertical space), so adjust the scroll.
                     if (mScrollDelegate.isScrollViewInitialized()) mScrollDelegate.snapScroll();
-                });
+                };
+        addOnLayoutChangeListener(mOnLayoutChangeListener);
         TraceEvent.end(TAG + ".initializeLayoutChangeListener()");
     }
 
@@ -543,6 +627,9 @@ public class NewTabPageLayout extends LinearLayout
                         (logo) -> {
                             mSnapshotTileGridChanged = true;
                             mShowingNonStandardGoogleLogo = logo != null && mSearchProviderIsGoogle;
+                            NtpCustomizationConfigManager.getInstance()
+                                    .setDefaultSearchEngineLogoBitmap(
+                                            logo == null ? null : logo.image);
                         });
 
         mLogoView = findViewById(R.id.search_provider_logo);
@@ -583,6 +670,22 @@ public class NewTabPageLayout extends LinearLayout
         if (ChromeFeatureList.sNewTabPageCustomizationForMvt.isEnabled()) {
             mMostVisitedTilesCoordinator.updateMvtVisibility();
         }
+    }
+
+    private void initializeSigninPromoCoordinator() {
+        ViewStub signinPromoViewContainerStub = findViewById(R.id.signin_promo_view_container_stub);
+        mSigninPromoCoordinator =
+                new NtpSigninPromoCoordinator(
+                        mWindowAndroid,
+                        mActivity,
+                        mProfile,
+                        mActivityResultTracker,
+                        SigninAndHistorySyncActivityLauncherImpl.get(),
+                        mBottomSheetController,
+                        mModalDialogManagerSupplier,
+                        mSnackbarManager,
+                        DeviceLockActivityLauncherImpl.get(),
+                        signinPromoViewContainerStub);
     }
 
     /** Updates the search box when the parent view's scroll position is changed. */
@@ -676,31 +779,12 @@ public class NewTabPageLayout extends LinearLayout
     }
 
     /** Updates the width of the MV tiles container when used in NTP on the tablet. */
-    private void calculateTabletMvtWidth(int widthMeasureSpec) {
+    private void calculateTabletMvtWidth(int totalWidth) {
         if (mMvTilesContainerLayout.getVisibility() == GONE) return;
 
-        if (mInitialTileNum == null) {
-            mInitialTileNum =
-                    ((TilesLinearLayout) findViewById(R.id.mv_tiles_layout)).getTileCount();
-        }
-
-        int currentOrientation = getResources().getConfiguration().orientation;
-        if ((currentOrientation == Configuration.ORIENTATION_LANDSCAPE
-                        && mIsMvtAllFilledLandscape == null)
-                || (currentOrientation == Configuration.ORIENTATION_PORTRAIT
-                        && mIsMvtAllFilledPortrait == null)) {
-            boolean isAllFilled =
-                    mInitialTileNum * mTileViewWidth
-                                    + (mInitialTileNum - 1) * mTileViewIntervalPaddingTablet
-                                    + 2 * mTileViewEdgePaddingTablet
-                            <= widthMeasureSpec;
-            if (currentOrientation == Configuration.ORIENTATION_LANDSCAPE) {
-                mIsMvtAllFilledLandscape = isAllFilled;
-            } else {
-                mIsMvtAllFilledPortrait = isAllFilled;
-            }
-            updateMvtOnTablet();
-        }
+        MostVisitedTilesLayout mvTilesLayout = findViewById(R.id.mv_tiles_layout);
+        mMvtContentFits = mvTilesLayout.contentFitsOnTablet(totalWidth);
+        updateMvtOnTablet();
     }
 
     public void onSwitchToForeground() {
@@ -778,18 +862,13 @@ public class NewTabPageLayout extends LinearLayout
 
     /** Updates the margins for the most visited tiles layout based on what is shown above it. */
     private void updateTilesLayoutMargins() {
-        if (!mIsTablet) {
-            return;
-        }
-
-        MarginLayoutParams marginLayoutParams =
-                (MarginLayoutParams) mMvTilesContainerLayout.getLayoutParams();
-        marginLayoutParams.topMargin =
-                getResources()
-                        .getDimensionPixelSize(
-                                shouldShowLogo()
-                                        ? R.dimen.mvt_container_top_margin
-                                        : R.dimen.tile_layout_no_logo_top_margin);
+        NewTabPageUtils.updateTilesLayoutTopMargin(
+                mMvTilesContainerLayout,
+                shouldShowLogo(),
+                mIsWhiteBackgroundOnSearchBoxApplied == null
+                        ? false
+                        : mIsWhiteBackgroundOnSearchBoxApplied,
+                mIsTablet);
     }
 
     /**
@@ -867,7 +946,7 @@ public class NewTabPageLayout extends LinearLayout
         for (int i = 0; i < getChildCount(); i++) {
             View view = getChildAt(i);
             view.setTranslationY(translationY);
-            if (view == mFakeSearchBoxLayout) return;
+            if (view.getId() == R.id.search_box) return;
         }
     }
 
@@ -963,9 +1042,8 @@ public class NewTabPageLayout extends LinearLayout
         mCurrentNtpFakeSearchBoxTransitionStartOffset =
                 getNtpSearchBoxTransitionStartOffset(showFakeSearchBoxWithoutLogo);
 
-        MarginLayoutParams params = (MarginLayoutParams) mFakeSearchBoxLayout.getLayoutParams();
-        params.topMargin = showFakeSearchBoxWithoutLogo ? mNtpSearchBoxTopMarginWithoutLogo : 0;
-        mFakeSearchBoxLayout.setLayoutParams(params);
+        int topMargin = showFakeSearchBoxWithoutLogo ? mNtpSearchBoxTopMarginWithoutLogo : 0;
+        mSearchBoxCoordinator.setTopMargin(topMargin);
 
         if (mLogoCoordinator != null) {
             mLogoCoordinator.setTopMargin(getLogoMargin(/* isTopMargin= */ true));
@@ -1005,6 +1083,8 @@ public class NewTabPageLayout extends LinearLayout
      * @return Whether the search box view is scrolled off the screen.
      */
     private boolean isSearchBoxOffscreen() {
+        if (!mScrollDelegate.isScrollViewInitialized()) return false;
+
         return !mScrollDelegate.isChildVisibleAtPosition(0)
                 || mScrollDelegate.getVerticalScrollOffset()
                         > getSearchBoxView().getTop() + mTransitionEndOffset;
@@ -1015,7 +1095,7 @@ public class NewTabPageLayout extends LinearLayout
      *
      * @param listener The listener to be notified on changes.
      */
-    void setSearchBoxScrollListener(OnSearchBoxScrollListener listener) {
+    void setSearchBoxScrollListener(@Nullable OnSearchBoxScrollListener listener) {
         mSearchBoxScrollListener = listener;
         if (mSearchBoxScrollListener != null) updateSearchBoxOnScroll();
     }
@@ -1037,13 +1117,22 @@ public class NewTabPageLayout extends LinearLayout
         boolean shouldShowVoiceSearchButton = mManager.isVoiceSearchEnabled();
         boolean shouldShowLensButton =
                 mSearchBoxCoordinator.isLensEnabled(LensEntryPoint.NEW_TAB_PAGE);
-        if (!mIsComposeplateEnabled) {
+        if (!mIsComposeplateEnabled || mIsComposeplateV2Enabled) {
             mSearchBoxCoordinator.setVoiceSearchButtonVisibility(shouldShowVoiceSearchButton);
             mSearchBoxCoordinator.setLensButtonVisibility(shouldShowLensButton);
+            boolean shouldShowComposeplateButton = false;
+            if (mIsComposeplateV2Enabled) {
+                shouldShowComposeplateButton =
+                        mSearchProviderIsGoogle && IncognitoUtils.isIncognitoModeEnabled(mProfile);
+                if (mComposeplateCoordinator != null) {
+                    mComposeplateCoordinator.setVisibility(
+                            shouldShowComposeplateButton, mManager.isCurrentPage());
+                }
+            }
             updatePreviousButtonVisibilityAndRecordMetrics(
                     shouldShowVoiceSearchButton,
                     shouldShowLensButton,
-                    /* isComposeplateButtonVisible= */ false);
+                    shouldShowComposeplateButton);
             return;
         }
 
@@ -1056,7 +1145,7 @@ public class NewTabPageLayout extends LinearLayout
         mSearchBoxCoordinator.setLensButtonVisibility(isLensButtonVisible);
         mSearchBoxCoordinator.setComposeplateButtonVisibility(shouldShowComposeplateButton);
         if (mComposeplateCoordinator != null) {
-            mComposeplateCoordinator.setVisibility(
+            mComposeplateCoordinator.setVisibilityV1(
                     shouldShowComposeplateButton, mManager.isCurrentPage());
         }
 
@@ -1087,16 +1176,12 @@ public class NewTabPageLayout extends LinearLayout
 
         if (mPreviousLensButtonVisible == null
                 || isLensButtonVisible != mPreviousLensButtonVisible) {
-            // The lens button will be shown either in the fake search box or the composeplate view.
-            LensMetrics.recordShown(
-                    LensEntryPoint.NEW_TAB_PAGE,
-                    isLensButtonVisible || isComposeplateButtonVisible);
+            LensMetrics.recordShown(LensEntryPoint.NEW_TAB_PAGE, isLensButtonVisible);
         }
 
-        ComposeplateMetricsUtils.recordFakeSearchBoxImpression();
-        if (isComposeplateButtonVisible) {
-            ComposeplateMetricsUtils.recordFakeSearchBoxComposeplateButtonImpression();
-        }
+        ComposeplateMetricsUtils.recordFakeSearchBoxImpression2();
+        ComposeplateMetricsUtils.recordFakeSearchBoxComposeplateButtonImpression2(
+                isComposeplateButtonVisible);
 
         mPreviousVoiceSearchButtonVisible = isVoiceSearchButtonVisible;
         mPreviousLensButtonVisible = isLensButtonVisible;
@@ -1151,6 +1236,7 @@ public class NewTabPageLayout extends LinearLayout
         }
 
         mSearchBoxCoordinator.destroy();
+        mSearchBoxCoordinator = null;
 
         if (mMostVisitedTilesCoordinator != null) {
             mMostVisitedTilesCoordinator.destroyMvtiles();
@@ -1163,15 +1249,29 @@ public class NewTabPageLayout extends LinearLayout
         }
 
         if (mSearchEngineUtils != null) {
-            mSearchEngineUtils.removeIconObserver(mSearchEngineIconObserver);
-            mSearchEngineIconObserver = null;
+            mSearchEngineUtils.removeSearchBoxHintTextObserver(this);
+            mSearchEngineUtils.removeIconObserver(this);
             mSearchEngineUtils = null;
         }
+
+        removeOnLayoutChangeListener(mOnLayoutChangeListener);
+        mOnLayoutChangeListener = null;
 
         if (mComposeplateCoordinator != null) {
             mComposeplateCoordinator.destroy();
             mComposeplateCoordinator = null;
         }
+
+        if (mSigninPromoCoordinator != null) {
+            mSigninPromoCoordinator.destroy();
+            mSigninPromoCoordinator = null;
+        }
+
+        mComposeplateButtonClickListener = null;
+        mLensButtonClickListener = null;
+        mVoiceSearchButtonClickListener = null;
+        mSearchBoxScrollListener = null;
+        mComposeplateUrlSupplier = null;
     }
 
     MostVisitedTilesCoordinator getMostVisitedTilesCoordinatorForTesting() {
@@ -1182,9 +1282,14 @@ public class NewTabPageLayout extends LinearLayout
     private void unifyElementWidths() {
         View searchBoxView = getSearchBoxView();
         final int width = getMeasuredWidth();
-        measureExactly(
-                searchBoxView, width - mSearchBoxTwoSideMargin, searchBoxView.getMeasuredHeight());
+        int searchBoxWidth = width - mSearchBoxTwoSideMargin;
+        measureExactly(searchBoxView, searchBoxWidth, searchBoxView.getMeasuredHeight());
+
         if (mLogoCoordinator != null) mLogoCoordinator.measureExactlyLogoView(width);
+
+        if (mComposeplateCoordinator != null) {
+            mComposeplateCoordinator.measureExactlyComposeplateView(searchBoxWidth);
+        }
     }
 
     /**
@@ -1204,11 +1309,9 @@ public class NewTabPageLayout extends LinearLayout
     private void onDisplayStyleChanged(UiConfig.DisplayStyle newDisplayStyle) {
         if (!mIsTablet) return;
 
-        mIsInNarrowWindowOnTablet = isInNarrowWindowOnTablet(mIsTablet, mUiConfig);
-
         updateDoodleOnTablet();
         updateMvtOnTablet();
-        updateSearchBoxWidth();
+        updateSearchBoxTwoSideMargin();
     }
 
     /**
@@ -1243,17 +1346,13 @@ public class NewTabPageLayout extends LinearLayout
     private void updateMvtOnTablet() {
         MarginLayoutParams marginLayoutParams =
                 (MarginLayoutParams) mMvTilesContainerLayout.getLayoutParams();
-        marginLayoutParams.width = ViewGroup.LayoutParams.MATCH_PARENT;
-        if (getResources().getConfiguration().orientation == Configuration.ORIENTATION_LANDSCAPE) {
-            if (mIsMvtAllFilledLandscape != null && mIsMvtAllFilledLandscape) {
-                marginLayoutParams.width = ViewGroup.LayoutParams.WRAP_CONTENT;
-            }
-        } else if (mIsMvtAllFilledPortrait != null && mIsMvtAllFilledPortrait) {
-            marginLayoutParams.width = ViewGroup.LayoutParams.WRAP_CONTENT;
-        }
+        marginLayoutParams.width =
+                mMvtContentFits
+                        ? ViewGroup.LayoutParams.WRAP_CONTENT
+                        : ViewGroup.LayoutParams.MATCH_PARENT;
 
         int lateralPaddingId =
-                mIsInNarrowWindowOnTablet
+                NtpCustomizationUtils.isInNarrowWindowOnTablet(mIsTablet, mUiConfig)
                         ? R.dimen.ntp_search_box_lateral_margin_narrow_window_tablet
                         : R.dimen.mvt_container_lateral_margin;
         int lateralPaddingsForNtp = getResources().getDimensionPixelSize(lateralPaddingId);
@@ -1261,36 +1360,10 @@ public class NewTabPageLayout extends LinearLayout
         marginLayoutParams.rightMargin = lateralPaddingsForNtp;
     }
 
-    private void updateSearchBoxWidth() {
-        if (mIsInNarrowWindowOnTablet) {
-            mSearchBoxTwoSideMargin =
-                    getResources()
-                                    .getDimensionPixelSize(
-                                            R.dimen
-                                                    .ntp_search_box_lateral_margin_narrow_window_tablet)
-                            * 2;
-        } else if (mIsTablet) {
-            mSearchBoxTwoSideMargin =
-                    getResources()
-                                    .getDimensionPixelSize(
-                                            R.dimen.ntp_search_box_lateral_margin_tablet)
-                            * 2;
-        } else {
-            mSearchBoxTwoSideMargin =
-                    getResources().getDimensionPixelSize(R.dimen.mvt_container_lateral_margin) * 2;
-        }
-    }
-
-    /** Returns whether the current window is a narrow one on tablet. */
-    @VisibleForTesting
-    public static boolean isInNarrowWindowOnTablet(boolean isTablet, UiConfig uiConfig) {
-        return isTablet
-                && uiConfig.getCurrentDisplayStyle().horizontal < HorizontalDisplayStyle.WIDE;
-    }
-
-    @Override
-    public void onSearchBoxHintTextChanged(@Nullable String newHint) {
-        mFakeSearchBoxEditText.setHint(newHint);
+    private void updateSearchBoxTwoSideMargin() {
+        mSearchBoxTwoSideMargin =
+                NtpCustomizationUtils.getSearchBoxTwoSideMargin(
+                        getResources(), mUiConfig, mIsTablet);
     }
 
     /**
@@ -1321,6 +1394,59 @@ public class NewTabPageLayout extends LinearLayout
                 getResources().getDimensionPixelSize(R.dimen.toolbar_height_no_shadow) + mTopInset,
                 getPaddingEnd(),
                 getPaddingBottom());
+    }
+
+    /**
+     * Called when a customized background image is selected or deselected.
+     *
+     * @param applyWhiteBackgroundOnSearchBox Whether to apply a white background color to the fake
+     *     search box.
+     */
+    void onCustomizedBackgroundChanged(boolean applyWhiteBackgroundOnSearchBox) {
+        // If shouldn't apply a white background and the background hasn't been updated before,
+        // returns now.
+        if (mIsWhiteBackgroundOnSearchBoxApplied == null && !applyWhiteBackgroundOnSearchBox) {
+            return;
+        }
+
+        // If the background has been updated before and it should remain the same, returns now.
+        if (mIsWhiteBackgroundOnSearchBoxApplied != null
+                && mIsWhiteBackgroundOnSearchBoxApplied == applyWhiteBackgroundOnSearchBox) {
+            return;
+        }
+
+        // If the fake search box hasn't been initialized, returns now. It is fine to skip here
+        // because applyWhiteBackgroundWithShadow() will be called immediately after the
+        // mSearchBoxCoordinator is initialized.
+        if (mSearchBoxCoordinator == null) return;
+
+        mIsWhiteBackgroundOnSearchBoxApplied = applyWhiteBackgroundOnSearchBox;
+
+        if (mSearchBoxCoordinator != null) {
+            mSearchBoxCoordinator.applyWhiteBackgroundWithShadow(applyWhiteBackgroundOnSearchBox);
+        }
+
+        if (mComposeplateCoordinator != null) {
+            mComposeplateCoordinator.applyWhiteBackgroundWithShadow(
+                    applyWhiteBackgroundOnSearchBox);
+        }
+
+        if (mLogoCoordinator != null) {
+            int bottomMargin = getLogoBottomMargin();
+            if (applyWhiteBackgroundOnSearchBox) {
+                bottomMargin -= mPaddingForShadowPx;
+            }
+            mLogoCoordinator.setBottomMargin(bottomMargin);
+        }
+
+        if (mMostVisitedTilesCoordinator != null) {
+            updateTilesLayoutMargins();
+        }
+    }
+
+    /** Returns the top inset of the NTP. */
+    int getTopInset() {
+        return mTopInset;
     }
 
     private boolean isInSingleUrlMode() {

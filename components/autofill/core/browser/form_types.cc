@@ -4,7 +4,6 @@
 
 #include "components/autofill/core/browser/form_types.h"
 
-#include "base/containers/contains.h"
 #include "components/autofill/core/browser/field_types.h"
 #include "components/autofill/core/browser/form_structure.h"
 #include "components/autofill/core/common/autofill_util.h"
@@ -28,12 +27,13 @@ FormType FieldTypeGroupToFormType(FieldTypeGroup field_type_group) {
       return FormType::kStandaloneCvcForm;
     case FieldTypeGroup::kLoyaltyCard:
       return FormType::kLoyaltyCardForm;
+    case FieldTypeGroup::kOneTimePassword:
+      return FormType::kOneTimePasswordForm;
     case FieldTypeGroup::kIban:
     case FieldTypeGroup::kNoGroup:
     case FieldTypeGroup::kTransaction:
     case FieldTypeGroup::kUnfillable:
     case FieldTypeGroup::kAutofillAi:
-    case FieldTypeGroup::kOneTimePassword:
       return FormType::kUnknownFormType;
   }
 }
@@ -52,6 +52,8 @@ std::string_view FormTypeToStringView(FormType form_type) {
       return "StandaloneCvc";
     case FormType::kLoyaltyCardForm:
       return "LoyaltyCard";
+    case FormType::kOneTimePasswordForm:
+      return "OneTimePassword";
   }
 
   NOTREACHED();
@@ -79,6 +81,8 @@ std::string_view FormTypeNameForLoggingToStringView(
       return "PostalAddress";
     case FormTypeNameForLogging::kLoyaltyCardForm:
       return "LoyaltyCard";
+    case FormTypeNameForLogging::kOneTimePasswordForm:
+      return "OneTimePassword";
   }
 
   NOTREACHED();

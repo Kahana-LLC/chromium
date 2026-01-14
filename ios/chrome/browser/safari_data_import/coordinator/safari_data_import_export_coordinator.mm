@@ -32,6 +32,10 @@
   viewController.actionHandler = self;
   _navigationController = [[UINavigationController alloc]
       initWithRootViewController:viewController];
+  viewController.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc]
+      initWithBarButtonSystemItem:UIBarButtonSystemItemCancel
+                           target:self
+                           action:@selector(didTapCancelButton)];
   _navigationController.delegate = self;
   _navigationController.modalInPresentation = YES;
   [self.baseViewController presentViewController:_navigationController
@@ -58,20 +62,16 @@
 }
 
 - (void)confirmationAlertSecondaryAction {
+  if (_importCoordinator) {
+    return;
+  }
   RecordActionOnSafariExportEducationScreen(
       SafariDataImportExportEducationAction::kContinue);
-  CHECK(!_importCoordinator);
   _importCoordinator = [[SafariDataImportImportCoordinator alloc]
       initWithBaseNavigationController:_navigationController
                                browser:self.browser];
   _importCoordinator.delegate = self.delegate;
   [_importCoordinator start];
-}
-
-- (void)confirmationAlertDismissAction {
-  RecordActionOnSafariExportEducationScreen(
-      SafariDataImportExportEducationAction::kCancel);
-  [self.delegate safariDataImportCoordinatorWillDismissWorkflow:self];
 }
 
 #pragma mark - UINavigationControllerDelegate
@@ -80,11 +80,22 @@
        didShowViewController:(UIViewController*)viewController
                     animated:(BOOL)animated {
   CHECK_EQ(navigationController, _navigationController);
-  if (viewController == _navigationController.viewControllers[0]) {
+  if (_importCoordinator &&
+      viewController == _navigationController.viewControllers[0]) {
     /// Handle user going back from import stage.
+    RecordSafariDataImportTapsBackAtImportStage(_importCoordinator.importStage);
     [_importCoordinator stop];
     _importCoordinator = nil;
   }
+}
+
+#pragma mark - Private
+
+// Dismisses the sheet.
+- (void)didTapCancelButton {
+  RecordActionOnSafariExportEducationScreen(
+      SafariDataImportExportEducationAction::kCancel);
+  [self.delegate safariDataImportCoordinatorWillDismissWorkflow:self];
 }
 
 @end

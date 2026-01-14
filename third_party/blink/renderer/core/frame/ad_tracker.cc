@@ -7,10 +7,12 @@
 #include <memory>
 #include <optional>
 #include <utility>
+#include <variant>
 
 #include "base/compiler_specific.h"
 #include "base/feature_list.h"
 #include "base/metrics/histogram_functions.h"
+#include "third_party/abseil-cpp/absl/functional/overload.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_core.h"
 #include "third_party/blink/renderer/core/core_probe_sink.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
@@ -26,12 +28,88 @@
 #include "third_party/blink/renderer/platform/loader/fetch/resource_request.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
 #include "third_party/blink/renderer/platform/wtf/casting.h"
+#include "third_party/blink/renderer/platform/wtf/hash_set.h"
 #include "v8/include/v8-inspector.h"
 #include "v8/include/v8.h"
 
 namespace blink {
 
 namespace {
+
+// Maps a MonkeyPatchableApi enum value to the corresponding property path
+// to access that API, starting from the context's global object.
+std::vector<const char*> GetApiPropertyPath(AdTracker::MonkeyPatchableApi api) {
+  switch (api) {
+    case AdTracker::MonkeyPatchableApi::kHistoryPushState:
+      return {"history", "pushState"};
+    case AdTracker::MonkeyPatchableApi::kNone:
+      NOTREACHED();
+  }
+  NOTREACHED();
+}
+
+// A struct to hold the results from `GetApiFunctionInfo`.
+struct ApiFunctionInfo {
+  v8::MaybeLocal<v8::Function> function;
+
+  // True if the API appears to be monkey patched. False if the API appears to
+  // be the native implementation or if an error occurred during the check.
+  bool is_monkey_patched = false;
+};
+
+// Finds the V8 function for a given API, checks if it has been monkey patched,
+// and returns both pieces of information.
+ApiFunctionInfo GetApiFunctionInfo(v8::Isolate* isolate,
+                                   AdTracker::MonkeyPatchableApi api) {
+  v8::EscapableHandleScope handle_scope(isolate);
+  v8::Local<v8::Context> context = isolate->GetCurrentContext();
+  if (context.IsEmpty()) {
+    return {};
+  }
+
+  v8::Context::Scope context_scope(context);
+
+  // Start with the global object.
+  v8::Local<v8::Value> current_value = context->Global();
+  const std::vector<const char*> property_path = GetApiPropertyPath(api);
+
+  // Traverse the property path (e.g., global object -> `history` ->
+  // `pushState`).
+  for (const char* property_name : property_path) {
+    // Each intermediate value in the path must be an object.
+    if (!current_value->IsObject()) {
+      return {};
+    }
+
+    v8::Local<v8::Object> current_object = current_value.As<v8::Object>();
+    v8::Local<v8::String> property_key =
+        v8::String::NewFromUtf8(isolate, property_name).ToLocalChecked();
+
+    v8::MaybeLocal<v8::Value> maybe_next_value =
+        current_object->Get(context, property_key);
+
+    // If the property doesn't exist, the chain is broken.
+    if (maybe_next_value.IsEmpty()) {
+      return {};
+    }
+    current_value = maybe_next_value.ToLocalChecked();
+  }
+
+  // At the end of the path, we expect a function. If it's not a function,
+  // it has been tampered with, and we can't perform our check.
+  if (!current_value->IsFunction()) {
+    return {};
+  }
+
+  v8::Local<v8::Function> api_function = current_value.As<v8::Function>();
+
+  // Native functions will have an invalid script ID. User-defined functions
+  // (monkey patches) will have a valid one.
+  bool is_monkey_patched =
+      api_function->ScriptId() != v8::Message::kNoScriptIdInfo;
+
+  return {handle_scope.Escape(api_function), is_monkey_patched};
+}
 
 bool IsKnownAdExecutionContext(ExecutionContext* execution_context) {
   // TODO(jkarlin): Do the same check for worker contexts.
@@ -82,14 +160,12 @@ String AdTracker::AdScriptAncestry::ToString() const {
   }
   builder.AppendFormat("matched ad filterlist rule: %s",
                        root_script_filterlist_rule.ToString().c_str());
-  return builder.ToString();
+  return builder.ReleaseString();
 }
 
 // static
 AdTracker* AdTracker::FromExecutionContext(
     ExecutionContext* execution_context) {
-  if (!execution_context)
-    return nullptr;
   if (auto* window = DynamicTo<LocalDOMWindow>(execution_context)) {
     if (LocalFrame* frame = window->GetFrame()) {
       return frame->GetAdTracker();
@@ -121,14 +197,7 @@ void AdTracker::Shutdown() {
   local_root_ = nullptr;
 }
 
-int AdTracker::ScriptAtTopOfStack() {
-  v8::Isolate* isolate = v8::Isolate::TryGetCurrent();
-  return v8::StackTrace::CurrentScriptId(isolate);
-}
-
-ExecutionContext* AdTracker::GetCurrentExecutionContext() {
-  // Determine the current ExecutionContext.
-  v8::Isolate* isolate = v8::Isolate::TryGetCurrent();
+ExecutionContext* AdTracker::GetCurrentExecutionContext(v8::Isolate* isolate) {
   if (!isolate) {
     return nullptr;
   }
@@ -137,6 +206,8 @@ ExecutionContext* AdTracker::GetCurrentExecutionContext() {
 }
 
 void AdTracker::Will(const probe::ExecuteScript& probe) {
+  running_sync_tasks_++;
+
   if (probe.script_id <= 0) {
     return;
   }
@@ -151,18 +222,20 @@ void AdTracker::Will(const probe::ExecuteScript& probe) {
   bool is_ad = IsKnownAdScript(probe.context, url);
 
   // For inline scripts, this is our opportunity to check the stack to see if
-  // an ad created it since inline scripts are run immediately.
+  // an ad created it. Scripts that are loaded asynchronously will create
+  // probe::AsyncTasks.
   std::optional<AdScriptIdentifier> ancestor_ad_script;
   if (!is_ad && is_inline_script &&
-      IsAdScriptInStackHelper(StackType::kBottomAndTop, &ancestor_ad_script)) {
-    std::unique_ptr<AdProvenance> ad_provenance;
+      IsAdScriptInStackHelper(StackType::kTopOnly,
+                              /*ignore_monkey_patch=*/MonkeyPatchableApi::kNone,
+                              &ancestor_ad_script)) {
+    AdProvenance ad_provenance;
     if (ancestor_ad_script.has_value()) {
-      ad_provenance =
-          std::make_unique<AdAncestorProvenance>(*ancestor_ad_script);
+      ad_provenance = ancestor_ad_script->id;
     } else {
       // This can happen if the script originates from an ad context without
       // further traceable script (crbug.com/421202278).
-      ad_provenance = std::make_unique<NoAdProvenance>();
+      ad_provenance = NoProvenance{};
     }
     AppendToKnownAdScripts(*probe.context, url, std::move(ad_provenance));
     is_ad = true;
@@ -176,38 +249,50 @@ void AdTracker::Will(const probe::ExecuteScript& probe) {
                                         probe.script_id);
   }
 
-  if (is_ad) {
-    ad_scripts_in_stack_.push_back(probe.script_id);
+  if (is_ad && !bottom_most_ad_script_.has_value()) {
+    bottom_most_ad_script_ = probe.script_id;
   }
 }
 
 void AdTracker::Did(const probe::ExecuteScript& probe) {
-  if (!ad_scripts_in_stack_.empty() &&
-      ad_scripts_in_stack_.back() == probe.script_id) {
-    ad_scripts_in_stack_.pop_back();
+  running_sync_tasks_--;
+  if (running_sync_tasks_ == 0) {
+    ad_monkey_patch_calls_in_scope_.clear();
+  }
+
+  if (bottom_most_ad_script_.has_value() &&
+      bottom_most_ad_script_.value() == probe.script_id) {
+    bottom_most_ad_script_.reset();
   }
 }
 
 void AdTracker::Will(const probe::CallFunction& probe) {
+  running_sync_tasks_++;
+
   // Do not process nested microtasks as that might potentially lead to a
   // slowdown of custom element callbacks.
   if (probe.depth || probe.function->ScriptId() <= 0) {
     return;
   }
 
-  auto it = ad_script_ids_.find(probe.function->ScriptId());
-  if (it != ad_script_ids_.end()) {
-    ad_scripts_in_stack_.push_back(probe.function->ScriptId());
+  if (!bottom_most_ad_script_.has_value() &&
+      ad_script_data_.Contains(probe.function->ScriptId())) {
+    bottom_most_ad_script_ = probe.function->ScriptId();
   }
 }
 
 void AdTracker::Did(const probe::CallFunction& probe) {
+  running_sync_tasks_--;
+  if (running_sync_tasks_ == 0) {
+    ad_monkey_patch_calls_in_scope_.clear();
+  }
+
   if (probe.depth) {
     return;
   }
-  if (!ad_scripts_in_stack_.empty() &&
-      ad_scripts_in_stack_.back() == probe.function->ScriptId()) {
-    ad_scripts_in_stack_.pop_back();
+  if (bottom_most_ad_script_.has_value() &&
+      bottom_most_ad_script_.value() == probe.function->ScriptId()) {
+    bottom_most_ad_script_.reset();
   }
 }
 
@@ -217,6 +302,7 @@ bool AdTracker::CalculateIfAdSubresource(
     ResourceType resource_type,
     const FetchInitiatorInfo& initiator_info,
     bool known_ad,
+    bool scan_stack_for_ads,
     const subresource_filter::ScopedRule& rule) {
   DCHECK(!rule.IsValid() || known_ad);
 
@@ -236,8 +322,13 @@ bool AdTracker::CalculateIfAdSubresource(
 
   // Check if any executing script is an ad.
   std::optional<AdScriptIdentifier> ancestor_ad_script;
-  known_ad = known_ad || IsAdScriptInStackHelper(StackType::kBottomAndTop,
-                                                 &ancestor_ad_script);
+  if (scan_stack_for_ads) {
+    known_ad =
+        known_ad || IsAdScriptInStackHelper(
+                        StackType::kTopOnly,
+                        /*ignore_monkey_patch=*/MonkeyPatchableApi::kNone,
+                        &ancestor_ad_script);
+  }
 
   // If it is a script marked as an ad and it's not in an ad context, append it
   // to the known ad script set. We don't need to keep track of ad scripts in ad
@@ -247,15 +338,14 @@ bool AdTracker::CalculateIfAdSubresource(
       !is_ad_execution_context) {
     DCHECK(!ancestor_ad_script || !rule.IsValid());
 
-    std::unique_ptr<AdProvenance> ad_provenance;
+    AdProvenance ad_provenance;
     if (!ancestor_ad_script && !rule.IsValid()) {
-      ad_provenance = std::make_unique<NoAdProvenance>();
+      ad_provenance = NoProvenance{};
     } else if (ancestor_ad_script) {
-      ad_provenance =
-          std::make_unique<AdAncestorProvenance>(*ancestor_ad_script);
+      ad_provenance = ancestor_ad_script->id;
     } else {
       DCHECK(rule.IsValid());
-      ad_provenance = std::make_unique<AdRulesetProvenance>(rule);
+      ad_provenance = rule;
     }
     AppendToKnownAdScripts(*execution_context, request_url.GetString(),
                            std::move(ad_provenance));
@@ -267,42 +357,33 @@ bool AdTracker::CalculateIfAdSubresource(
 void AdTracker::DidCreateAsyncTask(probe::AsyncTaskContext* task_context) {
   DCHECK(task_context);
   std::optional<AdScriptIdentifier> id;
-  if (IsAdScriptInStackHelper(StackType::kBottomAndTop, &id)) {
+  if (IsAdScriptInStackHelper(StackType::kTopOnly,
+                              /*ignore_monkey_patch=*/MonkeyPatchableApi::kNone,
+                              &id)) {
     task_context->SetAdTask(id);
   }
 }
 
 void AdTracker::DidStartAsyncTask(probe::AsyncTaskContext* task_context) {
   DCHECK(task_context);
-  if (task_context->IsAdTask()) {
-    if (running_ad_async_tasks_ == 0) {
-      DCHECK(!bottom_most_async_ad_script_.has_value());
-      bottom_most_async_ad_script_ = task_context->ad_identifier();
-    }
-
-    running_ad_async_tasks_ += 1;
-  }
+  async_script_stack_.push_back(task_context->ad_identifier());
 }
 
 void AdTracker::DidFinishAsyncTask(probe::AsyncTaskContext* task_context) {
   DCHECK(task_context);
-  if (task_context->IsAdTask()) {
-    DCHECK_GE(running_ad_async_tasks_, 1);
-    running_ad_async_tasks_ -= 1;
-    if (running_ad_async_tasks_ == 0)
-      bottom_most_async_ad_script_.reset();
-  }
+  async_script_stack_.pop_back();
 }
 
 bool AdTracker::IsAdScriptInStack(StackType stack_type,
+                                  MonkeyPatchableApi ignore_monkey_patch,
                                   AdScriptAncestry* out_ad_script_ancestry) {
   std::optional<AdScriptIdentifier> out_ad_script;
 
   std::optional<AdScriptIdentifier>* out_ad_script_ptr =
       out_ad_script_ancestry ? &out_ad_script : nullptr;
 
-  bool is_ad_script_in_stack =
-      IsAdScriptInStackHelper(stack_type, out_ad_script_ptr);
+  bool is_ad_script_in_stack = IsAdScriptInStackHelper(
+      stack_type, ignore_monkey_patch, out_ad_script_ptr);
 
   if (out_ad_script.has_value()) {
     CHECK(out_ad_script_ancestry);
@@ -315,19 +396,13 @@ bool AdTracker::IsAdScriptInStack(StackType stack_type,
 
 bool AdTracker::IsAdScriptInStackHelper(
     StackType stack_type,
+    MonkeyPatchableApi ignore_monkey_patch,
     std::optional<AdScriptIdentifier>* out_ad_script) {
-  // First check if async tasks are running, as `bottom_most_async_ad_script_`
-  // is more likely to be what the caller is looking for than
-  // the bottom `ad_script_in_stack_`.
-  if (running_ad_async_tasks_ > 0) {
-    if (out_ad_script)
-      *out_ad_script = bottom_most_async_ad_script_;
-    return true;
-  }
-
-  ExecutionContext* execution_context = GetCurrentExecutionContext();
-  if (!execution_context)
+  v8::Isolate* isolate = v8::Isolate::TryGetCurrent();
+  ExecutionContext* execution_context = GetCurrentExecutionContext(isolate);
+  if (!execution_context) {
     return false;
+  }
 
   // If we're in an ad context, then no matter what the executing script is it's
   // considered an ad. To enhance traceability, we attempt to return the
@@ -345,46 +420,177 @@ bool AdTracker::IsAdScriptInStackHelper(
     return true;
   }
 
-  // We check this after checking for an ad context because we don't keep track
-  // of script ids for ad frames.
-  if (!ad_scripts_in_stack_.empty()) {
-    if (out_ad_script) {
-      auto it = ad_script_ids_.find(ad_scripts_in_stack_[0]);
-      if (it != ad_script_ids_.end()) {
-        *out_ad_script = it->value;
+  if (stack_type == StackType::kBottomOnly) {
+    // We check this after checking for an ad context because we don't keep
+    // track of script ids for ad frames.
+    if (bottom_most_ad_script_.has_value()) {
+      if (out_ad_script) {
+        auto it = ad_script_data_.find(bottom_most_ad_script_.value());
+        if (it != ad_script_data_.end()) {
+          *out_ad_script = it->value.id;
+        }
+      }
+      return true;
+    }
+
+    // We check if async is on stack after sync, because sync is likely easier
+    // to reason about.
+    for (auto& script : async_script_stack_) {
+      if (script.has_value()) {
+        if (out_ad_script) {
+          *out_ad_script = *script;
+        }
+        return true;
       }
     }
+    return false;
+  }
+
+  // If we're not aware of any ad scripts at all don't bother looking at the
+  // stack.
+  if (ad_script_data_.empty()) {
+    return false;
+  }
+
+  int top_script_id = v8::StackTrace::CurrentScriptId(isolate);
+  if (top_script_id <= 0) {
+    // There is nothing on the v8 stack. This means that we're in some
+    // asynchronous continuation in blink code. Fall back on the async stack.
+    if (!async_script_stack_.empty() &&
+        async_script_stack_.back().has_value()) {
+      if (out_ad_script) {
+        *out_ad_script = async_script_stack_.back();
+      }
+      return true;
+    }
+
+    return false;
+  }
+
+  auto script_it = ad_script_data_.find(top_script_id);
+  if (script_it == ad_script_data_.end()) {
+    // The top of the stack is not registered ad script. Is it from an ad frame?
+
+    // If the top of the stack is non-ad, then we consider the stack to be
+    // non-ad related, as publisher script may be running an event callback.
+    // TODO(jkarlin): Address publisher monkeypatch methods that are merely
+    // passively invoking the ad's intent.
+    return false;
+  }
+
+  // The top of the stack is an ad script. This heuristic avoids misattributing
+  // calls due to monkey patching. If the top script is an ad script but not the
+  // bottom, then determine if the API call was initiated by ad script or not.
+  // If it wasn't initiated by ad script, then let it through once.
+  if (ignore_monkey_patch != MonkeyPatchableApi::kNone &&
+      IsFirstCallOfApiFromNonAdScript(isolate, ignore_monkey_patch)) {
+    return false;
+  }
+
+  if (out_ad_script) {
+    *out_ad_script = script_it->value.id;
+  }
+
+  return true;
+}
+
+bool AdTracker::IsFirstCallOfApiFromNonAdScript(v8::Isolate* isolate,
+                                                MonkeyPatchableApi api) {
+  // This heuristic is only applied when `running_sync_tasks_ > 0`. This is
+  // because its state (`ad_monkey_patch_calls_in_scope_`) is scoped to a
+  // synchronous task, relying on the `Will`/`Did` probe pairs for setup and
+  // teardown. Promise callbacks do not trigger these probes, so applying the
+  // heuristic there would lead to incorrect state.
+  if (running_sync_tasks_ <= 0) {
+    return false;
+  }
+
+  // The heuristic only applies on the first call to an API within a task.
+  if (ad_monkey_patch_calls_in_scope_.Contains(api)) {
+    return false;
+  }
+
+  if (WasApiCalledByNonAdScript(isolate, api)) {
+    ad_monkey_patch_calls_in_scope_.insert(api);
     return true;
   }
 
-  if (stack_type == StackType::kBottomOnly)
-    return false;
+  return false;
+}
 
-  // If we're not aware of any ad scripts at all, or any scripts in this
-  // context, don't bother looking at the stack.
-  if (ad_script_ids_.empty()) {
-    return false;
-  }
-  auto it = context_known_ad_scripts_.find(execution_context);
-  if (it == context_known_ad_scripts_.end() || it->value.empty()) {
+bool AdTracker::WasApiCalledByNonAdScript(v8::Isolate* isolate,
+                                          MonkeyPatchableApi api) const {
+  ApiFunctionInfo api_info = GetApiFunctionInfo(isolate, api);
+  if (!api_info.is_monkey_patched) {
     return false;
   }
 
-  // The stack scanned by the AdTracker contains entry points into the stack
-  // (e.g., when v8 is executed) but not the entire stack. For a small cost we
-  // can also check the top of the stack (this is much cheaper than getting the
-  // full stack from v8).
-  int top_script_id = ScriptAtTopOfStack();
-  if (top_script_id <= 0) {
+  v8::HandleScope handle_scope(isolate);
+  v8::Local<v8::Function> api_function;
+  if (!api_info.function.ToLocal(&api_function)) {
     return false;
   }
 
-  auto script_it = ad_script_ids_.find(top_script_id);
-  if (script_it != ad_script_ids_.end() && out_ad_script) {
-    *out_ad_script = script_it->value;
+  v8::Local<v8::StackTrace> stack_trace =
+      v8::StackTrace::CurrentStackTrace(isolate, /*frame_limit=*/10);
+
+  // The expected monkey patch pattern requires a non-ad script calling an ad
+  // script. Thus, the stack must have at least two frames.
+  if (stack_trace.IsEmpty() || stack_trace->GetFrameCount() <= 1) {
+    return false;
   }
 
-  return script_it != ad_script_ids_.end();
+  // To distinguish the expected monkey patch pattern from an ad-driven
+  // "just-in-time" patch, we walk the stack to find the boundary between ad and
+  // non-ad script frames.
+  for (int i = 1; i < stack_trace->GetFrameCount(); ++i) {
+    v8::Local<v8::StackFrame> frame = stack_trace->GetFrame(isolate, i);
+    if (frame.IsEmpty()) {
+      return false;
+    }
+
+    // This frame is still from an ad script, so continue up the stack.
+    if (ad_script_data_.Contains(frame->GetScriptId())) {
+      continue;
+    }
+
+    // Frame `i` is the first non-ad script. The previous frame (`i-1`) must be
+    // the ad script entry point. We expect this to be the patched API itself.
+    v8::Local<v8::StackFrame> ad_barrier_frame =
+        stack_trace->GetFrame(isolate, i - 1);
+    if (ad_barrier_frame.IsEmpty()) {
+      return false;
+    }
+
+    // Verify the function at the boundary is the patched API by checking its
+    // script ID and name.
+    if (ad_barrier_frame->GetScriptId() != api_function->ScriptId()) {
+      return false;
+    }
+
+    v8::Local<v8::String> barrier_func_name =
+        ad_barrier_frame->GetFunctionName();
+    v8::Local<v8::Value> api_func_name_value = api_function->GetDebugName();
+
+    if (!barrier_func_name.IsEmpty() && !barrier_func_name->IsUndefined() &&
+        api_func_name_value->IsString()) {
+      v8::Local<v8::String> api_func_name =
+          api_func_name_value.As<v8::String>();
+
+      v8::Local<v8::Context> context = isolate->GetCurrentContext();
+      if (barrier_func_name->Equals(context, api_func_name).FromMaybe(false)) {
+        return true;
+      }
+    }
+
+    // If the function names don't match, it doesn't fit the expected pattern
+    // (e.g., a "just-in-time" patch).
+    return false;
+  }
+
+  // If the loop completes, the entire stack trace is from ad scripts, so the
+  // call did not originate from a non-ad script.
+  return false;
 }
 
 bool AdTracker::IsKnownAdScript(ExecutionContext* execution_context,
@@ -392,8 +598,9 @@ bool AdTracker::IsKnownAdScript(ExecutionContext* execution_context,
   if (!execution_context)
     return false;
 
-  if (IsKnownAdExecutionContext(execution_context))
+  if (IsKnownAdExecutionContext(execution_context)) {
     return true;
+  }
 
   if (url.empty()) {
     return false;
@@ -407,12 +614,10 @@ bool AdTracker::IsKnownAdScript(ExecutionContext* execution_context,
 }
 
 // This is a separate function for testing purposes.
-void AdTracker::AppendToKnownAdScripts(
-    ExecutionContext& execution_context,
-    const String& url,
-    std::unique_ptr<AdProvenance> ad_provenance) {
+void AdTracker::AppendToKnownAdScripts(ExecutionContext& execution_context,
+                                       const String& url,
+                                       AdProvenance ad_provenance) {
   DCHECK(!url.empty());
-  DCHECK(ad_provenance);
 
   auto add_result = context_known_ad_scripts_.insert(
       &execution_context, KnownAdScriptsAndProvenance());
@@ -436,87 +641,79 @@ void AdTracker::OnScriptIdAvailableForKnownAdScript(
   auto it = context_known_ad_scripts_.find(execution_context);
   DCHECK(it != context_known_ad_scripts_.end());
 
-  AdScriptIdentifier current_ad_script = AdScriptIdentifier(
-      GetDebuggerIdForContext(v8_context), script_id, script_name);
-
-  ad_script_ids_.insert(script_id, current_ad_script);
-
-  const HashMap<String, std::unique_ptr<AdProvenance>>&
-      known_ad_scripts_and_provenance = it->value;
+  const KnownAdScriptsAndProvenance& known_ad_scripts_and_provenance =
+      it->value;
 
   auto known_ad_script_it = known_ad_scripts_and_provenance.find(script_name);
   DCHECK(known_ad_script_it != known_ad_scripts_and_provenance.end());
 
-  const std::unique_ptr<AdProvenance>& ad_provenance =
-      known_ad_script_it->value;
-  DCHECK(ad_provenance);
+  const AdProvenance& ad_provenance = known_ad_script_it->value;
 
-  // We clone `ad_provenance` rather than transferring ownership. This is
-  // because multiple script executions might originate from the same script
+  // Note that multiple script executions might originate from the same script
   // URL, and are intended to share the same provenance. While this approach
   // might not perfectly mirror the script loading ancestry in all complex
   // scenarios, it's considered sufficient for our tracking purposes.
-  ad_script_provenances_.insert(current_ad_script, ad_provenance->Clone());
+  ad_script_data_.insert(
+      script_id,
+      AdScriptData(AdScriptIdentifier(GetDebuggerIdForContext(v8_context),
+                                      script_id, script_name),
+                   ad_provenance));
 }
 
 AdTracker::AdScriptAncestry AdTracker::GetAncestry(
     const AdScriptIdentifier& ad_script) {
   AdTracker::AdScriptAncestry ancestry;
 
-  // Limits the ancestry chain length to protect against potential cycles in the
-  // ancestry graph (though unexpected).
-  constexpr size_t kMaxScriptAncestrySize = 50;
-  bool max_size_reached = false;
-
   // TODO(yaoxia): Determine if we should CHECK that that the script ID in each
-  // step is guaranteed to be present in `ad_script_provenances_`.
-  auto provenance_it = ad_script_provenances_.find(ad_script);
-  if (provenance_it == ad_script_provenances_.end()) {
+  // step is guaranteed to be present in `ad_script_data_`.
+  auto provenance_it = ad_script_data_.find(ad_script.id);
+  if (provenance_it == ad_script_data_.end()) {
     return ancestry;
   }
 
-  // The input `ad_script` may not have a name set, but anything stored in
-  // ad_script_provenances_ should, so prefer that AdScriptIdentifier.
-  ancestry.ancestry_chain.push_back(provenance_it->key);
+  HashSet<int> seen_script_ids;
+  bool duplicate = false;
 
-  while (provenance_it != ad_script_provenances_.end()) {
-    const std::unique_ptr<AdProvenance>& ad_provenance = provenance_it->value;
+  ancestry.ancestry_chain.push_back(provenance_it->value.id);
+  seen_script_ids.insert(provenance_it->value.id.id);
 
-    bool root_reached = false;
-    switch (ad_provenance->Type()) {
-      case AdProvenance::ProvenanceType::kMatchedRule: {
-        ancestry.root_script_filterlist_rule =
-            DynamicTo<AdRulesetProvenance>(*ad_provenance)->filterlist_rule;
-        root_reached = true;
-        break;
-      }
-      case AdProvenance::ProvenanceType::kAncestorScript: {
-        ancestry.ancestry_chain.push_back(
-            DynamicTo<AdAncestorProvenance>(*ad_provenance)
-                ->ancestor_ad_script);
-        break;
-      }
-      case AdProvenance::ProvenanceType::kNone: {
-        root_reached = true;
-        break;
-      }
-    }
+  while (provenance_it != ad_script_data_.end()) {
+    const AdProvenance& ad_provenance = provenance_it->value.provenance;
 
-    if (ancestry.ancestry_chain.size() >= kMaxScriptAncestrySize) {
-      max_size_reached = true;
-      break;
-    }
+    // Update `ancestry` based on the type of the `ad_provenance` variant.
+    bool root_reached = std::visit(
+        absl::Overload{[&](NoProvenance) { return true; },
+                       [&](int script_id) {
+                         // Prevent an infinite loop due to cycles.
+                         if (!seen_script_ids.insert(script_id).is_new_entry) {
+                           duplicate = true;
+                           return true;
+                         }
+
+                         auto it = this->ad_script_data_.find(script_id);
+                         ancestry.ancestry_chain.push_back(it->value.id);
+
+                         // Move on to the next ancestor.
+                         return false;
+                       },
+                       [&](const subresource_filter::ScopedRule& rule) {
+                         ancestry.root_script_filterlist_rule = rule;
+                         // We've reached the ruleset rule which is our
+                         // "root", so stop.
+                         return true;
+                       }},
+        ad_provenance);
 
     if (root_reached) {
       break;
     }
 
-    provenance_it = ad_script_provenances_.find(ancestry.ancestry_chain.back());
+    provenance_it = ad_script_data_.find(ancestry.ancestry_chain.back().id);
   }
 
   base::UmaHistogramBoolean(
-      "Navigation.IframeCreated.AdTracker.MaxScriptAncestrySizeReached",
-      max_size_reached);
+      "Navigation.IframeCreated.AdTracker.DuplicateAncestryScriptId",
+      duplicate);
 
   return ancestry;
 }

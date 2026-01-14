@@ -41,13 +41,13 @@ namespace gpu {
 
 namespace {
 
-auto kQualities = std::to_array<GLHelper::ScalerQuality>({
+constexpr auto kQualities = std::to_array<GLHelper::ScalerQuality>({
     GLHelper::SCALER_QUALITY_BEST,
     GLHelper::SCALER_QUALITY_GOOD,
     GLHelper::SCALER_QUALITY_FAST,
 });
 
-auto kQualityNames = std::to_array<const char*>({
+constexpr auto kQualityNames = std::to_array<const char*>({
     "best",
     "good",
     "fast",
@@ -60,11 +60,9 @@ class GLHelperTest : public testing::Test {
   void SetUp() override {
     feature_list_.Init();
 
-    ContextCreationAttribs attributes;
     context_ = std::make_unique<GLInProcessContext>();
     auto result = context_->Initialize(
-        viz::TestGpuServiceHolder::GetInstance()->task_executor(), attributes,
-        SharedMemoryLimits());
+        viz::TestGpuServiceHolder::GetInstance()->task_executor());
     DCHECK_EQ(result, ContextResult::kSuccess);
     gl_ = context_->GetImplementation();
     ContextSupport* support = context_->GetImplementation();
@@ -1292,7 +1290,7 @@ TEST_F(GLHelperTest, BGRAASyncReadbackTest) {
   EXPECT_EQ(result, true);
 }
 
-auto kRGBReadBackSizes = std::to_array<int>({3, 6, 16});
+constexpr auto kRGBReadBackSizes = std::to_array<int>({3, 6, 16});
 
 class GLHelperPixelReadbackTest
     : public GLHelperPixelTest,

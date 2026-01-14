@@ -13,13 +13,13 @@
 #import "ios/chrome/browser/reader_mode/model/constants.h"
 #import "ios/chrome/browser/reader_mode/model/reader_mode_content_delegate.h"
 #import "ios/chrome/browser/reader_mode/model/reader_mode_distiller_viewer.h"
+#import "ios/chrome/browser/reader_mode/model/reader_mode_eligibility_decider.h"
 #import "ios/chrome/browser/reader_mode/model/reader_mode_metrics_helper.h"
+#import "ios/chrome/browser/translate/model/chrome_ios_translate_client.h"
 #import "ios/web/public/web_state_observer.h"
 #import "ios/web/public/web_state_user_data.h"
 
-@protocol SnackbarCommands;
 @protocol ReaderModeCommands;
-class FullscreenController;
 
 // Observes changes to the web state to perform reader mode operations.
 class ReaderModeTabHelper : public web::WebStateObserver,
@@ -30,10 +30,12 @@ class ReaderModeTabHelper : public web::WebStateObserver,
    public:
     // Called when Reader mode content became available in this tab.
     virtual void ReaderModeWebStateDidLoadContent(
-        ReaderModeTabHelper* tab_helper) = 0;
+        ReaderModeTabHelper* tab_helper,
+        web::WebState* web_state) = 0;
     // Called when Reader mode content will become unavailable in this tab.
     virtual void ReaderModeWebStateWillBecomeUnavailable(
         ReaderModeTabHelper* tab_helper,
+        web::WebState* web_state,
         ReaderModeDeactivationReason reason) = 0;
 
     // Called when distillation fails.
@@ -41,8 +43,8 @@ class ReaderModeTabHelper : public web::WebStateObserver,
         ReaderModeTabHelper* tab_helper) = 0;
 
     // Called when the ReaderModeTabHelper is destroyed.
-    virtual void ReaderModeTabHelperDestroyed(
-        ReaderModeTabHelper* tab_helper) = 0;
+    virtual void ReaderModeTabHelperDestroyed(ReaderModeTabHelper* tab_helper,
+                                              web::WebState* web_state) = 0;
 
    protected:
     ~Observer() override = default;
@@ -92,29 +94,22 @@ class ReaderModeTabHelper : public web::WebStateObserver,
       base::OnceCallback<void(std::optional<bool>)> callback);
 
   // Setter and getter for the readerMode handler.
+
   void SetReaderModeHandler(id<ReaderModeCommands> reader_mode_handler);
+
   id<ReaderModeCommands> GetReaderModeHandler() const;
 
-  // Sets the snackbar handler.
-  void SetSnackbarHandler(id<SnackbarCommands> snackbar_handler);
-
-  // Processes the result of the Reader Mode heuristic trigger that was run on
-  // the `url` content.
-  void HandleReaderModeHeuristicResult(const GURL& url,
-                                       ReaderModeHeuristicResult result);
-
-  // Sets the full screen controller that will passed to the
-  // `ReaderModeContentTabHelper`.
-  void SetFullscreenController(FullscreenController* fullscreen_controller);
+  // Processes the result of the Reader Mode heuristic trigger.
+  void HandleReaderModeHeuristicResult(ReaderModeHeuristicResult result);
 
   // web::WebStateObserver overrides:
   void DidStartNavigation(web::WebState* web_state,
                           web::NavigationContext* navigation_context) override;
-  void DidFinishNavigation(web::WebState* web_state,
-                           web::NavigationContext* navigation_context) override;
   void PageLoaded(
       web::WebState* web_state,
       web::PageLoadCompletionStatus load_completion_status) override;
+  void DidFinishNavigation(web::WebState* web_state,
+                           web::NavigationContext* navigation_context) override;
   void WebStateDestroyed(web::WebState* web_state) override;
 
   // ReaderModeContentDelegate overrides:
@@ -125,26 +120,15 @@ class ReaderModeTabHelper : public web::WebStateObserver,
       NSURLRequest* request,
       web::WebStatePolicyDecider::RequestInfo request_info) override;
 
+  // Sets the script to be used to initialise the scrolling position when the
+  // Reader mode content has loaded.
+  void SetScrollAnchorScript(std::string script);
+
   // Returns a weak pointer.
   base::WeakPtr<ReaderModeTabHelper> GetWeakPtr();
 
  private:
   friend class web::WebStateUserData<ReaderModeTabHelper>;
-
-  // Handles the result from the Readability JavaScript heuristic triggering
-  // logic.
-  void HandleReadabilityHeuristicResult(const GURL& url,
-                                        const base::Value* result);
-
-  // Trigger the heuristic to determine reader mode eligibility.
-  void TriggerReaderModeHeuristic(const GURL& url);
-
-  // Starts the reader mode heuristic with a timer.
-  void TriggerReaderModeHeuristicAsync(const GURL& url);
-
-  // Resets `reader_mode_eligible_url_` if it is different than the current url
-  // context and stops all heuristic triggering.
-  void ResetUrlEligibility(const GURL& url);
 
   // Callback for handling completion of the page distillation.
   void PageDistillationCompleted(
@@ -162,18 +146,26 @@ class ReaderModeTabHelper : public web::WebStateObserver,
   // ongoing distillation.
   void DestroyReaderModeContent(ReaderModeDeactivationReason reason);
 
-  // Sets the last committed URL. If `url` is the equal to the previous value
-  // ignoring ref, then this is a no-op.
-  void SetLastCommittedUrl(const GURL& url);
-  // Calls the callbacks waiting for the last committed URL eligibility result.
-  void CallLastCommittedUrlEligibilityCallbacks(std::optional<bool> result);
-
   // Cancels any ongoing distillation and destroys the `reader_mode_web_state_`.
   void CancelDistillation();
 
   // Records the current page distillation failure, when called
   // `distillation_already_failed_` is set to true.
   void RecordDistillationFailure();
+
+  // Completes distillation for the specified `access_point`.
+  void CompleteDistillation(ReaderModeAccessPoint access_point);
+
+  // Applies the language settings from the original source page.
+  void ApplyLanguageSettingsFromSource();
+
+  // Applies the language settings from the `translate_client`.
+  void ApplyLanguageSettingsFromClient(
+      ChromeIOSTranslateClient* translate_client);
+
+  // Script to be used to initialise the scrolling position when the Reader mode
+  // content has loaded.
+  std::string scroll_anchor_script_;
 
   // Whether Reader mode is active in this tab.
   bool active_ = false;
@@ -188,20 +180,8 @@ class ReaderModeTabHelper : public web::WebStateObserver,
   // WebState used to render the Reader mode content. Lazily created the first
   // time Reader mode is activated and persists until the tab is closed.
   std::unique_ptr<web::WebState> reader_mode_web_state_;
-  id<SnackbarCommands> snackbar_handler_;
-  base::OneShotTimer trigger_reader_mode_timer_;
   base::OneShotTimer reader_mode_distillation_timer_;
 
-  // Last committed URL, ignoring ref.
-  GURL last_committed_url_without_ref_;
-  // Whether the last committed URL eligibility has been determined.
-  bool last_committed_url_eligibility_ready_ = false;
-  // Callbacks waiting for the last committed URL eligibility result.
-  std::vector<base::OnceCallback<void(std::optional<bool>)>>
-      last_committed_url_eligibility_callbacks_;
-
-  // Last URL determined eligible to Reader mode in this WebState.
-  GURL reader_mode_eligible_url_;
   raw_ptr<web::WebState> web_state_ = nullptr;
   base::ScopedObservation<web::WebState, web::WebStateObserver>
       web_state_observation_{this};
@@ -209,8 +189,17 @@ class ReaderModeTabHelper : public web::WebStateObserver,
 
   std::unique_ptr<ReaderModeDistillerViewer> distiller_viewer_;
 
+  // The state of translation prior to distilling the source page.
+  struct TranslationState {
+    std::string source_code;
+    std::string target_code;
+    bool is_original_source_translated = false;
+  };
+  TranslationState source_translation_state_;
+
   // Records metrics for the Reader mode with `web_state_`.
   ReaderModeMetricsHelper metrics_helper_;
+  ReaderModeEligibilityDecider eligibility_decider_;
   base::ObserverList<Observer, true> observers_;
 
   base::WeakPtrFactory<ReaderModeTabHelper> weak_ptr_factory_{this};

@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "ipc/ipc_mojo_bootstrap.h"
 
 #include <cstdint>
@@ -17,9 +12,9 @@
 #include "base/task/single_thread_task_runner.h"
 #include "base/test/task_environment.h"
 #include "ipc/ipc.mojom.h"
-#include "ipc/ipc_test_base.h"
 #include "mojo/core/test/multiprocess_test_helper.h"
 #include "mojo/public/cpp/bindings/associated_receiver.h"
+#include "mojo/public/cpp/bindings/associated_remote.h"
 
 namespace {
 
@@ -152,30 +147,6 @@ MULTIPROCESS_TEST_MAIN_WITH_SETUP(
   run_loop.Run();
 
   EXPECT_EQ(kTestServerPid, impl.peer_pid());
-
-  return 0;
-}
-
-// A long running process that connects to us.
-MULTIPROCESS_TEST_MAIN_WITH_SETUP(
-    IPCMojoBootstrapTestEmptyMessageTestChildMain,
-    ::mojo::core::test::MultiprocessTestHelper::ChildSetup) {
-  base::test::SingleThreadTaskEnvironment task_environment;
-  Connection connection(
-      IPC::MojoBootstrap::Create(
-          std::move(mojo::core::test::MultiprocessTestHelper::primordial_pipe),
-          IPC::Channel::MODE_CLIENT,
-          base::SingleThreadTaskRunner::GetCurrentDefault(),
-          base::SingleThreadTaskRunner::GetCurrentDefault()),
-      kTestClientPid);
-
-  mojo::PendingAssociatedReceiver<IPC::mojom::Channel> receiver;
-  connection.TakeReceiver(&receiver);
-  connection.GetSender()->SetPeerPid(1234);
-
-  base::RunLoop run_loop;
-  PeerPidReceiver impl(std::move(receiver), run_loop.QuitClosure());
-  run_loop.Run();
 
   return 0;
 }

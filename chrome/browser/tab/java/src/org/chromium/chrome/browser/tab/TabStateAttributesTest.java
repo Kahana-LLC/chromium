@@ -16,6 +16,8 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 
+import static org.chromium.chrome.browser.url_constants.UrlConstantResolver.getOriginalNativeNtpUrl;
+
 import android.os.Handler;
 import android.os.Looper;
 
@@ -37,6 +39,8 @@ import org.chromium.base.Token;
 import org.chromium.base.task.TaskTraits;
 import org.chromium.base.task.test.ShadowPostTask;
 import org.chromium.base.test.BaseRobolectricTestRunner;
+import org.chromium.base.test.util.Features.EnableFeatures;
+import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.tab.TabStateAttributes.DirtinessState;
 import org.chromium.components.embedder_support.util.UrlConstants;
@@ -233,7 +237,7 @@ public class TabStateAttributesTest {
 
         assertEquals(DirtinessState.CLEAN, TabStateAttributes.from(mTab).getDirtinessState());
 
-        mTab.setUrl(new GURL(UrlConstants.NTP_URL));
+        mTab.setUrl(new GURL(getOriginalNativeNtpUrl()));
         mTab.setTabGroupId(new Token(1L, 2L));
 
         while (observers.hasNext()) {
@@ -351,7 +355,7 @@ public class TabStateAttributesTest {
         verify(mAttributesObserver).onTabStateDirtinessChanged(mTab, DirtinessState.DIRTY);
         TabStateAttributes.from(mTab).clearTabStateDirtiness();
 
-        mTab.setUrl(new GURL(UrlConstants.NTP_URL));
+        mTab.setUrl(new GURL(getOriginalNativeNtpUrl()));
         mTab.setRootId(56);
         assertEquals(DirtinessState.DIRTY, TabStateAttributes.from(mTab).getDirtinessState());
         verify(mAttributesObserver, times(2))
@@ -374,7 +378,7 @@ public class TabStateAttributesTest {
         verify(mAttributesObserver).onTabStateDirtinessChanged(mTab, DirtinessState.DIRTY);
         TabStateAttributes.from(mTab).clearTabStateDirtiness();
 
-        mTab.setUrl(new GURL(UrlConstants.NTP_URL));
+        mTab.setUrl(new GURL(getOriginalNativeNtpUrl()));
         mTab.setTabGroupId(null);
         assertEquals(DirtinessState.DIRTY, TabStateAttributes.from(mTab).getDirtinessState());
         verify(mAttributesObserver, times(2))
@@ -397,7 +401,7 @@ public class TabStateAttributesTest {
         verify(mAttributesObserver).onTabStateDirtinessChanged(mTab, DirtinessState.UNTIDY);
         TabStateAttributes.from(mTab).clearTabStateDirtiness();
 
-        mTab.setUrl(new GURL(UrlConstants.NTP_URL));
+        mTab.setUrl(new GURL(getOriginalNativeNtpUrl()));
         mTab.setTabHasSensitiveContent(false);
         assertEquals(DirtinessState.CLEAN, TabStateAttributes.from(mTab).getDirtinessState());
         TabStateAttributes.from(mTab).clearTabStateDirtiness();
@@ -413,6 +417,7 @@ public class TabStateAttributesTest {
     }
 
     @Test
+    @EnableFeatures(ChromeFeatureList.ANDROID_PINNED_TABS)
     public void testIsPinnedUpdates() {
         TabStateAttributes.createForTab(mTab, TabCreationState.FROZEN_ON_RESTORE);
         TabStateAttributes.from(mTab).addObserver(mAttributesObserver);
@@ -427,6 +432,20 @@ public class TabStateAttributesTest {
         assertEquals(DirtinessState.DIRTY, TabStateAttributes.from(mTab).getDirtinessState());
         TabStateAttributes.from(mTab).clearTabStateDirtiness();
         verify(mAttributesObserver, times(2))
+                .onTabStateDirtinessChanged(mTab, DirtinessState.DIRTY);
+
+        // Test for NTP.
+        mTab.setUrl(new GURL(getOriginalNativeNtpUrl()));
+        mTab.setIsPinned(true);
+        assertEquals(DirtinessState.DIRTY, TabStateAttributes.from(mTab).getDirtinessState());
+        TabStateAttributes.from(mTab).clearTabStateDirtiness();
+        verify(mAttributesObserver, times(3))
+                .onTabStateDirtinessChanged(mTab, DirtinessState.DIRTY);
+
+        mTab.setIsPinned(false);
+        assertEquals(DirtinessState.DIRTY, TabStateAttributes.from(mTab).getDirtinessState());
+        TabStateAttributes.from(mTab).clearTabStateDirtiness();
+        verify(mAttributesObserver, times(4))
                 .onTabStateDirtinessChanged(mTab, DirtinessState.DIRTY);
 
         verify(mAttributesObserver, never())
@@ -444,7 +463,7 @@ public class TabStateAttributesTest {
         verify(mAttributesObserver).onTabStateDirtinessChanged(mTab, DirtinessState.DIRTY);
         TabStateAttributes.from(mTab).clearTabStateDirtiness();
 
-        mTab.setUrl(new GURL(UrlConstants.NTP_URL));
+        mTab.setUrl(new GURL(getOriginalNativeNtpUrl()));
         mTab.onTabRestoredFromArchivedTabModel();
         assertEquals(DirtinessState.DIRTY, TabStateAttributes.from(mTab).getDirtinessState());
         verify(mAttributesObserver, times(2))
@@ -522,7 +541,7 @@ public class TabStateAttributesTest {
         TabStateAttributes.createForTab(mTab, TabCreationState.FROZEN_ON_RESTORE);
         assertEquals(DirtinessState.CLEAN, TabStateAttributes.from(mTab).getDirtinessState());
 
-        mTab.setUrl(new GURL(UrlConstants.NTP_URL));
+        mTab.setUrl(new GURL(getOriginalNativeNtpUrl()));
         TabStateAttributes.from(mTab).updateIsDirty(DirtinessState.UNTIDY);
         assertEquals(DirtinessState.CLEAN, TabStateAttributes.from(mTab).getDirtinessState());
 

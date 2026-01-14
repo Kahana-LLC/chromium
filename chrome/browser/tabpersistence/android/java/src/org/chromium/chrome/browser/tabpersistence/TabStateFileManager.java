@@ -23,7 +23,6 @@ import org.chromium.base.version_info.VersionInfo;
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.crypto.CipherFactory;
-import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tab.TabLaunchType;
 import org.chromium.chrome.browser.tab.TabState;
@@ -239,14 +238,12 @@ public class TabStateFileManager {
         long startTime = SystemClock.elapsedRealtime();
         TabState tabState = restoreTabStateInternal(file, encrypted, cipherFactory);
         if (tabState != null) {
-            if (useFlatBuffer
-                    && ChromeFeatureList.sDeleteMigratedLegacyTabStateFilesAfterRestore
-                            .getValue()) {
+            RecordHistogram.recordTimesHistogram(
+                    "Tabs.TabState.LoadTime", SystemClock.elapsedRealtime() - startTime);
+            if (useFlatBuffer) {
                 tabState.legacyFileToDelete =
                         getTabStateFile(stateFolder, id, encrypted, /* isFlatbuffer= */ false);
             }
-            RecordHistogram.recordTimesHistogram(
-                    "Tabs.TabState.LoadTime", SystemClock.elapsedRealtime() - startTime);
         }
         return tabState;
     }
@@ -337,18 +334,20 @@ public class TabStateFileManager {
             TabState tabState = new TabState();
             tabState.timestampMillis = stream.readLong();
             int size = stream.readInt();
+
+            ByteBuffer contentsStateBuffer;
             if (encrypted) {
                 // If it's encrypted, we have to read the stream normally to apply the cipher.
                 byte[] state = new byte[size];
                 stream.readFully(state);
-                tabState.contentsState = new WebContentsState(ByteBuffer.allocateDirect(size));
-                tabState.contentsState.buffer().put(state);
+                contentsStateBuffer = ByteBuffer.allocateDirect(size);
+                contentsStateBuffer.put(state);
+                contentsStateBuffer.rewind();
             } else {
                 // If not, we can mmap the file directly, saving time and copies into the java heap.
                 FileChannel channel = input.getChannel();
-                tabState.contentsState =
-                        new WebContentsState(
-                                channel.map(MapMode.READ_ONLY, channel.position(), size));
+                long position = channel.position();
+                contentsStateBuffer = channel.map(MapMode.READ_ONLY, position, size);
                 // Skip ahead to avoid re-reading data that mmap'd.
                 long skipped = input.skip(size);
                 if (skipped != size) {
@@ -362,6 +361,7 @@ public class TabStateFileManager {
                                     + "been skipped. Tab restore may fail.");
                 }
             }
+
             tabState.parentId = stream.readInt();
             try {
                 tabState.openerAppId = stream.readUTF();
@@ -370,12 +370,13 @@ public class TabStateFileManager {
                 // Could happen if reading a version of a TabState that does not include the app id.
                 Log.w(TAG, "Failed to read opener app id state from tab state");
             }
+            int webContentsStateVersion;
             try {
-                tabState.contentsState.setVersion(stream.readInt());
+                webContentsStateVersion = stream.readInt();
             } catch (EOFException eof) {
                 // On the stable channel, the first release is version 18. For all other channels,
                 // chrome 25 is the first release.
-                tabState.contentsState.setVersion(isStableChannelBuild() ? 0 : 1);
+                webContentsStateVersion = isStableChannelBuild() ? 0 : 1;
 
                 // Could happen if reading a version of a TabState that does not include the
                 // version id.
@@ -383,8 +384,10 @@ public class TabStateFileManager {
                         TAG,
                         "Failed to read saved state version id from tab state. Assuming "
                                 + "version "
-                                + tabState.contentsState.version());
+                                + webContentsStateVersion);
             }
+            tabState.contentsState =
+                    new WebContentsState(contentsStateBuffer, webContentsStateVersion);
             try {
                 // Skip obsolete sync ID.
                 stream.readLong();
@@ -548,25 +551,22 @@ public class TabStateFileManager {
         // off.
         // We must always have a safe fallback to hand-written based TabState to be able to roll out
         // FlatBuffers safely.
-        // When ChromeFeatureList.sLegacyTabStateDeprecation is turned on, the default is to save
-        // to the FlatBuffer format and delete the corresponding legacy TabState file.
         saveStateInternal(
                 getTabStateFile(
                         directory,
                         tabId,
                         isEncrypted,
-                        ChromeFeatureList.sLegacyTabStateDeprecation.isEnabled()),
+                        /** isFlatbuffer= */
+                        true),
                 tabState,
                 isEncrypted,
                 cipherFactory);
-        if (ChromeFeatureList.sLegacyTabStateDeprecation.isEnabled()) {
-            PostTask.runOrPostTask(
-                    TaskTraits.BEST_EFFORT_MAY_BLOCK,
-                    () -> {
-                        ThreadUtils.assertOnBackgroundThread();
-                        deleteLegacyTabStateIfExists(directory, tabId, isEncrypted);
-                    });
-        }
+        PostTask.runOrPostTask(
+                TaskTraits.BEST_EFFORT_MAY_BLOCK,
+                () -> {
+                    ThreadUtils.assertOnBackgroundThread();
+                    deleteLegacyTabStateIfExists(directory, tabId, isEncrypted);
+                });
     }
 
     /**

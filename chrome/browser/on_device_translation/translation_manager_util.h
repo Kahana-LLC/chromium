@@ -9,10 +9,7 @@
 #include <string_view>
 #include <vector>
 
-#include "chrome/browser/on_device_translation/language_pack_util.h"
-#include "components/prefs/pref_service.h"
 #include "content/public/browser/browser_context.h"
-#include "third_party/blink/public/mojom/on_device_translation/translation_manager.mojom.h"
 
 namespace on_device_translation {
 

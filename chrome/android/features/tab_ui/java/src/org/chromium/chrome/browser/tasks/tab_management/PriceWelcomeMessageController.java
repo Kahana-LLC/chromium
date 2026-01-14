@@ -6,6 +6,8 @@ package org.chromium.chrome.browser.tasks.tab_management;
 
 import static org.chromium.build.NullUtil.assumeNonNull;
 
+import android.content.Context;
+
 import androidx.annotation.VisibleForTesting;
 
 import org.chromium.base.Callback;
@@ -23,6 +25,8 @@ import org.chromium.chrome.browser.tabmodel.TabGroupModelFilter;
 import org.chromium.chrome.browser.tabmodel.TabModelObserver;
 import org.chromium.chrome.browser.tasks.tab_management.PriceMessageService.PriceTabData;
 import org.chromium.chrome.browser.tasks.tab_management.PriceMessageService.PriceWelcomeMessageReviewActionProvider;
+import org.chromium.chrome.browser.tasks.tab_management.TabProperties.UiType;
+import org.chromium.chrome.browser.tasks.tab_management.TabSwitcherMessageManager.MessageType;
 
 /** Controller for the price welcome message in the grid tab switcher. */
 @NullMarked
@@ -80,7 +84,7 @@ public class PriceWelcomeMessageController {
     private final TabSwitcherMessageManager mTabSwitcherMessageManager;
     private final ObservableSupplier<@Nullable TabGroupModelFilter>
             mCurrentTabGroupModelFilterSupplier;
-    private final MessageCardProviderCoordinator mMessageCardProviderCoordinator;
+    private final MessageCardProvider mMessageCardProvider;
     private final ObservableSupplierImpl<@Nullable PriceWelcomeMessageReviewActionProvider>
             mPriceWelcomeMessageReviewActionProviderSupplier;
     private final Profile mProfile;
@@ -91,7 +95,7 @@ public class PriceWelcomeMessageController {
     PriceWelcomeMessageController(
             TabSwitcherMessageManager tabSwitcherMessageManager,
             ObservableSupplier<@Nullable TabGroupModelFilter> currentTabGroupModelFilterSupplier,
-            MessageCardProviderCoordinator messageCardProviderCoordinator,
+            MessageCardProvider<@MessageType Integer, @UiType Integer> messageCardProvider,
             ObservableSupplierImpl<@Nullable PriceWelcomeMessageReviewActionProvider>
                     priceWelcomeMessageReviewActionProviderSupplier,
             Profile profile,
@@ -99,7 +103,7 @@ public class PriceWelcomeMessageController {
             @Nullable PriceMessageService priceMessageService) {
         mTabSwitcherMessageManager = tabSwitcherMessageManager;
         mCurrentTabGroupModelFilterSupplier = currentTabGroupModelFilterSupplier;
-        mMessageCardProviderCoordinator = messageCardProviderCoordinator;
+        mMessageCardProvider = messageCardProvider;
         mPriceWelcomeMessageReviewActionProviderSupplier =
                 priceWelcomeMessageReviewActionProviderSupplier;
         mProfile = profile;
@@ -109,23 +113,24 @@ public class PriceWelcomeMessageController {
         if (mPriceMessageService != null) {
             currentTabGroupModelFilterSupplier.addSyncObserverAndCallIfNonNull(
                     mOnTabGroupModelFilterChanged);
-            messageCardProviderCoordinator.subscribeMessageService(mPriceMessageService);
+            messageCardProvider.subscribeMessageService(mPriceMessageService);
         }
     }
 
     /**
      * @param tabSwitcherMessageManager Manages messages for the tab switcher.
      * @param currentTabGroupModelFilterSupplier Supplies the current {@link TabGroupModelFilter}.
-     * @param messageCardProviderCoordinator To build message cards.
+     * @param messageCardProvider To build message cards.
      * @param priceWelcomeMessageReviewActionProviderSupplier Supplier for the review action
      *     provider.
      * @param profile The current {@link Profile}.
      * @param tabListCoordinatorSupplier Supplies the {@link TabListCoordinator}.
      */
     public static PriceWelcomeMessageController build(
+            Context context,
             TabSwitcherMessageManager tabSwitcherMessageManager,
             ObservableSupplier<@Nullable TabGroupModelFilter> currentTabGroupModelFilterSupplier,
-            MessageCardProviderCoordinator messageCardProviderCoordinator,
+            MessageCardProvider<@MessageType Integer, @UiType Integer> messageCardProvider,
             ObservableSupplierImpl<@Nullable PriceWelcomeMessageReviewActionProvider>
                     priceWelcomeMessageReviewActionProviderSupplier,
             Profile profile,
@@ -133,6 +138,7 @@ public class PriceWelcomeMessageController {
         PriceMessageService priceMessageService =
                 PriceTrackingFeatures.isPriceAnnotationsEnabled(profile)
                         ? new PriceMessageService(
+                                context,
                                 profile,
                                 tabListCoordinatorSupplier::get,
                                 priceWelcomeMessageReviewActionProviderSupplier)
@@ -141,7 +147,7 @@ public class PriceWelcomeMessageController {
         return new PriceWelcomeMessageController(
                 tabSwitcherMessageManager,
                 currentTabGroupModelFilterSupplier,
-                messageCardProviderCoordinator,
+                messageCardProvider,
                 priceWelcomeMessageReviewActionProviderSupplier,
                 profile,
                 tabListCoordinatorSupplier,
@@ -183,15 +189,15 @@ public class PriceWelcomeMessageController {
 
         if (mPriceMessageService == null
                 || !PriceTrackingUtilities.isPriceWelcomeMessageCardEnabled(mProfile)
-                || mMessageCardProviderCoordinator.isMessageShown(
-                        MessageService.MessageType.PRICE_MESSAGE,
+                || mMessageCardProvider.isMessageShown(
+                        MessageType.PRICE_MESSAGE,
                         PriceMessageService.PriceMessageType.PRICE_WELCOME)) {
             return;
         }
 
         if (mPriceMessageService.preparePriceMessage(
                 PriceMessageService.PriceMessageType.PRICE_WELCOME, priceTabData)) {
-            mTabSwitcherMessageManager.appendNextMessage(MessageService.MessageType.PRICE_MESSAGE);
+            mTabSwitcherMessageManager.appendNextMessage(MessageType.PRICE_MESSAGE);
             // To make the message card in view when user enters tab switcher, we should scroll to
             // current tab with 0 offset. See {@link
             // TabSwitcherMediator#setInitialScrollIndexOffset} for more details.
@@ -209,7 +215,7 @@ public class PriceWelcomeMessageController {
         TabListCoordinator tabListCoordinator = mTabListCoordinatorSupplier.get();
         if (tabListCoordinator != null) {
             tabListCoordinator.removeSpecialListItem(
-                    TabProperties.UiType.PRICE_MESSAGE, MessageService.MessageType.PRICE_MESSAGE);
+                    UiType.PRICE_MESSAGE, MessageType.PRICE_MESSAGE);
         }
 
         for (PriceMessageUpdateObserver observer : mObservers) {
@@ -219,7 +225,7 @@ public class PriceWelcomeMessageController {
 
     /** Restores the price welcome message to the tab grid. */
     public void restorePriceWelcomeMessage() {
-        mTabSwitcherMessageManager.appendNextMessage(MessageService.MessageType.PRICE_MESSAGE);
+        mTabSwitcherMessageManager.appendNextMessage(MessageType.PRICE_MESSAGE);
         for (PriceMessageUpdateObserver observer : mObservers) {
             observer.onRestorePriceWelcomeMessage();
         }

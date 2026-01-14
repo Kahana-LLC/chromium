@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "components/sessions/core/command_storage_backend.h"
 
 #include <stdint.h>
@@ -16,6 +11,7 @@
 #include <string_view>
 #include <utility>
 
+#include "base/compiler_specific.h"
 #include "base/containers/span.h"
 #include "base/feature_list.h"
 #include "base/features.h"
@@ -242,22 +238,24 @@ bool SessionFileReader::ReadHeader() {
     return false;
   FileHeader header;
   CHECK_EQ(0, bytes_read_);
-  bytes_read_ =
-      file_->ReadAtCurrentPos(reinterpret_cast<char*>(&header), sizeof(header));
-  if (bytes_read_ < 0) {
+  std::optional<size_t> read_count =
+      file_->ReadAtCurrentPos(base::byte_span_from_ref(header));
+  if (!read_count) {
     VLOG(1) << "SessionFileReader::ReadHeader, failed to read header. "
                "Attempted to read "
             << sizeof(header)
             << " bytes into buffer but encountered file read error: "
             << base::File::ErrorToString(base::File::GetLastFileError());
+    return false;
   }
-  if (bytes_read_ != sizeof(header) || header.signature != kFileSignature) {
+  if (*read_count != sizeof(header) || header.signature != kFileSignature) {
     VLOG(1) << "SessionFileReader::ReadHeader, failed to read header. "
                "Attempted to read "
-            << sizeof(header) << " bytes into buffer but got " << bytes_read_
+            << sizeof(header) << " bytes into buffer but got " << *read_count
             << " bytes instead.";
     return false;
   }
+  bytes_read_ += *read_count;
   version_ = header.version;
   const bool encrypt = aead_.get() != nullptr;
   return (encrypt && (version_ == kEncryptedFileVersion ||
@@ -293,7 +291,8 @@ SessionFileReader::ReadResult SessionFileReader::ReadCommand() {
   }
   // Get the size of the command.
   size_type command_size;
-  memcpy(&command_size, &(buffer_[buffer_position_]), sizeof(command_size));
+  UNSAFE_TODO(memcpy(&command_size, &(buffer_[buffer_position_]),
+                     sizeof(command_size)));
   buffer_position_ += sizeof(command_size);
   available_count_ -= sizeof(command_size);
 
@@ -317,10 +316,10 @@ SessionFileReader::ReadResult SessionFileReader::ReadCommand() {
   }
   if (aead_) {
     result.command = CreateCommandFromEncrypted(
-        buffer_.c_str() + buffer_position_, command_size);
+        UNSAFE_TODO(buffer_.c_str() + buffer_position_), command_size);
   } else {
-    result.command =
-        CreateCommand(buffer_.c_str() + buffer_position_, command_size);
+    result.command = CreateCommand(
+        UNSAFE_TODO(buffer_.c_str() + buffer_position_), command_size);
   }
   ++command_counter_;
   buffer_position_ += command_size;
@@ -338,8 +337,8 @@ SessionFileReader::CreateCommandFromEncrypted(const char* data,
     return nullptr;
 
   char nonce[kNonceLength];
-  memset(nonce, 0, kNonceLength);
-  memcpy(nonce, &command_counter_, sizeof(command_counter_));
+  UNSAFE_TODO(memset(nonce, 0, kNonceLength));
+  UNSAFE_TODO(memcpy(nonce, &command_counter_, sizeof(command_counter_)));
   std::string plain_text;
   if (!aead_->Open(std::string_view(data, length),
                    std::string_view(nonce, kNonceLength), std::string_view(),
@@ -366,35 +365,39 @@ std::unique_ptr<sessions::SessionCommand> SessionFileReader::CreateCommand(
       std::make_unique<sessions::SessionCommand>(command_id,
                                                  length - sizeof(id_type));
   if (length > sizeof(id_type)) {
-    memcpy(command->contents(), &(data[sizeof(id_type)]),
-           length - sizeof(id_type));
+    UNSAFE_TODO(memcpy(command->contents(), &(data[sizeof(id_type)]),
+                       length - sizeof(id_type)));
   }
   return command;
 }
 
 bool SessionFileReader::FillBuffer() {
+  base::span<uint8_t> buffer_bytes = base::as_writable_byte_span(buffer_);
   if (available_count_ > 0 && buffer_position_ > 0) {
     // Shift buffer to beginning.
-    memmove(&(buffer_[0]), &(buffer_[buffer_position_]), available_count_);
+    buffer_bytes.copy_prefix_from(
+        buffer_bytes.subspan(buffer_position_, available_count_));
   }
   buffer_position_ = 0;
   DCHECK(buffer_position_ + available_count_ < buffer_.size());
-  const int to_read = static_cast<int>(buffer_.size() - available_count_);
-  const int read_count =
-      file_->ReadAtCurrentPos(&(buffer_[available_count_]), to_read);
-  if (read_count < 0) {
+  base::span<uint8_t> buffer_subspan = buffer_bytes.subspan(available_count_);
+  const std::optional<size_t> read_count =
+      file_->ReadAtCurrentPos(buffer_subspan);
+  if (!read_count) {
     VLOG(1) << "SessionFileReader::FillBuffer, failed to read header. "
                "Attempted to read "
-            << to_read << " bytes into buffer but encountered file read error: "
+            << buffer_subspan.size()
+            << " bytes into buffer but encountered file read error: "
             << base::File::ErrorToString(base::File::GetLastFileError())
             << "\nRead " << bytes_read_
             << " bytes successfully from file before error.";
     return false;
   }
-  if (read_count == 0)
+  if (read_count == 0) {
     return false;
-  bytes_read_ += read_count;
-  available_count_ += read_count;
+  }
+  bytes_read_ += *read_count;
+  available_count_ += *read_count;
   return true;
 }
 
@@ -809,8 +812,8 @@ bool CommandStorageBackend::AppendEncryptedCommandToFile(
     return false;
   DCHECK(IsEncrypted());
   char nonce[kNonceLength];
-  memset(nonce, 0, kNonceLength);
-  memcpy(nonce, &commands_written_, sizeof(commands_written_));
+  UNSAFE_TODO(memset(nonce, 0, kNonceLength));
+  UNSAFE_TODO(memcpy(nonce, &commands_written_, sizeof(commands_written_)));
 
   // Encryption adds overhead, resulting in a slight reduction in the available
   // space for each command. Chop any contents beyond the available size.
@@ -820,10 +823,11 @@ bool CommandStorageBackend::AppendEncryptedCommandToFile(
                              sizeof(id_type) - kEncryptionOverheadInBytes));
   std::vector<char> command_and_id(command_size + sizeof(id_type));
   const id_type command_id = command.id();
-  memcpy(&command_and_id.front(), reinterpret_cast<const char*>(&command_id),
-         sizeof(id_type));
-  memcpy(&(command_and_id.front()) + sizeof(id_type), command.contents(),
-         command_size);
+  UNSAFE_TODO(memcpy(&command_and_id.front(),
+                     reinterpret_cast<const char*>(&command_id),
+                     sizeof(id_type)));
+  UNSAFE_TODO(memcpy(&(command_and_id.front()) + sizeof(id_type),
+                     command.contents(), command_size));
 
   std::string cipher_text;
   aead_->Seal(std::string_view(&command_and_id.front(), command_and_id.size()),

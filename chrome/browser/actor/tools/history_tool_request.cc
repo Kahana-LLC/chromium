@@ -4,6 +4,8 @@
 
 #include "chrome/browser/actor/tools/history_tool_request.h"
 
+#include <optional>
+
 #include "chrome/browser/actor/tools/history_tool.h"
 #include "chrome/browser/actor/tools/tool_request_visitor_functor.h"
 #include "chrome/common/actor.mojom.h"
@@ -25,6 +27,7 @@ ToolRequest::CreateToolResult HistoryToolRequest::CreateTool(
 
   if (!tab) {
     return {/*tool=*/nullptr, MakeResult(mojom::ActionResultCode::kTabWentAway,
+                                         /*requires_page_stabilization=*/false,
                                          "The tab is no longer present.")};
   }
 
@@ -38,8 +41,14 @@ void HistoryToolRequest::Apply(ToolRequestVisitorFunctor& f) const {
   f.Apply(*this);
 }
 
-std::string HistoryToolRequest::JournalEvent() const {
-  return "History";
+std::string_view HistoryToolRequest::Name() const {
+  return kName;
+}
+
+bool HistoryToolRequest::RequiresUrlCheckInCurrentTab() const {
+  // A history tool is tab scoped but navigates *away* from the current URL --
+  // the destination URL is checked in HistoryTool::Validate().
+  return false;
 }
 
 }  // namespace actor

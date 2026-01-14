@@ -2,18 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
-#pragma allow_unsafe_libc_calls
-#endif
-
 #include "base/memory/safety_checks.h"
 
-#include <new>
-
 #include "base/allocator/partition_alloc_features.h"
+#include "base/compiler_specific.h"
 #include "base/feature_list.h"
 #include "partition_alloc/partition_address_space.h"
+#include "partition_alloc/shim/allocator_shim_default_dispatch_to_partition_alloc.h"
 #include "partition_alloc/tagging.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -183,8 +178,7 @@ TEST(MemorySafetyCheckTest, SchedulerLoopQuarantine) {
       is_memory_safety_checked<AdvancedChecks,
                                MemorySafetyCheck::kSchedulerLoopQuarantine>);
 
-  auto* root =
-      base::internal::GetPartitionRootForMemorySafetyCheckedAllocation();
+  auto* root = allocator_shim::internal::PartitionAllocMalloc::Allocator();
   partition_alloc::internal::
       ScopedSchedulerLoopQuarantineBranchAccessorForTesting branch(root);
 
@@ -195,7 +189,7 @@ TEST(MemorySafetyCheckTest, SchedulerLoopQuarantine) {
 
   auto* ptr2 = new AdvancedChecks();
   ASSERT_NE(ptr2, nullptr);
-  memset(ptr2->data, 'A', sizeof(ptr2->data));
+  UNSAFE_TODO(memset(ptr2->data, 'A', sizeof(ptr2->data)));
   delete ptr2;
   EXPECT_TRUE(branch.IsQuarantined(ptr2));
 

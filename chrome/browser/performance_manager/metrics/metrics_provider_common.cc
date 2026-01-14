@@ -4,18 +4,18 @@
 
 #include "chrome/browser/performance_manager/metrics/metrics_provider_common.h"
 
+#include "base/byte_count.h"
+#include "base/byte_size.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/process/process_metrics.h"
+#include "base/system/sys_info.h"
 #include "content/public/browser/browser_accessibility_state.h"
 #include "ui/accessibility/ax_mode.h"
-#include "base/system/sys_info.h"
-#include "base/process/process_metrics.h"
 
 namespace performance_manager {
 
 namespace {
-
-uint64_t kBytesPerMb = 1024 * 1024;
 
 ui::AXMode::ModeFlagHistogramValue ModeFlagsToEnum(uint32_t mode_flags) {
   switch (mode_flags) {
@@ -68,12 +68,14 @@ MetricsProviderCommon::~MetricsProviderCommon() = default;
 
 void MetricsProviderCommon::RecordAvailableMemoryMetrics() {
   auto available_bytes = base::SysInfo::AmountOfAvailablePhysicalMemory();
-  auto total_bytes = base::SysInfo::AmountOfPhysicalMemory();
+  auto total_bytes = base::ByteSize::FromDeprecatedByteCount(
+      base::SysInfo::AmountOfPhysicalMemory());
 
   base::UmaHistogramMemoryLargeMB("Memory.Experimental.AvailableMemoryMB",
-                                  available_bytes / kBytesPerMb);
-  base::UmaHistogramPercentage("Memory.Experimental.AvailableMemoryPercent",
-                               available_bytes * 100 / total_bytes);
+                                  available_bytes.InMiB());
+  base::UmaHistogramPercentage(
+      "Memory.Experimental.AvailableMemoryPercent",
+      available_bytes.InBytes() * 100 / total_bytes.InBytes());
 
 #if BUILDFLAG(IS_MAC)
   base::SystemMemoryInfo info;
@@ -82,7 +84,8 @@ void MetricsProviderCommon::RecordAvailableMemoryMetrics() {
         "Memory.Experimental.MacFileBackedMemoryMB2", info.file_backed.InMiB());
     base::UmaHistogramPercentage(
         "Memory.Experimental.MacAvailableMemoryPercentFreePageCache2",
-        (available_bytes + info.file_backed.InBytes()) * 100u / total_bytes);
+        (available_bytes + info.file_backed).InBytes() * 100u /
+            total_bytes.InBytes());
   }
 #endif
 }

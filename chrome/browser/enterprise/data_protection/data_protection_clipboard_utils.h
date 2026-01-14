@@ -5,10 +5,11 @@
 #ifndef CHROME_BROWSER_ENTERPRISE_DATA_PROTECTION_DATA_PROTECTION_CLIPBOARD_UTILS_H_
 #define CHROME_BROWSER_ENTERPRISE_DATA_PROTECTION_DATA_PROTECTION_CLIPBOARD_UTILS_H_
 
-#include "base/feature_list.h"
 #include "components/enterprise/buildflags/buildflags.h"
 #include "components/enterprise/common/files_scan_data.h"
 #include "content/public/browser/content_browser_client.h"
+#include "ui/base/clipboard/clipboard_buffer.h"
+#include "ui/base/clipboard/clipboard_metadata.h"
 
 namespace enterprise_data_protection {
 
@@ -27,7 +28,7 @@ namespace enterprise_data_protection {
 void PasteIfAllowedByPolicy(
     const content::ClipboardEndpoint& source,
     const content::ClipboardEndpoint& destination,
-    const content::ClipboardMetadata& metadata,
+    const ui::ClipboardMetadata& metadata,
     content::ClipboardPasteData clipboard_paste_data,
     content::ContentBrowserClient::IsClipboardPasteAllowedCallback callback);
 
@@ -40,7 +41,7 @@ void PasteIfAllowedByPolicy(
 // that should instead be put into the OS clipboard.
 void IsClipboardCopyAllowedByPolicy(
     const content::ClipboardEndpoint& source,
-    const content::ClipboardMetadata& metadata,
+    const ui::ClipboardMetadata& metadata,
     const content::ClipboardPasteData& data,
     content::ContentBrowserClient::IsClipboardCopyAllowedCallback callback);
 
@@ -53,7 +54,7 @@ void IsClipboardCopyAllowedByPolicy(
 // string that should instead be put into the OS clipboard.
 void IsClipboardShareAllowedByPolicy(
     const content::ClipboardEndpoint& source,
-    const content::ClipboardMetadata& metadata,
+    const ui::ClipboardMetadata& metadata,
     const content::ClipboardPasteData& data,
     content::ContentBrowserClient::IsClipboardCopyAllowedCallback callback);
 
@@ -65,7 +66,7 @@ void IsClipboardShareAllowedByPolicy(
 // string that should instead be put into the OS clipboard.
 void IsClipboardGenericCopyActionAllowedByPolicy(
     const content::ClipboardEndpoint& source,
-    const content::ClipboardMetadata& metadata,
+    const ui::ClipboardMetadata& metadata,
     const content::ClipboardPasteData& data,
     content::ContentBrowserClient::IsClipboardCopyAllowedCallback callback);
 #endif  //  BUILDFLAG(IS_ANDROID)
@@ -77,6 +78,13 @@ void IsClipboardGenericCopyActionAllowedByPolicy(
 void ReplaceSameTabClipboardDataIfRequiredByPolicy(
     ui::ClipboardSequenceNumberToken seqno,
     content::ClipboardPasteData& data);
+
+// Checks if the user is allowed to populate the find bar with
+// the currently selected text in the given WebContents based on
+// DataControlsRules policies. This is used to prevent potential data
+// bypass through the find bar when copy/paste restrictions are in place.
+// Returns true if populating the find bar is allowed, false otherwise.
+bool CanPopulateFindBarFromSelection(content::WebContents* web_contents);
 
 }  // namespace enterprise_data_protection
 

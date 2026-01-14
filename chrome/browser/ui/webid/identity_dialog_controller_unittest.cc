@@ -5,6 +5,7 @@
 #include "chrome/browser/ui/webid/identity_dialog_controller.h"
 
 #include <memory>
+#include <utility>
 
 #include "base/functional/callback_helpers.h"
 #include "base/run_loop.h"
@@ -14,6 +15,7 @@
 #include "chrome/browser/ui/webid/account_selection_view.h"
 #include "chrome/test/base/chrome_render_view_host_test_harness.h"
 #include "components/optimization_guide/core/hints/mock_optimization_guide_decider.h"
+#include "components/optimization_guide/core/optimization_guide_features.h"
 #include "components/optimization_guide/core/optimization_guide_proto_util.h"
 #include "components/permissions/permission_request_manager.h"
 #include "components/permissions/test/mock_permission_prompt_factory.h"
@@ -44,6 +46,7 @@ const std::vector<content::IdentityRequestDialogDisclosureField>
 
 }  // namespace
 
+constexpr char kAccountId[] = "account_id1";
 constexpr char16_t kTopFrameEtldPlusOne[] = u"top-frame-example.com";
 constexpr char kIdpEtldPlusOne[] = "idp-example.com";
 constexpr float kPerPageLoadClickthroughRate = 0.1;
@@ -165,7 +168,8 @@ class IdentityDialogControllerTest : public ChromeRenderViewHostTestHarness {
 
   std::vector<IdentityRequestAccountPtr> CreateAccount() {
     return {base::MakeRefCounted<Account>(
-        "account_id1", "", "", "", "", "", GURL(), "", "",
+        kAccountId, "", "", "", "", "", GURL(), "", "",
+        /*potentially_approved_origin_hashes=*/std::vector<std::string>(),
         /*login_hints=*/std::vector<std::string>(),
         /*domain_hints=*/std::vector<std::string>(),
         /*labels=*/std::vector<std::string>(),
@@ -199,10 +203,8 @@ class IdentityDialogControllerTest : public ChromeRenderViewHostTestHarness {
     controller->ShowAccountsDialog(
         content::RelyingPartyData(kTopFrameEtldPlusOne,
                                   /*iframe_for_display=*/u""),
-        {idp_data}, accounts_, rp_mode,
-        /*new_accounts=*/std::vector<IdentityRequestAccountPtr>(),
-        /*on_selected=*/base::DoNothing(), /*on_add_account=*/base::DoNothing(),
-        std::move(dismiss_callback),
+        {idp_data}, accounts_, rp_mode, /*on_selected=*/base::DoNothing(),
+        /*on_add_account=*/base::DoNothing(), std::move(dismiss_callback),
         /*accounts_displayed_callback=*/base::DoNothing());
   }
 
@@ -214,7 +216,7 @@ class IdentityDialogControllerTest : public ChromeRenderViewHostTestHarness {
         segmentation_platform::MockSegmentationPlatformService>();
     ON_CALL(*segmentation_platform_service_,
             GetClassificationResult(_, _, _, _))
-        .WillByDefault(testing::Invoke(
+        .WillByDefault(
             [&run_loop, result_label, delay_callback, this](
                 auto, auto,
                 scoped_refptr<segmentation_platform::InputContext>
@@ -226,7 +228,7 @@ class IdentityDialogControllerTest : public ChromeRenderViewHostTestHarness {
               result.ordered_labels = {result_label};
               if (this->optimization_guide_decider_) {
                 ASSERT_EQ(segmentation_platform::processing::ProcessedValue(
-                              web_contents()->GetLastCommittedURL().host()),
+                              web_contents()->GetLastCommittedURL().GetHost()),
                           input_context->GetMetadataArgument(
                               segmentation_platform::kFedCmHost));
                 ASSERT_EQ(segmentation_platform::processing::ProcessedValue(
@@ -267,7 +269,7 @@ class IdentityDialogControllerTest : public ChromeRenderViewHostTestHarness {
               base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
                   FROM_HERE, base::BindOnce(std::move(callback), result)
                                  .Then(run_loop.QuitClosure()));
-            }));
+            });
     return segmentation_platform_service_.get();
   }
 
@@ -523,8 +525,7 @@ TEST_F(IdentityDialogControllerTest,
             CreateMockOptimizationGuideDecider());
 
     auto mock_view = std::make_unique<MockAccountSelectionView>();
-    EXPECT_CALL(*mock_view, Show(_, _, _, _, _))
-        .WillOnce(testing::Return(true));
+    EXPECT_CALL(*mock_view, Show).WillOnce(testing::Return(true));
     controller->SetAccountSelectionViewForTesting(std::move(mock_view));
 
     EXPECT_CALL(*segmentation_platform_service_,
@@ -551,8 +552,7 @@ TEST_F(IdentityDialogControllerTest,
             CreateMockOptimizationGuideDecider());
 
     auto mock_view = std::make_unique<MockAccountSelectionView>();
-    EXPECT_CALL(*mock_view, Show(_, _, _, _, _))
-        .WillOnce(testing::Return(true));
+    EXPECT_CALL(*mock_view, Show).WillOnce(testing::Return(true));
     controller->SetAccountSelectionViewForTesting(std::move(mock_view));
 
     EXPECT_CALL(*segmentation_platform_service_,
@@ -579,8 +579,7 @@ TEST_F(IdentityDialogControllerTest,
             CreateMockOptimizationGuideDecider());
 
     auto mock_view = std::make_unique<MockAccountSelectionView>();
-    EXPECT_CALL(*mock_view, Show(_, _, _, _, _))
-        .WillOnce(testing::Return(true));
+    EXPECT_CALL(*mock_view, Show).WillOnce(testing::Return(true));
     controller->SetAccountSelectionViewForTesting(std::move(mock_view));
 
     EXPECT_CALL(*segmentation_platform_service_,
@@ -610,7 +609,7 @@ TEST_F(IdentityDialogControllerTest,
           CreateMockSegmentationPlatformService("FedCmUserLoud", run_loop),
           CreateMockOptimizationGuideDecider());
   auto mock_view = std::make_unique<MockAccountSelectionView>();
-  EXPECT_CALL(*mock_view, Show(_, _, _, _, _)).WillOnce(testing::Return(false));
+  EXPECT_CALL(*mock_view, Show).WillOnce(testing::Return(false));
   controller->SetAccountSelectionViewForTesting(std::move(mock_view));
   EXPECT_CALL(*segmentation_platform_service_,
               CollectTrainingData(_, _, _, _, _))
@@ -647,6 +646,105 @@ TEST_F(IdentityDialogControllerTest,
   controller.reset();
   std::move(segmentation_platform_service_callback_).Run();
   run_loop.Run();
+}
+
+TEST_F(IdentityDialogControllerTest,
+       AccountSelectionInvokedWhenShouldShowFedCmUiIsFalse) {
+  std::unique_ptr<IdentityDialogController> controller =
+      std::make_unique<IdentityDialogController>(web_contents());
+  controller->SetAccountSelectionViewForTesting(
+      std::make_unique<MockAccountSelectionView>());
+
+  // Set up ActorLoginRequest to make ShouldShowFedCmUi returns false.
+  GURL idp_url("https://idp.example");
+  IdentityDialogController::SetActorLoginRequest(
+      web_contents()->GetPrimaryPage(), idp_url, kAccountId, base::DoNothing());
+
+  std::vector<IdentityRequestAccountPtr> accounts = CreateAccount();
+  accounts[0]->idp_claimed_login_state =
+      content::IdentityRequestAccount::LoginState::kSignIn;
+  IdentityProviderDataPtr idp_data = CreateIdentityProviderData(accounts);
+  idp_data->idp_metadata.config_url = idp_url;
+
+  base::MockCallback<AccountSelectionCallback> on_selected;
+  EXPECT_CALL(on_selected, Run(idp_url, kAccountId, true)).Times(1);
+
+  // ShowAccountsDialog should return true and trigger the callback immediately
+  // without showing UI.
+  EXPECT_TRUE(controller->ShowAccountsDialog(
+      content::RelyingPartyData(kTopFrameEtldPlusOne,
+                                /*iframe_for_display=*/u""),
+      {idp_data}, accounts, blink::mojom::RpMode::kActive, on_selected.Get(),
+      /*on_add_account=*/base::DoNothing(),
+      /*dismiss_callback=*/base::DoNothing(),
+      /*accounts_displayed_callback=*/base::DoNothing()));
+}
+
+TEST_F(IdentityDialogControllerTest,
+       TokenReceivedCallbackInvokedWhenAccountNotSignedInOrMissing) {
+  std::unique_ptr<IdentityDialogController> controller =
+      std::make_unique<IdentityDialogController>(web_contents());
+  controller->SetAccountSelectionViewForTesting(
+      std::make_unique<MockAccountSelectionView>());
+
+  GURL idp_url("https://idp.example");
+  std::string account_id = "account_id123";
+
+  // Case 1: Account is missing.
+  {
+    base::MockCallback<OnFederatedTokenReceivedCallback> token_callback;
+    EXPECT_CALL(token_callback, Run(false)).Times(1);
+
+    IdentityDialogController::SetActorLoginRequest(
+        web_contents()->GetPrimaryPage(), idp_url, account_id,
+        token_callback.Get());
+
+    // Create an account with different ID.
+    std::vector<IdentityRequestAccountPtr> accounts = CreateAccount();
+    accounts[0]->id = "other_account";
+    IdentityProviderDataPtr idp_data = CreateIdentityProviderData(accounts);
+    idp_data->idp_metadata.config_url = idp_url;
+
+    EXPECT_FALSE(controller->ShowAccountsDialog(
+        content::RelyingPartyData(kTopFrameEtldPlusOne,
+                                  /*iframe_for_display=*/u""),
+        {idp_data}, accounts, blink::mojom::RpMode::kActive,
+        /*on_selected=*/base::DoNothing(),
+        /*on_add_account=*/base::DoNothing(),
+        /*dismiss_callback=*/base::DoNothing(),
+        /*accounts_displayed_callback=*/base::DoNothing()));
+  }
+
+  // Case 2: Account exists but is not signed in.
+  {
+    base::MockCallback<OnFederatedTokenReceivedCallback> token_callback;
+    EXPECT_CALL(token_callback, Run(false)).Times(1);
+
+    IdentityDialogController::SetActorLoginRequest(
+        web_contents()->GetPrimaryPage(), idp_url, account_id,
+        token_callback.Get());
+
+    std::vector<IdentityRequestAccountPtr> accounts = CreateAccount();
+    // Ensure account matches.
+    accounts[0]->id = account_id;
+    // Ensure not signed in.
+    accounts[0]->idp_claimed_login_state =
+        content::IdentityRequestAccount::LoginState::kSignUp;
+    accounts[0]->browser_trusted_login_state =
+        content::IdentityRequestAccount::LoginState::kSignUp;
+
+    IdentityProviderDataPtr idp_data = CreateIdentityProviderData(accounts);
+    idp_data->idp_metadata.config_url = idp_url;
+
+    EXPECT_FALSE(controller->ShowAccountsDialog(
+        content::RelyingPartyData(kTopFrameEtldPlusOne,
+                                  /*iframe_for_display=*/u""),
+        {idp_data}, accounts, blink::mojom::RpMode::kActive,
+        /*on_selected=*/base::DoNothing(),
+        /*on_add_account=*/base::DoNothing(),
+        /*dismiss_callback=*/base::DoNothing(),
+        /*accounts_displayed_callback=*/base::DoNothing()));
+  }
 }
 
 class IdentityDialogControllerTestWithOptimizationDisabled

@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <iterator>
 #include <memory>
+#include <optional>
 #include <vector>
 
 #include "base/functional/callback.h"
@@ -17,7 +18,8 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/touch_to_fill/password_manager/touch_to_fill_controller.h"
 #include "chrome/browser/touch_to_fill/password_manager/touch_to_fill_controller_webauthn_delegate.h"
-#include "chrome/browser/webauthn/password_credential_controller.h"
+#include "chrome/browser/webauthn/android/credential_sorter_android.h"
+#include "chrome/browser/webauthn/password_credential_fetcher.h"
 #include "chrome/browser/webauthn/webauthn_metrics_util.h"
 #include "components/password_manager/content/browser/content_password_manager_driver.h"
 #include "components/password_manager/content/browser/keyboard_replacing_surface_visibility_controller_impl.h"
@@ -66,16 +68,16 @@ void WebAuthnRequestDelegateAndroid::OnWebAuthnRequestPending(
     std::vector<device::DiscoverableCredentialMetadata> credentials,
     webauthn::AssertionMediationType mediation_type,
     base::RepeatingCallback<void(const std::vector<uint8_t>& id)>
-        passkey_or_dismiss_callback,
+        passkey_callback,
     base::RepeatingCallback<void(std::u16string_view, std::u16string_view)>
         password_callback,
-    base::RepeatingCallback<void()> hybrid_callback,
-    base::RepeatingCallback<void(webauthn::ImmediateRequestRejectionReason)>
-        reject_immediate_callback) {
-  passkey_or_dismiss_callback_ = std::move(passkey_or_dismiss_callback);
+    base::RepeatingClosure hybrid_closure,
+    base::RepeatingCallback<void(webauthn::NonCredentialReturnReason)>
+        non_credential_callback) {
+  passkey_callback_ = std::move(passkey_callback);
   password_callback_ = std::move(password_callback);
-  hybrid_callback_ = std::move(hybrid_callback);
-  reject_immediate_callback_ = std::move(reject_immediate_callback);
+  hybrid_closure_ = std::move(hybrid_closure);
+  non_credential_callback_ = std::move(non_credential_callback);
 
   std::vector<PasskeyCredential> passkey_credentials;
   std::ranges::transform(
@@ -88,7 +90,8 @@ void WebAuthnRequestDelegateAndroid::OnWebAuthnRequestPending(
             PasskeyCredential::UserId(credential.user.id),
             PasskeyCredential::Username(credential.user.name.value_or("")),
             PasskeyCredential::DisplayName(
-                credential.user.display_name.value_or("")));
+                credential.user.display_name.value_or("")),
+            /*creation_time=*/std::nullopt, credential.last_used_time);
       });
 
   bool is_immediate = false;
@@ -106,21 +109,20 @@ void WebAuthnRequestDelegateAndroid::OnWebAuthnRequestPending(
       credentials_delegate->OnCredentialsReceived(
           std::move(passkey_credentials),
           ChromeWebAuthnCredentialsDelegate::SecurityKeyOrHybridFlowAvailable(
-              !hybrid_callback_.is_null()));
+              !hybrid_closure_.is_null()));
       return;
     }
     case webauthn::AssertionMediationType::kImmediateWithPasswords: {
       // Only valid for the main frame.
-      if (!password_controller_ && frame_host->IsInPrimaryMainFrame()) {
-        password_controller_ = std::make_unique<PasswordCredentialController>(
-            frame_host->GetGlobalId());
+      if (frame_host->IsInPrimaryMainFrame()) {
+        password_fetcher_ = PasswordCredentialFetcher::Create(frame_host);
+        password_fetcher_->FetchPasswords(
+            frame_host->GetLastCommittedURL(),
+            base::BindOnce(
+                &WebAuthnRequestDelegateAndroid::MaybeShowTouchToFillSheet,
+                weak_ptr_factory_.GetWeakPtr(), frame_host->GetGlobalId(),
+                /*is_immediate=*/true, std::move(passkey_credentials)));
       }
-      password_controller_->FetchPasswords(
-          frame_host->GetLastCommittedURL(),
-          base::BindOnce(
-              &WebAuthnRequestDelegateAndroid::MaybeShowTouchToFillSheet,
-              weak_ptr_factory_.GetWeakPtr(), frame_host->GetGlobalId(),
-              /*is_immediate=*/true, std::move(passkey_credentials)));
       return;
     }
     case webauthn::AssertionMediationType::kImmediatePasskeysOnly:
@@ -148,13 +150,17 @@ void WebAuthnRequestDelegateAndroid::MaybeShowTouchToFillSheet(
 
   if (is_immediate && passkey_credentials.empty() &&
       password_credentials.empty()) {
-    reject_immediate_callback_.Run(
-        webauthn::ImmediateRequestRejectionReason::kNoCredentials);
+    non_credential_callback_.Run(
+        webauthn::NonCredentialReturnReason::kImmediateNoCredentials);
     return;
   }
 
-  std::vector<password_manager::UiCredential> passwords;
-  std::ranges::transform(password_credentials, std::back_inserter(passwords),
+  std::vector<TouchToFillView::Credential> credentials;
+  credentials.reserve(passkey_credentials.size() + password_credentials.size());
+  credentials.insert(credentials.end(), passkey_credentials.begin(),
+                     passkey_credentials.end());
+
+  std::ranges::transform(password_credentials, std::back_inserter(credentials),
                          [=](const auto& password_form) {
                            return password_manager::UiCredential(
                                *password_form,
@@ -172,13 +178,17 @@ void WebAuthnRequestDelegateAndroid::MaybeShowTouchToFillSheet(
         /*grouped_credential_sheet_controller=*/nullptr);
   }
   touch_to_fill_controller_->InitData(
-      passwords, std::move(passkey_credentials),
+      std::move(credentials),
       ContentPasswordManagerDriver::GetForRenderFrameHost(frame_host)
           ->AsWeakPtrImpl());
-  bool should_show_hybrid_option = !hybrid_callback_.is_null() && !is_immediate;
+  bool should_show_hybrid_option = !hybrid_closure_.is_null() && !is_immediate;
   touch_to_fill_controller_->Show(
       std::make_unique<TouchToFillControllerWebAuthnDelegate>(
-          this, should_show_hybrid_option, is_immediate),
+          this,
+          base::BindRepeating<std::vector<TouchToFillView::Credential>(
+              std::vector<TouchToFillView::Credential>, bool)>(
+              webauthn::sorting::SortTouchToFillCredentials),
+          should_show_hybrid_option, is_immediate),
       WebAuthnCredManDelegateFactory::GetFactory(web_contents())
           ->GetRequestDelegate(frame_host));
 }
@@ -200,21 +210,25 @@ void WebAuthnRequestDelegateAndroid::CleanupWebAuthnRequest(
   }
 
   conditional_request_in_progress_ = false;
-  passkey_or_dismiss_callback_.Reset();
+  passkey_callback_.Reset();
   password_callback_.Reset();
-  hybrid_callback_.Reset();
-  reject_immediate_callback_.Reset();
+  hybrid_closure_.Reset();
+  non_credential_callback_.Reset();
 }
 
 void WebAuthnRequestDelegateAndroid::OnWebAuthnAccountSelected(
     const std::vector<uint8_t>& user_id) {
-  if (passkey_or_dismiss_callback_) {
-    passkey_or_dismiss_callback_.Run(user_id);
+  if (passkey_callback_) {
+    passkey_callback_.Run(user_id);
   }
 }
 
 void WebAuthnRequestDelegateAndroid::OnPasswordCredentialSelected(
     const PasswordCredentialPair& password_credential) {
+  if (password_fetcher_) {
+    password_fetcher_->UpdateDateLastUsed(password_credential.first,
+                                          password_credential.second);
+  }
   if (password_callback_) {
     password_callback_.Run(password_credential.first,
                            password_credential.second);
@@ -222,15 +236,15 @@ void WebAuthnRequestDelegateAndroid::OnPasswordCredentialSelected(
 }
 
 void WebAuthnRequestDelegateAndroid::OnCredentialSelectionDeclined() {
-  if (reject_immediate_callback_) {
-    reject_immediate_callback_.Run(
-        webauthn::ImmediateRequestRejectionReason::kUserDismissed);
+  if (non_credential_callback_) {
+    non_credential_callback_.Run(
+        webauthn::NonCredentialReturnReason::kUserDismissed);
   }
 }
 
 void WebAuthnRequestDelegateAndroid::OnHybridSignInSelected() {
-  if (hybrid_callback_) {
-    hybrid_callback_.Run();
+  if (hybrid_closure_) {
+    hybrid_closure_.Run();
   }
 }
 

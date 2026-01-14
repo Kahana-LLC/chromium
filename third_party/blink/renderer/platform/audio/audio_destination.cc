@@ -96,10 +96,9 @@ scoped_refptr<AudioDestination> AudioDestination::Create(
     std::optional<float> context_sample_rate,
     unsigned render_quantum_frames) {
   TRACE_EVENT0("webaudio", "AudioDestination::Create");
-  return base::AdoptRef(
-      new AudioDestination(callback, sink_descriptor, number_of_output_channels,
-                           latency_hint, context_sample_rate,
-                           render_quantum_frames));
+  return base::AdoptRef(new AudioDestination(
+      callback, sink_descriptor, number_of_output_channels, latency_hint,
+      context_sample_rate, render_quantum_frames));
 }
 
 AudioDestination::~AudioDestination() {
@@ -147,7 +146,7 @@ int AudioDestination::Render(base::TimeDelta delay,
 
   // Associate the destination data array with the output bus.
   for (unsigned i = 0; i < number_of_output_channels_; ++i) {
-    output_bus_->SetChannelMemory(i, dest->channel(i), number_of_frames);
+    output_bus_->SetChannelMemory(i, dest->channel(i).data(), number_of_frames);
   }
 
   if (is_output_buffer_bypassed_) {
@@ -358,7 +357,7 @@ void AudioDestination::StartWithWorkletTaskRunner(
   web_audio_device_->Start();
 }
 
-bool AudioDestination::IsPlaying() {
+bool AudioDestination::IsPlaying() const {
   DCHECK(IsMainThread());
   return device_state_ == DeviceState::kRunning;
 }
@@ -444,9 +443,9 @@ AudioDestination::AudioDestination(
                                 callback_buffer_size_));
   SendLogMessage(__func__, String::Format("=> (device sample rate=%.0f Hz)",
                                           web_audio_device_->SampleRate()));
-  SendLogMessage(__func__,
-                 String::Format("Output buffer bypass: %s",
-                                is_output_buffer_bypassed_ ? "yes" : "no"));
+  SendLogMessage(__func__, UNSAFE_TODO(String::Format(
+                               "Output buffer bypass: %s",
+                               is_output_buffer_bypassed_ ? "yes" : "no")));
 
   TRACE_EVENT1("webaudio", "AudioDestination::AudioDestination",
                "sink information",
@@ -652,7 +651,7 @@ void AudioDestination::ProvideResamplerInput(int resampler_frame_delay,
   TRACE_EVENT("webaudio", "AudioDestination::ProvideResamplerInput",
               "delay (frames)", resampler_frame_delay);
   auto adjusted_delay = delay_to_report_ + audio_utilities::FramesToTime(
-      resampler_frame_delay, context_sample_rate_);;
+      resampler_frame_delay, context_sample_rate_);
   PullFromCallback(dest, adjusted_delay);
 }
 
@@ -669,12 +668,25 @@ media::OutputDeviceStatus AudioDestination::MaybeCreateSinkAndGetStatus() {
   return web_audio_device_->MaybeCreateSinkAndGetStatus();
 }
 
+size_t AudioDestination::FramesElapsed() const {
+  DCHECK(IsMainThread());
+  DCHECK(!IsPlaying());
+  return frames_elapsed_;
+}
+
+void AudioDestination::TransferElapsedFramesFrom(
+    const scoped_refptr<AudioDestination> previous_platform_destination) {
+  DCHECK(IsMainThread());
+  DCHECK(!IsPlaying() && !previous_platform_destination->IsPlaying());
+  frames_elapsed_ += previous_platform_destination->FramesElapsed();
+}
+
 void AudioDestination::SendLogMessage(const char* const function_name,
                                       const String& message) const {
-  WebRtcLogMessage(String::Format("[WA]AD::%s %s [state=%s]", function_name,
-                                  message.Utf8().c_str(),
-                                  DeviceStateToString(device_state_))
-                       .Utf8());
+  WebRtcLogMessage(UNSAFE_TODO(
+      String::Format("[WA]AD::%s %s [state=%s]", function_name,
+                     message.Utf8().c_str(), DeviceStateToString(device_state_))
+          .Utf8()));
 }
 
 }  // namespace blink

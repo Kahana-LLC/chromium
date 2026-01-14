@@ -5,7 +5,6 @@
 #include "chrome/browser/ui/views/profiles/profile_management_step_controller.h"
 
 #include "base/functional/bind.h"
-#include "base/functional/callback_forward.h"
 #include "base/memory/raw_ptr.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/profiles/delete_profile_helper.h"
@@ -25,6 +24,7 @@
 #include "chrome/browser/ui/views/profiles/profile_picker_sign_in_provider.h"
 #include "chrome/browser/ui/views/profiles/profile_picker_web_contents_host.h"
 #include "chrome/browser/ui/webui/search_engine_choice/search_engine_choice_ui.h"
+#include "chrome/browser/ui/webui/signin/signin_ui_error.h"
 #include "components/search_engines/search_engine_choice/search_engine_choice_utils.h"
 #include "google_apis/gaia/core_account_id.h"
 
@@ -74,11 +74,14 @@ class SignInStepController : public ProfileManagementStepController {
   explicit SignInStepController(
       ProfilePickerWebContentsHost* host,
       std::unique_ptr<ProfilePickerSignInProvider> sign_in_provider,
-      SignInStepFinishedCallback signed_in_callback)
+      SignInStepFinishedCallback signed_in_callback,
+      SigninErrorCallback signin_error_callback)
       : ProfileManagementStepController(host),
         signed_in_callback_(std::move(signed_in_callback)),
+        signin_error_callback_(std::move(signin_error_callback)),
         sign_in_provider_(std::move(sign_in_provider)) {
-    DCHECK(signed_in_callback_);
+    CHECK(signed_in_callback_);
+    CHECK(signin_error_callback_);
   }
 
   ~SignInStepController() override = default;
@@ -123,15 +126,23 @@ class SignInStepController : public ProfileManagementStepController {
  private:
   void OnStepFinished(Profile* profile,
                       const CoreAccountInfo& account_info,
-                      std::unique_ptr<content::WebContents> contents) {
+                      std::unique_ptr<content::WebContents> contents,
+                      const SigninUIError& error) {
+    if (!error.IsOk()) {
+      std::move(signin_error_callback_).Run(profile, contents.get(), error);
+      return;
+    }
+
     std::move(signed_in_callback_)
         .Run(profile, account_info, std::move(contents),
              StepSwitchFinishedCallback());
-    // The step controller can be destroyed when `signed_in_callback_` runs.
-    // Don't interact with members below.
+
+    // The step controller can be destroyed when `signed_in_callback_`
+    // or `signin_error_callback_` runs. Don't interact with members below.
   }
 
   SignInStepFinishedCallback signed_in_callback_;
+  SigninErrorCallback signin_error_callback_;
 
   std::unique_ptr<ProfilePickerSignInProvider> sign_in_provider_;
 };
@@ -379,9 +390,11 @@ std::unique_ptr<ProfileManagementStepController>
 ProfileManagementStepController::CreateForSignIn(
     ProfilePickerWebContentsHost* host,
     std::unique_ptr<ProfilePickerSignInProvider> sign_in_provider,
-    SignInStepFinishedCallback signed_in_callback) {
+    SignInStepFinishedCallback signed_in_callback,
+    SigninErrorCallback signin_error_callback) {
   return std::make_unique<SignInStepController>(
-      host, std::move(sign_in_provider), std::move(signed_in_callback));
+      host, std::move(sign_in_provider), std::move(signed_in_callback),
+      std::move(signin_error_callback));
 }
 
 // static

@@ -13,12 +13,13 @@
 #import "base/feature_list.h"
 #import "base/ios/block_types.h"
 #import "base/task/sequenced_task_runner.h"
-#import "ios/chrome/browser/content_suggestions/ui_bundled/cells/content_suggestions_cells_constants.h"
-#import "ios/chrome/browser/content_suggestions/ui_bundled/content_suggestions_collection_utils.h"
-#import "ios/chrome/browser/content_suggestions/ui_bundled/content_suggestions_view_controller.h"
-#import "ios/chrome/browser/content_suggestions/ui_bundled/magic_stack/magic_stack_collection_view.h"
-#import "ios/chrome/browser/content_suggestions/ui_bundled/magic_stack/magic_stack_constants.h"
-#import "ios/chrome/browser/content_suggestions/ui_bundled/ntp_home_constant.h"
+#import "ios/chrome/browser/content_suggestions/magic_stack/public/magic_stack_constants.h"
+#import "ios/chrome/browser/content_suggestions/magic_stack/ui/magic_stack_collection_view.h"
+#import "ios/chrome/browser/content_suggestions/public/ntp_home_constants.h"
+#import "ios/chrome/browser/content_suggestions/ui/cells/content_suggestions_cells_constants.h"
+#import "ios/chrome/browser/content_suggestions/ui/content_suggestions_collection_utils.h"
+#import "ios/chrome/browser/content_suggestions/ui/content_suggestions_view_controller.h"
+#import "ios/chrome/browser/home_customization/ui/home_customization_image_view.h"
 #import "ios/chrome/browser/ntp/shared/metrics/feed_metrics_constants.h"
 #import "ios/chrome/browser/ntp/shared/metrics/feed_metrics_recorder.h"
 #import "ios/chrome/browser/ntp/ui_bundled/discover_feed_constants.h"
@@ -40,7 +41,7 @@
 #import "ios/chrome/browser/shared/public/commands/help_commands.h"
 #import "ios/chrome/browser/shared/public/features/features.h"
 #import "ios/chrome/browser/shared/ui/util/uikit_ui_util.h"
-#import "ios/chrome/browser/toolbar/ui_bundled/public/toolbar_utils.h"
+#import "ios/chrome/browser/toolbar/legacy/ui_bundled/public/toolbar_utils.h"
 #import "ios/chrome/common/material_timing.h"
 #import "ios/chrome/common/ui/colors/semantic_color_names.h"
 #import "ios/chrome/common/ui/elements/gradient_view.h"
@@ -60,14 +61,11 @@ const CGFloat kFeedContainerExtraHeight = 500;
 
 // The spacing for the quick actions buttons.
 const CGFloat kQuickActionSpacingTop = 3.0;
-const CGFloat kQuickActionSpacingBotttom = 19.0;
+const CGFloat kQuickActionSpacingBottom = 19.0;
+const CGFloat kSpaceBetweenModules = 14.0;
 
-// Vertical spacing between modules.
-CGFloat SpaceBetweenModules() {
-  return GetDeprecateFeedHeaderParameterValueAsDouble(
-      kDeprecateFeedHeaderParameterSpaceBetweenModules,
-      /*default_value=*/14);
-}
+// Duration of animation to, from, and between different background images.
+const CGFloat kBackgroundImageAnimationDuration = 0.2;
 
 }  // namespace
 
@@ -119,8 +117,6 @@ CGFloat SpaceBetweenModules() {
     NSMutableArray<UIViewController*>* viewControllersAboveFeed;
 
 // Identity disc shown in the NTP.
-// TODO(crbug.com/40165977): Remove once the Feed header properly supports
-// ContentSuggestions.
 @property(nonatomic, weak) UIButton* identityDiscButton;
 
 // Tap gesture recognizer when the omnibox is focused.
@@ -188,8 +184,9 @@ CGFloat SpaceBetweenModules() {
   NSLayoutConstraint* _moduleWidth;
   // The current background image.
   UIImage* _backgroundImage;
+  HomeCustomizationFramingCoordinates* _framingCoordinates;
   // The image view to display the current background image.
-  UIImageView* _backgroundImageView;
+  HomeCustomizationImageView* _backgroundImageView;
   // The view controller holding the NTP quick actions buttons.
   // Only created when the fakebox buttons are replaced.
   NewTabPageQuickActionsViewController* _quickActionsViewController;
@@ -248,9 +245,8 @@ CGFloat SpaceBetweenModules() {
             self.traitCollection.userInterfaceStyle];
 
   if (IsNTPBackgroundCustomizationEnabled()) {
-    _backgroundImageView = [[UIImageView alloc] init];
+    _backgroundImageView = [[HomeCustomizationImageView alloc] init];
     _backgroundImageView.translatesAutoresizingMaskIntoConstraints = NO;
-    _backgroundImageView.contentMode = UIViewContentModeScaleAspectFill;
     [self updateBackgroundImageView];
     [self.view addSubview:_backgroundImageView];
     AddSameConstraints(_backgroundImageView, self.view);
@@ -267,23 +263,21 @@ CGFloat SpaceBetweenModules() {
 
   self.viewDidFinishLoading = YES;
 
-  if (@available(iOS 17, *)) {
-    NSArray<UITrait>* traits = TraitCollectionSetForTraits(@[
-      UITraitUserInterfaceStyle.class, UITraitHorizontalSizeClass.class,
-      UITraitPreferredContentSizeCategory.class
-    ]);
-    __weak __typeof(self) weakSelf = self;
-    UITraitChangeHandler handler = ^(id<UITraitEnvironment> traitEnvironment,
-                                     UITraitCollection* previousCollection) {
-      [weakSelf updateUIOnTraitChange:previousCollection];
-    };
-    [self registerForTraitChanges:traits withHandler:handler];
-    if (IsNTPBackgroundCustomizationEnabled()) {
-      [self registerForTraitChanges:
-                @[ NewTabPageTrait.class, NewTabPageImageBackgroundTrait.class ]
-                         withAction:@selector(applyBackgroundTheme)];
-      [self applyBackgroundTheme];
-    }
+  NSArray<UITrait>* traits = TraitCollectionSetForTraits(@[
+    UITraitUserInterfaceStyle.class, UITraitHorizontalSizeClass.class,
+    UITraitPreferredContentSizeCategory.class
+  ]);
+  __weak __typeof(self) weakSelf = self;
+  UITraitChangeHandler handler = ^(id<UITraitEnvironment> traitEnvironment,
+                                   UITraitCollection* previousCollection) {
+    [weakSelf updateUIOnTraitChange:previousCollection];
+  };
+  [self registerForTraitChanges:traits withHandler:handler];
+  if (IsNTPBackgroundCustomizationEnabled()) {
+    [self registerForTraitChanges:
+              @[ NewTabPageTrait.class, NewTabPageImageBackgroundTrait.class ]
+                       withAction:@selector(applyBackgroundTheme)];
+    [self applyBackgroundTheme];
   }
   [self.mutator checkNewBadgeEligibility];
 }
@@ -382,6 +376,10 @@ CGFloat SpaceBetweenModules() {
 
   self.viewDidAppear = YES;
   _appearing = NO;
+
+  if ([self isOrientationLandscapeForSize:self.view.bounds.size]) {
+    [self.mutator notifyNtpDisplayedInLandscape];
+  }
 }
 
 - (void)viewDidDisappear:(BOOL)animated {
@@ -443,18 +441,11 @@ CGFloat SpaceBetweenModules() {
                         }
                         [self updateFeedContainerSizeAndPosition];
                       }];
-}
 
-#if !defined(__IPHONE_17_0) || __IPHONE_OS_VERSION_MIN_REQUIRED < __IPHONE_17_0
-- (void)traitCollectionDidChange:(UITraitCollection*)previousTraitCollection {
-  [super traitCollectionDidChange:previousTraitCollection];
-  if (@available(iOS 17, *)) {
-    return;
+  if ([self isOrientationLandscapeForSize:size]) {
+    [self.mutator notifyNtpDisplayedInLandscape];
   }
-
-  [self updateUIOnTraitChange:previousTraitCollection];
 }
-#endif
 
 #pragma mark - Public
 
@@ -494,7 +485,17 @@ CGFloat SpaceBetweenModules() {
     _feedContainer = [[UIView alloc] initWithFrame:CGRectZero];
     _feedContainer.userInteractionEnabled = YES;
     _feedContainer.translatesAutoresizingMaskIntoConstraints = NO;
-    if (!IsNTPBackgroundCustomizationEnabled()) {
+    if (IsNTPBackgroundCustomizationEnabled()) {
+      UIVisualEffect* blurEffect =
+          [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemMaterial];
+      _feedVisualEffectBackgroundView =
+          [[UIVisualEffectView alloc] initWithEffect:blurEffect];
+      _feedVisualEffectBackgroundView
+          .translatesAutoresizingMaskIntoConstraints = NO;
+      [_feedContainer addSubview:_feedVisualEffectBackgroundView];
+      AddSameConstraints(_feedContainer, _feedVisualEffectBackgroundView);
+      [self applyBackgroundThemeToFeedContainer];
+    } else {
       _feedContainer.backgroundColor = [UIColor colorNamed:kBackgroundColor];
     }
 
@@ -505,16 +506,6 @@ CGFloat SpaceBetweenModules() {
         kCALayerMaxXMinYCorner | kCALayerMinXMinYCorner;
     _feedContainer.layer.masksToBounds = YES;
     _feedContainer.layer.zPosition = -CGFLOAT_MAX;
-
-    UIVisualEffect* blurEffect =
-        [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemMaterial];
-    _feedVisualEffectBackgroundView =
-        [[UIVisualEffectView alloc] initWithEffect:blurEffect];
-    _feedVisualEffectBackgroundView.translatesAutoresizingMaskIntoConstraints =
-        NO;
-    _feedVisualEffectBackgroundView.hidden = NO;
-    [_feedContainer addSubview:_feedVisualEffectBackgroundView];
-    AddSameConstraints(_feedContainer, _feedVisualEffectBackgroundView);
 
     [self.collectionView insertSubview:_feedContainer atIndex:0];
   }
@@ -575,10 +566,10 @@ CGFloat SpaceBetweenModules() {
       [[[self.viewControllersAboveFeed reverseObjectEnumerator] allObjects]
           mutableCopy];
 
-  // TODO(crbug.com/40165977): The contentCollectionView width might be
-  // narrower than the ContentSuggestions view. This causes elements to be
-  // hidden, so we set clipsToBounds to ensure that they remain visible. The
-  // collection view changes, so we must set this property each time it does.
+  // The contentCollectionView width might be narrower than the
+  // ContentSuggestions view. This causes elements to be hidden, so we set
+  // clipsToBounds to ensure that they remain visible. The collection view
+  // changes, so we must set this property each time it does.
   self.collectionView.clipsToBounds = NO;
 
   [self.overscrollActionsController invalidate];
@@ -646,6 +637,7 @@ CGFloat SpaceBetweenModules() {
   if (_feedContainer) {
     [_feedContainer removeFromSuperview];
     _feedContainer = nil;
+    _feedVisualEffectBackgroundView = nil;
   }
 
   [self removeFromViewHierarchy:self.feedWrapperViewController];
@@ -671,7 +663,7 @@ CGFloat SpaceBetweenModules() {
   // offset to the top is important since the MVTiles and Google doodle are aync
   // fetched/displayed, thus needed a reset. However, in the instance where the
   // omnibox is focused, it is more important to keep that focused state and not
-  // show a "double" omibox state.
+  // show a "double" omnibox state.
   // TODO(crbug.com/40241297): Replace the -setContentOffsetForWebState: call
   // with calls directly from all async updates to the NTP.
   if (self.omniboxFocused) {
@@ -700,11 +692,16 @@ CGFloat SpaceBetweenModules() {
     if (viewController == self.magicStackCollectionView ||
         viewController == self.contentSuggestionsViewController ||
         viewController == self.feedHeaderViewController) {
-      heightAboveFeed += SpaceBetweenModules();
+      heightAboveFeed += kSpaceBetweenModules;
     }
 
     if (viewController == _quickActionsViewController) {
-      heightAboveFeed += kQuickActionSpacingBotttom;
+      // First, subtract off the "standard" space that was added in the
+      // previous iteration of the loop because this module uses custom
+      // top and bottom spacing.
+      heightAboveFeed -= kSpaceBetweenModules;
+      // Then add in the custom spacing used for this module.
+      heightAboveFeed += kQuickActionSpacingTop + kQuickActionSpacingBottom;
     }
   }
   return heightAboveFeed;
@@ -846,8 +843,11 @@ CGFloat SpaceBetweenModules() {
   }
 }
 
-- (void)setBackgroundImage:(UIImage*)backgroundImage {
+- (void)setBackgroundImage:(UIImage*)backgroundImage
+        framingCoordinates:
+            (HomeCustomizationFramingCoordinates*)framingCoordinates {
   _backgroundImage = backgroundImage;
+  _framingCoordinates = framingCoordinates;
 
   [self updateBackgroundImageView];
 }
@@ -932,19 +932,19 @@ CGFloat SpaceBetweenModules() {
 }
 
 - (void)scrollViewDidScrollToTop:(UIScrollView*)scrollView {
-  // TODO(crbug.com/40710989): Handle scrolling.
+  // No-op.
 }
 
 - (void)scrollViewWillBeginDecelerating:(UIScrollView*)scrollView {
-  // TODO(crbug.com/40710989): Handle scrolling.
+  // No-op.
 }
 
 - (void)scrollViewDidEndDecelerating:(UIScrollView*)scrollView {
-  // TODO(crbug.com/40710989): Handle scrolling.
+  // No-op.
 }
 
 - (void)scrollViewDidEndScrollingAnimation:(UIScrollView*)scrollView {
-  // TODO(crbug.com/40710989): Handle scrolling.
+  // No-op.
 }
 
 - (BOOL)scrollViewShouldScrollToTop:(UIScrollView*)scrollView {
@@ -971,8 +971,6 @@ CGFloat SpaceBetweenModules() {
 
 #pragma mark - UIGestureRecognizerDelegate
 
-// TODO(crbug.com/40165977): Remove once the Feed header properly supports
-// ContentSuggestions.
 - (BOOL)gestureRecognizer:(UIGestureRecognizer*)gestureRecognizer
        shouldReceiveTouch:(UITouch*)touch {
   // Ignore all touches inside the Feed CollectionView, which includes
@@ -1114,18 +1112,18 @@ CGFloat SpaceBetweenModules() {
 // Sets the background using the current color palette, or defaults if none is
 // set.
 - (void)applyBackgroundTheme {
+  [self applyBackgroundThemeToFeedContainer];
+
   BOOL hasImageBackground =
       [self.traitCollection boolForNewTabPageImageBackgroundTrait];
   if (hasImageBackground) {
-    _feedContainer.backgroundColor = UIColor.clearColor;
-    _feedVisualEffectBackgroundView.hidden = NO;
     _backgroundGradientView.hidden = YES;
+    self.view.backgroundColor = [UIColor colorNamed:@"ntp_background_color"];
     return;
   }
 
   _backgroundGradientView.hidden =
       self.traitCollection.userInterfaceStyle == UIUserInterfaceStyleLight;
-  _feedVisualEffectBackgroundView.hidden = YES;
 
   NewTabPageColorPalette* colorPalette =
       [self.traitCollection objectForNewTabPageTrait];
@@ -1134,14 +1132,32 @@ CGFloat SpaceBetweenModules() {
     self.view.backgroundColor = colorPalette.primaryColor;
     [_backgroundGradientView setStartColor:colorPalette.secondaryColor
                                   endColor:colorPalette.primaryColor];
-    _feedContainer.backgroundColor = colorPalette.secondaryCellColor;
   } else {
     self.view.backgroundColor = [UIColor colorNamed:@"ntp_background_color"];
     [_backgroundGradientView
         setStartColor:[UIColor colorNamed:kSecondaryBackgroundColor]
              endColor:[UIColor colorNamed:kPrimaryBackgroundColor]];
-    _feedContainer.backgroundColor = [UIColor colorNamed:kBackgroundColor];
   }
+}
+
+// Sets the feed container's background views correctly based on the current
+// theme settings.
+- (void)applyBackgroundThemeToFeedContainer {
+  BOOL hasImageBackground =
+      [self.traitCollection boolForNewTabPageImageBackgroundTrait];
+  if (hasImageBackground) {
+    _feedContainer.backgroundColor = UIColor.clearColor;
+    _feedVisualEffectBackgroundView.hidden = NO;
+    return;
+  }
+  _feedVisualEffectBackgroundView.hidden = YES;
+
+  NewTabPageColorPalette* colorPalette =
+      [self.traitCollection objectForNewTabPageTrait];
+
+  _feedContainer.backgroundColor = colorPalette
+                                       ? colorPalette.secondaryCellColor
+                                       : [UIColor colorNamed:kBackgroundColor];
 }
 
 - (void)setNTPShortcutsHandler:
@@ -1152,7 +1168,8 @@ CGFloat SpaceBetweenModules() {
 
 // Whether the quick actions button row is visible.
 - (BOOL)quickActionsVisible {
-  return _isAIMAllowed && ShouldShowQuickActionsRow();
+  return _isAIMAllowed && ShouldShowQuickActionsRow() &&
+         !self.incognitoDisabled;
 }
 
 // Returns YES if scroll should be skipped when focusing the omnibox.
@@ -1336,7 +1353,7 @@ CGFloat SpaceBetweenModules() {
           constraintEqualToAnchor:self.headerViewController.view.bottomAnchor
                          constant:self.quickActionsVisible
                                       ? kQuickActionSpacingTop
-                                      : SpaceBetweenModules()],
+                                      : kSpaceBetweenModules],
     ];
   }
   [NSLayoutConstraint activateConstraints:self.fakeOmniboxConstraints];
@@ -1395,9 +1412,6 @@ CGFloat SpaceBetweenModules() {
 
 // Checks whether the feed top section is visible and updates the
 // `NTPContentDelegate`.
-// TODO(crbug.com/40843602): This function currently checks the visibility of
-// the entire feed top section, but it should only check the visibility of the
-// promo within it.
 - (void)updateFeedSigninPromoIsVisible {
   if (!self.feedTopSectionViewController) {
     return;
@@ -1592,7 +1606,7 @@ CGFloat SpaceBetweenModules() {
       UIView* viewAbove = self.viewControllersAboveFeed[index - 1].view;
 
       CGFloat spacingToUse =
-          isQuickActions ? kQuickActionSpacingBotttom : SpaceBetweenModules();
+          isQuickActions ? kQuickActionSpacingBottom : kSpaceBetweenModules;
       [NSLayoutConstraint activateConstraints:@[
         [view.topAnchor constraintEqualToAnchor:viewAbove.bottomAnchor
                                        constant:spacingToUse],
@@ -1730,8 +1744,37 @@ CGFloat SpaceBetweenModules() {
 
 // Updates the background image view's state based on the current data.
 - (void)updateBackgroundImageView {
-  _backgroundImageView.image = _backgroundImage;
-  _backgroundImageView.hidden = !_backgroundImage;
+  if (!_backgroundImageView.image && !_backgroundImage) {
+    return;
+  }
+
+  __weak HomeCustomizationImageView* view = _backgroundImageView;
+  __weak UIImage* image = _backgroundImage;
+  __weak HomeCustomizationFramingCoordinates* framingCoordinates =
+      _framingCoordinates;
+
+  [UIView transitionWithView:view
+                    duration:kBackgroundImageAnimationDuration
+                     options:UIViewAnimationOptionTransitionCrossDissolve
+                  animations:^{
+                    [view setImage:image framingCoordinates:framingCoordinates];
+                  }
+                  completion:nil];
+}
+
+// Returns if the given size represents a landscape orientation on an iPhone or
+// iPad.
+- (BOOL)isOrientationLandscapeForSize:(CGSize)size {
+  BOOL isLandscape = size.width > size.height;
+  if (isLandscape) {
+    UIUserInterfaceIdiom deviceIdiom =
+        [[UIDevice currentDevice] userInterfaceIdiom];
+    if (deviceIdiom == UIUserInterfaceIdiomPad ||
+        deviceIdiom == UIUserInterfaceIdiomPhone) {
+      return YES;
+    }
+  }
+  return NO;
 }
 
 #pragma mark - Helpers
@@ -1757,6 +1800,10 @@ CGFloat SpaceBetweenModules() {
       minimumHeight +=
           content_suggestions::HeaderBottomPadding(self.traitCollection) / 2;
     }
+  } else {
+    // Ensure that the header can be scrolled off screen on iPad.
+    minimumHeight +=
+        content_suggestions::HeaderBottomPadding(self.traitCollection) / 2;
   }
 
   return minimumHeight;

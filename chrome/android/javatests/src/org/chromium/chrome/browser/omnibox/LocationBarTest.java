@@ -9,7 +9,6 @@ import static androidx.test.espresso.assertion.ViewAssertions.matches;
 import static androidx.test.espresso.matcher.ViewMatchers.isDisplayed;
 import static androidx.test.espresso.matcher.ViewMatchers.withEffectiveVisibility;
 import static androidx.test.espresso.matcher.ViewMatchers.withId;
-import static androidx.test.espresso.matcher.ViewMatchers.withParent;
 
 import static org.hamcrest.CoreMatchers.allOf;
 import static org.hamcrest.Matchers.not;
@@ -17,17 +16,21 @@ import static org.junit.Assert.assertFalse;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doReturn;
 
+import static org.chromium.chrome.browser.url_constants.UrlConstantResolver.getOriginalNativeNtpUrl;
+
 import android.content.Intent;
 import android.content.res.Configuration;
 import android.view.View;
-import android.widget.LinearLayout;
+import android.view.ViewGroup;
 
+import androidx.collection.ArraySet;
 import androidx.lifecycle.Lifecycle;
 import androidx.test.espresso.matcher.ViewMatchers;
 import androidx.test.filters.MediumTest;
 import androidx.test.filters.SmallTest;
 
 import org.hamcrest.Matchers;
+import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Rule;
@@ -47,6 +50,7 @@ import org.chromium.base.test.util.DisabledTest;
 import org.chromium.base.test.util.DoNotBatch;
 import org.chromium.base.test.util.Features.DisableFeatures;
 import org.chromium.base.test.util.Restriction;
+import org.chromium.base.ui.KeyboardUtils;
 import org.chromium.chrome.browser.ChromeTabbedActivity;
 import org.chromium.chrome.browser.app.ChromeActivity;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
@@ -55,7 +59,6 @@ import org.chromium.chrome.browser.lens.LensController;
 import org.chromium.chrome.browser.lifecycle.InflationObserver;
 import org.chromium.chrome.browser.locale.LocaleManager;
 import org.chromium.chrome.browser.locale.LocaleManagerDelegate;
-import org.chromium.chrome.browser.omnibox.status.StatusProperties.StatusIconResource;
 import org.chromium.chrome.browser.omnibox.voice.VoiceRecognitionHandler;
 import org.chromium.chrome.browser.search_engines.TemplateUrlServiceFactory;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
@@ -71,13 +74,14 @@ import org.chromium.components.omnibox.OmniboxFeatures;
 import org.chromium.components.search_engines.TemplateUrl;
 import org.chromium.components.search_engines.TemplateUrlService;
 import org.chromium.content_public.common.ContentSwitches;
-import org.chromium.ui.KeyboardUtils;
 import org.chromium.ui.base.ActivityKeyboardVisibilityDelegate;
 import org.chromium.ui.base.DeviceFormFactor;
 import org.chromium.ui.test.util.ViewUtils;
 
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /** Instrumentation tests for the LocationBar component. */
@@ -107,7 +111,6 @@ public class LocationBarTest {
     @Mock private LensController mLensController;
     @Mock private LocaleManagerDelegate mLocaleManagerDelegate;
     @Mock private VoiceRecognitionHandler mVoiceRecognitionHandler;
-    @Mock private SearchEngineUtils mSearchEngineUtils;
 
     private ChromeTabbedActivity mActivity;
     private UrlBar mUrlBar;
@@ -124,6 +127,11 @@ public class LocationBarTest {
                     TemplateUrlServiceFactory.setInstanceForTesting(mTemplateUrlService);
                     LocaleManager.getInstance().setDelegateForTest(mLocaleManagerDelegate);
                 });
+    }
+
+    @After
+    public void tearDown() {
+        mActivityTestRule.skipWindowAndTabStateCleanup();
     }
 
     private WebPageStation startActivityNormally() {
@@ -195,17 +203,50 @@ public class LocationBarTest {
                 });
     }
 
-    private void assertTheLastVisibleButtonInSearchBoxById(int id) {
-        LinearLayout urlActionContainer =
-                mActivityTestRule.getActivity().findViewById(R.id.url_action_container);
+    private void assertLocationBarButtonsAre(Integer... expectedIdsArray) {
+        Set<Integer> expectedIds = Set.of(expectedIdsArray);
+        Set<Integer> actualIds = new ArraySet();
 
-        for (int i = urlActionContainer.getChildCount() - 1; i >= 0; i--) {
-            if (urlActionContainer.getChildAt(i).getVisibility() != View.VISIBLE) {
-                continue;
+        Map<Integer, String> knownIds =
+                Map.ofEntries(
+                        Map.entry(R.id.mic_button, "R.id.mic_button"),
+                        Map.entry(R.id.lens_camera_button, "R.id.lens_camera_button"),
+                        Map.entry(R.id.zoom_button, "R.id.zoom_button"),
+                        Map.entry(R.id.install_button, "R.id.install_button"),
+                        Map.entry(R.id.composeplate_button, "R.id.composeplate_button"),
+                        Map.entry(R.id.bookmark_button, "R.id.bookmark_button"),
+                        Map.entry(R.id.delete_button, "R.id.delete_button"));
+
+        ViewGroup locationBar = mActivityTestRule.getActivity().findViewById(R.id.location_bar);
+
+        for (int id : knownIds.keySet()) {
+            var button = locationBar.findViewById(id);
+            if (button.getVisibility() == View.VISIBLE) {
+                actualIds.add(id);
             }
-            Assert.assertEquals(urlActionContainer.getChildAt(i).getId(), id);
-            break;
         }
+
+        if (expectedIds.equals(actualIds)) return;
+
+        Set<Integer> excessIds = new ArraySet(actualIds);
+        excessIds.removeAll(expectedIds);
+
+        Set<Integer> missingIds = new ArraySet(expectedIds);
+        missingIds.removeAll(actualIds);
+
+        var errorMsg = new StringBuilder();
+        errorMsg.append("Unexpected IDs: [ ");
+        for (int id : excessIds) {
+            errorMsg.append(knownIds.get(id));
+            errorMsg.append(' ');
+        }
+        errorMsg.append("], Missing IDs: [ ");
+        for (int id : missingIds) {
+            errorMsg.append(knownIds.get(id));
+            errorMsg.append(' ');
+        }
+        errorMsg.append(']');
+        Assert.assertEquals(errorMsg.toString(), expectedIds, actualIds);
     }
 
     private void updateLocationBar() {
@@ -233,8 +274,7 @@ public class LocationBarTest {
                     Assert.assertTrue(mLocationBarMediator.isUrlBarFocused());
                 });
 
-        CriteriaHelper.pollUiThread(
-                () -> mKeyboardDelegate.isKeyboardShowing(mUrlBar.getContext(), mUrlBar));
+        CriteriaHelper.pollUiThread(() -> mKeyboardDelegate.isKeyboardShowing(mUrlBar));
     }
 
     @Test
@@ -265,8 +305,7 @@ public class LocationBarTest {
         ThreadUtils.runOnUiThreadBlocking(
                 () -> mLocationBarMediator.performSearchQuery(TEST_QUERY, TEST_PARAMS));
 
-        ChromeTabUtils.waitForTabPageLoaded(
-                mActivityTestRule.getActivity().getActivityTab(), mSearchUrl);
+        ChromeTabUtils.waitForTabPageLoaded(mActivityTestRule.getActivityTab(), mSearchUrl);
     }
 
     @Test
@@ -387,8 +426,6 @@ public class LocationBarTest {
                         .getURLWithHostName(HOSTNAME, "/");
         mActivityTestRule.loadUrl(url);
 
-        onView(withId(R.id.url_action_container))
-                .check(matches(withEffectiveVisibility(ViewMatchers.Visibility.GONE)));
         onView(withId(R.id.mic_button))
                 .check(matches(withEffectiveVisibility(ViewMatchers.Visibility.GONE)));
         onView(withId(R.id.delete_button))
@@ -399,7 +436,8 @@ public class LocationBarTest {
                     mUrlBar.requestFocus();
                 });
 
-        ViewUtils.waitForVisibleView(allOf(withId(R.id.url_action_container)));
+        ViewUtils.waitForVisibleView(allOf(withId(R.id.mic_button)));
+
         onView(withId(R.id.mic_button))
                 .check(matches(withEffectiveVisibility(ViewMatchers.Visibility.VISIBLE)));
         onView(withId(R.id.delete_button))
@@ -420,7 +458,10 @@ public class LocationBarTest {
                     mUrlBar.clearFocus();
                 });
 
-        ViewUtils.waitForViewCheckingState(withId(R.id.url_action_container), ViewUtils.VIEW_GONE);
+        onView(withId(R.id.mic_button))
+                .check(matches(withEffectiveVisibility(ViewMatchers.Visibility.GONE)));
+        onView(withId(R.id.delete_button))
+                .check(matches(withEffectiveVisibility(ViewMatchers.Visibility.GONE)));
     }
 
     @Test
@@ -437,7 +478,6 @@ public class LocationBarTest {
                         .getURLWithHostName(HOSTNAME, "/");
         mActivityTestRule.loadUrl(url);
 
-        onView(withId(R.id.url_action_container)).check(matches(not(isDisplayed())));
         onView(withId(R.id.lens_camera_button)).check(matches(not(isDisplayed())));
         onView(withId(R.id.delete_button)).check(matches(not(isDisplayed())));
 
@@ -446,10 +486,10 @@ public class LocationBarTest {
                     mUrlBar.requestFocus();
                 });
 
-        ViewUtils.waitForVisibleView(withId(R.id.url_action_container));
+        ViewUtils.waitForVisibleView(withId(R.id.mic_button));
         onView(withId(R.id.lens_camera_button)).check(matches(not(isDisplayed())));
         onView(withId(R.id.delete_button)).check(matches(not(isDisplayed())));
-        assertTheLastVisibleButtonInSearchBoxById(R.id.mic_button);
+        assertLocationBarButtonsAre(R.id.mic_button);
 
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
@@ -464,7 +504,7 @@ public class LocationBarTest {
                     mUrlBar.clearFocus();
                 });
 
-        ViewUtils.waitForViewCheckingState(withId(R.id.url_action_container), ViewUtils.VIEW_GONE);
+        ViewUtils.waitForViewCheckingState(withId(R.id.delete_button), ViewUtils.VIEW_GONE);
     }
 
     @Test
@@ -481,7 +521,6 @@ public class LocationBarTest {
                         .getURLWithHostName(HOSTNAME, "/");
         mActivityTestRule.loadUrl(url);
 
-        onView(withId(R.id.url_action_container)).check(matches(not(isDisplayed())));
         onView(withId(R.id.lens_camera_button)).check(matches(not(isDisplayed())));
         onView(withId(R.id.delete_button)).check(matches(not(isDisplayed())));
 
@@ -490,10 +529,10 @@ public class LocationBarTest {
                     mUrlBar.requestFocus();
                 });
 
-        ViewUtils.waitForVisibleView(withId(R.id.url_action_container));
+        ViewUtils.waitForVisibleView(withId(R.id.lens_camera_button));
         onView(withId(R.id.lens_camera_button)).check(matches(isDisplayed()));
         onView(withId(R.id.delete_button)).check(matches(not(isDisplayed())));
-        assertTheLastVisibleButtonInSearchBoxById(R.id.lens_camera_button);
+        assertLocationBarButtonsAre(R.id.lens_camera_button, R.id.mic_button);
 
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
@@ -508,7 +547,7 @@ public class LocationBarTest {
                     mUrlBar.clearFocus();
                 });
 
-        ViewUtils.waitForViewCheckingState(withId(R.id.url_action_container), ViewUtils.VIEW_GONE);
+        ViewUtils.waitForViewCheckingState(withId(R.id.delete_button), ViewUtils.VIEW_GONE);
     }
 
     @Test
@@ -519,13 +558,16 @@ public class LocationBarTest {
         startActivityNormally();
         doReturn(true).when(mVoiceRecognitionHandler).isVoiceSearchEnabled();
 
-        mActivityTestRule.loadUrl(UrlConstants.NTP_URL);
+        mActivityTestRule.loadUrl(getOriginalNativeNtpUrl());
 
         Mockito.reset(mVoiceRecognitionHandler);
-        onView(
-                allOf(
-                        withId(R.id.voice_search_button),
-                        withParent(withId(R.layout.new_tab_page_layout))));
+
+        // Proabably never worked. crbug.com/446200399
+        // onView(
+        //                 allOf(
+        //                         withId(R.id.voice_search_button),
+        //                         withParent(withId(R.layout.new_tab_page_layout))))
+        //         .check(matches(isDisplayed()));
 
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
@@ -544,6 +586,9 @@ public class LocationBarTest {
     @Test
     @MediumTest
     @Restriction(DeviceFormFactor.PHONE)
+    // TODO(crbug.com/423465927): Explore a better approach to make the
+    // existing tests run with the prewarm feature enabled.
+    @DisableFeatures({"Prewarm"})
     public void testFocusLogic_lenButtonVisibilityOnLocationBarOnIncognitoStateChange() {
         startActivityNormally();
         doReturn(true).when(mVoiceRecognitionHandler).isVoiceSearchEnabled();
@@ -563,7 +608,7 @@ public class LocationBarTest {
                 });
         ViewUtils.waitForViewCheckingState(withId(R.id.lens_camera_button), ViewUtils.VIEW_GONE);
         ViewUtils.waitForVisibleView(withId(R.id.mic_button));
-        assertTheLastVisibleButtonInSearchBoxById(R.id.mic_button);
+        assertLocationBarButtonsAre(R.id.mic_button);
 
         // Test when incognito is false.
         doReturn(true).when(mLensController).isLensEnabled(any());
@@ -575,7 +620,7 @@ public class LocationBarTest {
                     mUrlBar.requestFocus();
                 });
         ViewUtils.waitForVisibleView(withId(R.id.lens_camera_button));
-        assertTheLastVisibleButtonInSearchBoxById(R.id.lens_camera_button);
+        assertLocationBarButtonsAre(R.id.lens_camera_button, R.id.mic_button);
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     mUrlBar.clearFocus();
@@ -604,7 +649,7 @@ public class LocationBarTest {
                 });
         ViewUtils.waitForViewCheckingState(withId(R.id.lens_camera_button), ViewUtils.VIEW_GONE);
         ViewUtils.waitForVisibleView(withId(R.id.mic_button));
-        assertTheLastVisibleButtonInSearchBoxById(R.id.mic_button);
+        assertLocationBarButtonsAre(R.id.mic_button);
 
         // Test when search engine is Google.
         doReturn(true).when(mLensController).isLensEnabled(any());
@@ -617,7 +662,7 @@ public class LocationBarTest {
                     mUrlBar.requestFocus();
                 });
         ViewUtils.waitForVisibleView(withId(R.id.lens_camera_button));
-        assertTheLastVisibleButtonInSearchBoxById(R.id.lens_camera_button);
+        assertLocationBarButtonsAre(R.id.lens_camera_button, R.id.mic_button);
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     mUrlBar.clearFocus();
@@ -668,8 +713,6 @@ public class LocationBarTest {
                         .getURLWithHostName(HOSTNAME, "/");
         mActivityTestRule.loadUrl(url);
 
-        onView(withId(R.id.url_action_container))
-                .check(matches(withEffectiveVisibility(ViewMatchers.Visibility.VISIBLE)));
         onView(withId(R.id.mic_button))
                 .check(matches(withEffectiveVisibility(ViewMatchers.Visibility.GONE)));
         onView(withId(R.id.delete_button))
@@ -718,7 +761,7 @@ public class LocationBarTest {
     @MediumTest
     public void testFocusLogic_keyboardVisibility() {
         startActivityNormally();
-        assertFalse(mKeyboardDelegate.isKeyboardShowing(mUrlBar.getContext(), mUrlBar));
+        assertFalse(mKeyboardDelegate.isKeyboardShowing(mUrlBar));
 
         mOmnibox.requestFocus();
         mOmnibox.checkFocus(true);
@@ -749,7 +792,7 @@ public class LocationBarTest {
         setupSearchEngineLogo(GOOGLE_URL);
         startActivityNormally();
 
-        mActivityTestRule.loadUrl(UrlConstants.NTP_URL);
+        mActivityTestRule.loadUrl(getOriginalNativeNtpUrl());
         onView(withId(R.id.location_bar_status_icon)).check(matches(not(isDisplayed())));
     }
 
@@ -761,14 +804,7 @@ public class LocationBarTest {
         setupSearchEngineLogo(NON_GOOGLE_URL);
         startActivityNormally();
 
-        mActivityTestRule.loadUrl(UrlConstants.NTP_URL);
-
-        ThreadUtils.runOnUiThreadBlocking(
-                () -> {
-                    mSearchEngineUtils.setSearchEngineIcon(
-                            new StatusIconResource(R.drawable.ic_search, 0));
-                });
-
+        mActivityTestRule.loadUrl(getOriginalNativeNtpUrl());
         onView(withId(R.id.location_bar_status_icon)).check(matches(isDisplayed()));
     }
 
@@ -779,7 +815,7 @@ public class LocationBarTest {
         setupSearchEngineLogo(GOOGLE_URL);
         startActivityNormally();
 
-        mActivityTestRule.loadUrlInNewTab(UrlConstants.NTP_URL, /* incognito= */ true);
+        mActivityTestRule.loadUrlInNewTab(getOriginalNativeNtpUrl(), /* incognito= */ true);
         onView(withId(R.id.location_bar_status_icon)).check(matches(isDisplayed()));
     }
 
@@ -789,7 +825,7 @@ public class LocationBarTest {
         setupSearchEngineLogo(GOOGLE_URL);
         startActivityNormally();
 
-        mActivityTestRule.loadUrl(UrlConstants.NTP_URL);
+        mActivityTestRule.loadUrl(getOriginalNativeNtpUrl());
         mOmnibox.requestFocus();
         onView(withId(R.id.location_bar_status_icon)).check(matches(isDisplayed()));
     }
@@ -801,7 +837,7 @@ public class LocationBarTest {
         setupSearchEngineLogo(GOOGLE_URL);
         startActivityNormally();
 
-        mActivityTestRule.loadUrl(UrlConstants.NTP_URL);
+        mActivityTestRule.loadUrl(getOriginalNativeNtpUrl());
         onView(withId(R.id.location_bar_status_icon)).check(matches(not(isDisplayed())));
 
         mActivityTestRule.loadUrl(UrlConstants.ABOUT_URL);

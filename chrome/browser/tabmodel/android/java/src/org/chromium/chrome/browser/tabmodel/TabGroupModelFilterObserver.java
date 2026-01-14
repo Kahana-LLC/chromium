@@ -26,7 +26,7 @@ public interface TabGroupModelFilterObserver {
         DidRemoveTabGroupReason.CLOSE
     })
     @Retention(RetentionPolicy.SOURCE)
-    public @interface DidRemoveTabGroupReason {
+    @interface DidRemoveTabGroupReason {
         /** Groups are merged together. */
         int MERGE = 0;
 
@@ -80,7 +80,8 @@ public interface TabGroupModelFilterObserver {
      */
     default void didMergeTabToGroup(Tab movedTab, boolean isDestinationTab) {}
 
-    // TODO(crbug.com/434015906): Passing the last tab here is a limitation of the current TabGroupModelFilterImpl, we should fix this once tab collections is launched.
+    // TODO(crbug.com/434015906): Passing the last tab here is a limitation of the current
+    // TabGroupModelFilterImpl, we should fix this once tab collections is launched.
     /**
      * This method is called after a group is moved.
      *

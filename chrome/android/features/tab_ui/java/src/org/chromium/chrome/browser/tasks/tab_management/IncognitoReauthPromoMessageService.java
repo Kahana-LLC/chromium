@@ -26,6 +26,8 @@ import org.chromium.chrome.browser.lifecycle.PauseResumeWithNativeObserver;
 import org.chromium.chrome.browser.preferences.Pref;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.tasks.tab_management.MessageCardView.ServiceDismissActionProvider;
+import org.chromium.chrome.browser.tasks.tab_management.TabProperties.UiType;
+import org.chromium.chrome.browser.tasks.tab_management.TabSwitcherMessageManager.MessageType;
 import org.chromium.chrome.browser.ui.messages.snackbar.Snackbar;
 import org.chromium.chrome.browser.ui.messages.snackbar.SnackbarManager;
 import org.chromium.chrome.tab_ui.R;
@@ -37,7 +39,8 @@ import java.lang.annotation.RetentionPolicy;
 
 /** Message service class to show the Incognito re-auth promo inside the incognito tab switcher. */
 @NullMarked
-public class IncognitoReauthPromoMessageService extends MessageService
+public class IncognitoReauthPromoMessageService
+        extends MessageService<@MessageType Integer, @UiType Integer>
         implements PauseResumeWithNativeObserver {
     /** TODO(crbug.com/40056462): Remove this when we support all the Android versions. */
     public static @Nullable Boolean sIsPromoEnabledForTesting;
@@ -110,7 +113,6 @@ public class IncognitoReauthPromoMessageService extends MessageService
     }
 
     /**
-     * @param mMessageType The type of the message.
      * @param profile {@link Profile} to use to check the re-auth status.
      * @param sharedPreferencesManager The {@link SharedPreferencesManager} to query about re-auth
      *     promo shared preference.
@@ -122,14 +124,17 @@ public class IncognitoReauthPromoMessageService extends MessageService
      *     register listening to onResume events.
      */
     IncognitoReauthPromoMessageService(
-            int mMessageType,
             Profile profile,
             Context context,
             SharedPreferencesManager sharedPreferencesManager,
             IncognitoReauthManager incognitoReauthManager,
             SnackbarManager snackbarManager,
             ActivityLifecycleDispatcher activityLifecycleDispatcher) {
-        super(mMessageType);
+        super(
+                MessageType.INCOGNITO_REAUTH_PROMO_MESSAGE,
+                UiType.INCOGNITO_REAUTH_PROMO_MESSAGE,
+                R.layout.large_message_card_item,
+                LargeMessageCardViewBinder::bind);
         mProfile = profile;
         mContext = context;
         mSharedPreferencesManager = sharedPreferencesManager;
@@ -139,9 +144,7 @@ public class IncognitoReauthPromoMessageService extends MessageService
         activityLifecycleDispatcher.register(this);
     }
 
-    @Override
     public void destroy() {
-        super.destroy();
         mIncognitoReauthManager.destroy();
         // Duplicate unregister is safe if dismiss() was invoked.
         mActivityLifecycleDispatcher.unregister(this);
@@ -149,7 +152,7 @@ public class IncognitoReauthPromoMessageService extends MessageService
 
     @VisibleForTesting
     void dismiss() {
-        sendInvalidNotification();
+        invalidateMessages();
         disableIncognitoReauthPromoMessage();
         recordPromoImpressionsCount();
 
@@ -197,13 +200,14 @@ public class IncognitoReauthPromoMessageService extends MessageService
             return false;
         }
 
-        sendAvailabilityNotification(this::buildViewModel);
+        queueMessage(this::buildViewModel);
         return true;
     }
 
     @Override
-    public void addObserver(MessageObserver observer) {
-        super.addObserver(observer);
+    public void initialize(
+            ServiceDismissActionProvider<@MessageType Integer> serviceDismissActionProvider) {
+        super.initialize(serviceDismissActionProvider);
         preparePromoMessage();
     }
 
@@ -218,12 +222,10 @@ public class IncognitoReauthPromoMessageService extends MessageService
         // snackbar needs to be revised.
         @ColorInt
         int snackbarBackgroundColor =
-                SnackbarManager.isFloatingSnackbarEnabled()
-                        ? mContext.getColor(R.color.floating_snackbar_background_incognito)
-                        : mContext.getColor(R.color.snackbar_background_color_baseline_dark);
+                mContext.getColor(R.color.floating_snackbar_background_incognito);
         snackbar.setBackgroundColor(snackbarBackgroundColor);
         snackbar.setTextAppearance(R.style.TextAppearance_TextMedium_Secondary_Baseline_Light);
-        snackbar.setSingleLine(false);
+        snackbar.setDefaultLines(false);
         mSnackBarManager.showSnackbar(snackbar);
     }
 
@@ -308,9 +310,9 @@ public class IncognitoReauthPromoMessageService extends MessageService
     }
 
     private PropertyModel buildViewModel(
-            Context context, ServiceDismissActionProvider serviceActionProvider) {
+            ServiceDismissActionProvider<@MessageType Integer> serviceActionProvider) {
         return IncognitoReauthPromoViewModel.create(
-                context,
+                mContext,
                 serviceActionProvider,
                 new IncognitoReauthMessageData(this::review, this::dismiss));
     }
@@ -340,7 +342,7 @@ public class IncognitoReauthPromoMessageService extends MessageService
             } else {
                 // For all other cases, we only send an invalidate message but don't disable the
                 // promo card completely.
-                sendInvalidNotification();
+                invalidateMessages();
                 mShouldTriggerPrepareMessage = true;
             }
         } else {

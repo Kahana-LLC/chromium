@@ -35,8 +35,9 @@ import org.robolectric.annotation.Implementation;
 import org.robolectric.annotation.Implements;
 
 import org.chromium.base.ContextUtils;
-import org.chromium.base.supplier.Supplier;
+import org.chromium.base.supplier.ObservableSupplierImpl;
 import org.chromium.base.test.BaseRobolectricTestRunner;
+import org.chromium.base.test.util.Features.DisableFeatures;
 import org.chromium.base.test.util.UserActionTester;
 import org.chromium.chrome.browser.browser_controls.BrowserControlsStateProvider.ControlsPosition;
 import org.chromium.chrome.browser.omnibox.R;
@@ -55,6 +56,7 @@ import org.chromium.components.dom_distiller.core.DomDistillerUrlUtilsJni;
 import org.chromium.components.omnibox.AutocompleteInput;
 import org.chromium.components.omnibox.AutocompleteMatch;
 import org.chromium.components.omnibox.AutocompleteMatchBuilder;
+import org.chromium.components.omnibox.OmniboxFeatureList;
 import org.chromium.components.omnibox.OmniboxFeatures;
 import org.chromium.components.omnibox.OmniboxSuggestionType;
 import org.chromium.components.omnibox.suggestions.OmniboxSuggestionUiType;
@@ -67,7 +69,7 @@ import org.chromium.ui.modelutil.PropertyModel;
 import org.chromium.url.GURL;
 import org.chromium.url.JUnitTestGURLs;
 
-import java.util.Optional;
+import java.util.function.Supplier;
 
 /** Unit tests for the "edit url" omnibox suggestion. */
 @RunWith(BaseRobolectricTestRunner.class)
@@ -156,11 +158,11 @@ public final class EditUrlSuggestionProcessorUnitTest {
                         mContext,
                         mSuggestionHost,
                         mTextProvider,
-                        Optional.of(mImageSupplier),
+                        mImageSupplier,
                         mBookmarkState,
                         mTabSupplier,
                         mShareDelegateSupplier,
-                        () -> ControlsPosition.TOP);
+                        new ObservableSupplierImpl<>(ControlsPosition.TOP));
         mProcessor = new EditUrlSuggestionProcessor(uiContext);
         mModel = mProcessor.createModel();
 
@@ -197,6 +199,7 @@ public final class EditUrlSuggestionProcessorUnitTest {
     }
 
     @Test
+    @DisableFeatures(OmniboxFeatureList.REMOVE_SEARCH_READY_OMNIBOX)
     public void doesProcessSuggestion_acceptMatchingUrlWhatYouTyped() {
         // URL_WHAT_YOU_TYPED
         assertTrue(mProcessor.doesProcessSuggestion(mMatch, 0));
@@ -212,6 +215,7 @@ public final class EditUrlSuggestionProcessorUnitTest {
     }
 
     @Test
+    @DisableFeatures(OmniboxFeatureList.REMOVE_SEARCH_READY_OMNIBOX)
     public void doesProcessSuggestion_acceptMatchingWhatYouTypedWhenRetainOmniboxOnFocusDisabled() {
         // URL_WHAT_YOU_TYPED
         OmniboxFeatures.setShouldRetainOmniboxOnFocusForTesting(false);

@@ -20,6 +20,8 @@
 #include "ui/compositor/layer.h"
 #include "ui/display/screen.h"
 #include "ui/events/base_event_utils.h"
+#include "ui/events/event.h"
+#include "ui/gfx/geometry/point.h"
 #include "ui/wm/core/window_util.h"
 
 namespace ash {
@@ -104,8 +106,8 @@ TEST_F(WindowUtilTest, AdjustBoundsToEnsureMinimumVisibility) {
 TEST_F(WindowUtilTest, MoveWindowToDisplay) {
   UpdateDisplay("500x400, 600x400");
   std::unique_ptr<aura::Window> window(
-      CreateTestWindowInShellWithBounds(gfx::Rect(12, 20, 100, 100)));
-  display::Screen* screen = display::Screen::GetScreen();
+      CreateTestWindowInShell({.bounds = {12, 20, 100, 100}}));
+  display::Screen* screen = display::Screen::Get();
   const int64_t original_display_id =
       screen->GetDisplayNearestWindow(window.get()).id();
   EXPECT_EQ(screen->GetPrimaryDisplay().id(), original_display_id);
@@ -133,7 +135,7 @@ TEST_F(WindowUtilTest, MoveWindowToDisplay) {
 TEST_F(WindowUtilTest, MoveWindowToDisplayAndLockScreen) {
   UpdateDisplay("500x400, 600x400");
   auto window = CreateTestWindow(gfx::Rect(12, 20, 100, 100));
-  display::Screen* screen = display::Screen::GetScreen();
+  display::Screen* screen = display::Screen::Get();
   ASSERT_EQ(2, screen->GetNumDisplays());
   const int64_t primary_display_id = screen->GetAllDisplays()[0].id();
   const int64_t secondary_display_id = screen->GetAllDisplays()[1].id();
@@ -272,11 +274,15 @@ TEST_F(WindowUtilTest, InteriorTargeter) {
   WindowState::Get(window.get())->Maximize();
   InstallResizeHandleWindowTargeterForWindow(window.get());
 
-  auto* child = aura::test::CreateTestWindowWithDelegateAndType(
-      aura::test::TestWindowDelegate::CreateSelfDestroyingDelegate(),
-      aura::client::WINDOW_TYPE_UNKNOWN, 1, gfx::Rect(window->bounds().size()),
-      window.get(),
-      /*show_on_creation=*/true);
+  auto* child =
+      aura::test::CreateTestWindow(
+          {.delegate =
+               aura::test::TestWindowDelegate::CreateSelfDestroyingDelegate(),
+           .parent = window.get(),
+           .bounds = gfx::Rect(window->bounds().size()),
+           .window_type = aura::client::WINDOW_TYPE_UNKNOWN,
+           .window_id = 1})
+          .release();
 
   ui::EventTarget* root_target = window->GetRootWindow();
   auto* targeter = root_target->GetEventTargeter();
@@ -298,6 +304,52 @@ TEST_F(WindowUtilTest, InteriorTargeter) {
   }
 }
 
+TEST_F(WindowUtilTest, InteriorTargeterWithCustomInsets) {
+  auto window = CreateTestWindow();
+  window->SetBounds({0, 0, 100, 100});
+
+  WindowState::Get(window.get())->Maximize();
+  InstallResizeHandleWindowTargeterForWindow(
+      window.get(), chromeos::ResizeBorderInsets{.for_mouse = gfx::Insets(5),
+                                                 .for_touch = gfx::Insets(10)});
+
+  auto* child =
+      aura::test::CreateTestWindow(
+          {.delegate =
+               aura::test::TestWindowDelegate::CreateSelfDestroyingDelegate(),
+           .parent = window.get(),
+           .bounds = gfx::Rect(window->bounds().size())})
+          .release();
+
+  ui::EventTarget* root_target = window->GetRootWindow();
+  auto* targeter = root_target->GetEventTargeter();
+  {
+    gfx::Point location{2, 2};
+    ui::MouseEvent mouse(ui::EventType::kMouseMoved, location, location,
+                         ui::EventTimeForNow(), ui::EF_NONE, ui::EF_NONE);
+    EXPECT_EQ(child, targeter->FindTargetForEvent(root_target, &mouse));
+  }
+
+  // InteriorEventTargeter is now active and should pass an event at the edge to
+  // its parent.
+  WindowState::Get(window.get())->Restore();
+
+  {
+    gfx::Point location{2, 2};
+    ui::MouseEvent mouse(ui::EventType::kMouseMoved, location, location,
+                         ui::EventTimeForNow(), ui::EF_NONE, ui::EF_NONE);
+    EXPECT_EQ(window.get(), targeter->FindTargetForEvent(root_target, &mouse));
+  }
+
+  {
+    gfx::PointF location{9, 9};
+    ui::TouchEvent touch(ui::EventType::kTouchPressed, location, location,
+                         ui::EventTimeForNow(),
+                         ui::PointerDetails(ui::EventPointerType::kTouch));
+    EXPECT_EQ(window.get(), targeter->FindTargetForEvent(root_target, &touch));
+  }
+}
+
 TEST_F(WindowUtilTest, PinWindow) {
   auto window_state_delegate = std::make_unique<FakeWindowStateDelegate>();
   auto* window_state_delegate_ptr = window_state_delegate.get();
@@ -308,18 +360,18 @@ TEST_F(WindowUtilTest, PinWindow) {
   window_state->SetDelegate(std::move(window_state_delegate));
   window_util::PinWindow(window.get(), /* trusted */ false);
   EXPECT_TRUE(WindowState::Get(window.get())->IsPinned());
-  EXPECT_FALSE(WindowState::Get(window.get())->IsTrustedPinned());
+  EXPECT_FALSE(WindowState::Get(window.get())->IsLockedFullscreen());
   EXPECT_EQ(window_state_delegate_ptr->toggle_locked_fullscreen_count(), 1);
 
   WindowState::Get(window.get())->Restore();
 
   EXPECT_FALSE(WindowState::Get(window.get())->IsPinned());
-  EXPECT_FALSE(WindowState::Get(window.get())->IsTrustedPinned());
+  EXPECT_FALSE(WindowState::Get(window.get())->IsLockedFullscreen());
   EXPECT_EQ(window_state_delegate_ptr->toggle_locked_fullscreen_count(), 2);
 
   window_util::PinWindow(window.get(), /* trusted */ true);
   EXPECT_TRUE(WindowState::Get(window.get())->IsPinned());
-  EXPECT_TRUE(WindowState::Get(window.get())->IsTrustedPinned());
+  EXPECT_TRUE(WindowState::Get(window.get())->IsLockedFullscreen());
   EXPECT_EQ(window_state_delegate_ptr->toggle_locked_fullscreen_count(), 3);
 }
 
@@ -335,18 +387,18 @@ TEST_F(WindowUtilTest, PinWindow_TabletMode) {
   window_state->SetDelegate(std::move(window_state_delegate));
   window_util::PinWindow(window.get(), /* trusted */ false);
   EXPECT_TRUE(WindowState::Get(window.get())->IsPinned());
-  EXPECT_FALSE(WindowState::Get(window.get())->IsTrustedPinned());
+  EXPECT_FALSE(WindowState::Get(window.get())->IsLockedFullscreen());
   EXPECT_EQ(window_state_delegate_ptr->toggle_locked_fullscreen_count(), 1);
 
   WindowState::Get(window.get())->Restore();
 
   EXPECT_FALSE(WindowState::Get(window.get())->IsPinned());
-  EXPECT_FALSE(WindowState::Get(window.get())->IsTrustedPinned());
+  EXPECT_FALSE(WindowState::Get(window.get())->IsLockedFullscreen());
   EXPECT_EQ(window_state_delegate_ptr->toggle_locked_fullscreen_count(), 2);
 
   window_util::PinWindow(window.get(), /* trusted */ true);
   EXPECT_TRUE(WindowState::Get(window.get())->IsPinned());
-  EXPECT_TRUE(WindowState::Get(window.get())->IsTrustedPinned());
+  EXPECT_TRUE(WindowState::Get(window.get())->IsLockedFullscreen());
   EXPECT_EQ(window_state_delegate_ptr->toggle_locked_fullscreen_count(), 3);
 }
 

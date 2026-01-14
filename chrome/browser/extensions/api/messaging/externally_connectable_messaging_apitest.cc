@@ -7,6 +7,7 @@
 #include "base/path_service.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
+#include "base/strings/to_string.h"
 #include "chrome/browser/extensions/api/messaging/incognito_connectability.h"
 #include "chrome/browser/extensions/extension_apitest.h"
 #include "chrome/browser/extensions/extension_util.h"
@@ -36,6 +37,8 @@
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/test/base/ui_test_utils.h"
 #endif
+
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
 
 namespace extensions {
 
@@ -938,7 +941,7 @@ IN_PROC_BROWSER_TEST_F(ExternallyConnectableMessagingTest, FromPopup) {
   ui_test_utils::UrlLoadObserver url_observer(chromium_org_url());
 
   // The page at popup_opener_url() should open chromium_org_url() as a popup.
-  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), popup_opener_url()));
+  ASSERT_TRUE(NavigateToURL(GetActiveWebContents(), popup_opener_url()));
   url_observer.Wait();
 
   content::WebContents* popup_contents = url_observer.web_contents();
@@ -1006,7 +1009,7 @@ IN_PROC_BROWSER_TEST_F(ExternallyConnectableMessagingTest, HostedAppOnWebsite) {
   scoped_refptr<const Extension> app = LoadChromiumHostedApp();
 
   // The presence of the hosted app shouldn't give the ability to send messages.
-  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), chromium_org_url()));
+  ASSERT_TRUE(NavigateToURL(GetActiveWebContents(), chromium_org_url()));
   EXPECT_EQ(NAMESPACE_NOT_DEFINED,
             CanConnectAndSendMessagesToMainFrame(app.get()));
   EXPECT_FALSE(AreAnyNonWebApisDefinedForMainFrame());
@@ -1037,7 +1040,7 @@ IN_PROC_BROWSER_TEST_F(ExternallyConnectableMessagingTest,
                            .Set("manifest_version", 2))
           .Build();
 
-  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), chromium_org_url()));
+  ASSERT_TRUE(NavigateToURL(GetActiveWebContents(), chromium_org_url()));
   EXPECT_EQ(COULD_NOT_ESTABLISH_CONNECTION_ERROR,
             CanConnectAndSendMessagesToMainFrame(invalid.get()));
 }

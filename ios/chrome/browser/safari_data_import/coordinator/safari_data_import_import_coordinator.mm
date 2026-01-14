@@ -15,11 +15,19 @@
 #import "components/history/core/browser/history_service.h"
 #import "components/keyed_service/core/service_access_type.h"
 #import "components/password_manager/core/browser/ui/saved_passwords_presenter.h"
+#import "components/prefs/pref_service.h"
 #import "components/reading_list/core/reading_list_model.h"
 #import "components/strings/grit/components_strings.h"
 #import "ios/chrome/browser/affiliations/model/ios_chrome_affiliation_service_factory.h"
 #import "ios/chrome/browser/autofill/model/personal_data_manager_factory.h"
 #import "ios/chrome/browser/bookmarks/model/bookmark_model_factory.h"
+#import "ios/chrome/browser/data_import/public/credential_item_identifier.h"
+#import "ios/chrome/browser/data_import/public/password_import_item.h"
+#import "ios/chrome/browser/data_import/ui/data_import_credential_conflict_resolution_view_controller.h"
+#import "ios/chrome/browser/data_import/ui/data_import_credential_conflict_resolution_view_controller_delegate.h"
+#import "ios/chrome/browser/data_import/ui/data_import_import_stage_transition_handler.h"
+#import "ios/chrome/browser/data_import/ui/data_import_invalid_credentials_view_controller.h"
+#import "ios/chrome/browser/data_import/ui/import_data_item_table_view.h"
 #import "ios/chrome/browser/favicon/model/ios_chrome_favicon_loader_factory.h"
 #import "ios/chrome/browser/history/model/history_service_factory.h"
 #import "ios/chrome/browser/passwords/model/ios_chrome_account_password_store_factory.h"
@@ -28,13 +36,8 @@
 #import "ios/chrome/browser/safari_data_import/coordinator/safari_data_import_child_coordinator_delegate.h"
 #import "ios/chrome/browser/safari_data_import/coordinator/safari_data_import_import_mediator.h"
 #import "ios/chrome/browser/safari_data_import/public/metrics.h"
-#import "ios/chrome/browser/safari_data_import/public/password_import_item.h"
 #import "ios/chrome/browser/safari_data_import/public/safari_data_import_stage.h"
-#import "ios/chrome/browser/safari_data_import/ui/safari_data_import_import_stage_transition_handler.h"
 #import "ios/chrome/browser/safari_data_import/ui/safari_data_import_import_view_controller.h"
-#import "ios/chrome/browser/safari_data_import/ui/safari_data_import_password_conflict_resolution_view_controller.h"
-#import "ios/chrome/browser/safari_data_import/ui/safari_data_invalid_passwords_view_controller.h"
-#import "ios/chrome/browser/safari_data_import/ui/safari_data_item_table_view.h"
 #import "ios/chrome/browser/shared/model/browser/browser.h"
 #import "ios/chrome/browser/shared/model/profile/profile_ios.h"
 #import "ios/chrome/browser/sync/model/sync_service_factory.h"
@@ -43,21 +46,25 @@
 #import "ios/chrome/grit/ios_strings.h"
 #import "ui/base/l10n/l10n_util_mac.h"
 
+namespace {
+
+/// Number of expected items in the table.
+constexpr NSInteger kExpectedItemsCount = 4;
+
+}  // namespace
+
 @interface SafariDataImportImportCoordinator () <
     PromoStyleViewControllerDelegate,
-    SafariDataImportImportStageTransitionHandler,
+    DataImportCredentialConflictResolutionViewControllerDelegate,
+    DataImportImportStageTransitionHandler,
     UITableViewDelegate>
 
 /// The mediator handling the interaction with the model. Lazily loaded with
 /// `-mediator` method.
 @property(nonatomic, readonly) SafariDataImportImportMediator* mediator;
 
-/// Alert screen being displayed when the last selected file could not be
-/// processed or contains no valid items.
-@property(nonatomic, readonly) UIAlertController* errorAlert;
-
-/// Alert screen being displayed when the last selected file could not be
-/// processed or contains no valid items.
+/// Alert screen being displayed before dismissal, asking the user whether the
+/// imported file should be deleted.
 @property(nonatomic, readonly) UIAlertController* fileDeletionAlert;
 
 @end
@@ -69,11 +76,10 @@
   /// File picker for the user to select Safari data.
   UIDocumentPickerViewController* _documentProvider;
   /// Table view  that displays the import status of Safari data.
-  SafariDataItemTableView* _tableView;
+  ImportDataItemTableView* _tableView;
 }
 
 @synthesize mediator = _mediator;
-@synthesize errorAlert = _errorAlert;
 @synthesize fileDeletionAlert = _fileDeletionAlert;
 @synthesize baseNavigationController = _baseNavigationController;
 
@@ -92,7 +98,8 @@
   _containerViewController =
       [[SafariDataImportImportViewController alloc] init];
   _containerViewController.delegate = self;
-  _tableView = [[SafariDataItemTableView alloc] init];
+  _tableView =
+      [[ImportDataItemTableView alloc] initWithItemCount:kExpectedItemsCount];
   _tableView.delegate = self;
   _tableView.importStageTransitionHandler = self;
   _containerViewController.itemTableView = _tableView;
@@ -108,6 +115,10 @@
 }
 
 #pragma mark - Accessors
+
+- (SafariDataImportStage)importStage {
+  return _containerViewController.importStage;
+}
 
 - (SafariDataImportImportMediator*)mediator {
   if (!_mediator) {
@@ -135,6 +146,7 @@
         ReadingListModelFactory::GetForProfile(profile);
     syncer::SyncService* syncService =
         SyncServiceFactory::GetForProfile(profile);
+    PrefService* prefService = profile->GetPrefs();
     FaviconLoader* faviconLoader =
         IOSChromeFaviconLoaderFactory::GetForProfile(profile);
     /// Initialize mediator.
@@ -146,35 +158,12 @@
                           bookmarkModel:bookmarkModel
                        readingListModel:readingListModel
                             syncService:syncService
+                            prefService:prefService
                           faviconLoader:faviconLoader];
     _mediator.importStageTransitionHandler = self;
     _mediator.itemConsumer = _tableView;
   }
   return _mediator;
-}
-
-- (UIAlertController*)errorAlert {
-  if (!_errorAlert) {
-    NSString* title = l10n_util::GetNSString(
-        IDS_IOS_SAFARI_IMPORT_IMPORT_FAILURE_MESSAGE_TITLE);
-    NSString* description = l10n_util::GetNSString(
-        IDS_IOS_SAFARI_IMPORT_IMPORT_FAILURE_MESSAGE_DESCRIPTION);
-    NSString* buttonText = l10n_util::GetNSString(IDS_OK);
-    __weak __typeof(self) weakSelf = self;
-    UIAlertAction* dismiss = [UIAlertAction
-        actionWithTitle:buttonText
-                  style:UIAlertActionStyleDefault
-                handler:^(UIAlertAction* action) {
-                  [weakSelf.errorAlert dismissViewControllerAnimated:YES
-                                                          completion:nil];
-                }];
-    _errorAlert = [UIAlertController
-        alertControllerWithTitle:title
-                         message:description
-                  preferredStyle:UIAlertControllerStyleAlert];
-    [_errorAlert addAction:dismiss];
-  }
-  return _errorAlert;
 }
 
 - (UIAlertController*)fileDeletionAlert {
@@ -213,7 +202,7 @@
 #pragma mark - PromoStyleViewControllerDelegate
 
 - (void)didTapPrimaryActionButton {
-  switch (_containerViewController.importStage) {
+  switch (self.importStage) {
     case SafariDataImportStage::kNotStarted:
       if ([self showFilePicker]) {
         [self transitionToNextImportStage];
@@ -238,29 +227,50 @@
   [self dismissWorkflow];
 }
 
-#pragma mark - SafariDataImportImportStageTransitionHandler
+#pragma mark - DataImportImportStageTransitionHandler
 
 - (void)transitionToNextImportStage {
-  CHECK_NE(_containerViewController.importStage,
-           SafariDataImportStage::kImported)
+  CHECK_NE(self.importStage, SafariDataImportStage::kImported)
       << "No next import stage.";
-  int nextImportStageInt =
-      static_cast<int>(_containerViewController.importStage) + 1;
+  int nextImportStageInt = static_cast<int>(self.importStage) + 1;
   _containerViewController.email = self.mediator.email;
   _containerViewController.importStage =
       static_cast<SafariDataImportStage>(nextImportStageInt);
 }
 
-- (void)resetToInitialImportStage:(BOOL)userInitiated {
-  SafariDataImportStage currentStage = _containerViewController.importStage;
-  CHECK_EQ(currentStage, SafariDataImportStage::kFileLoading)
-      << "Not supported for stage: " << static_cast<int>(currentStage);
-  /// If the user has not explicitly canceled the import, alert the user that
-  /// they selected the wrong file.
-  if (!userInitiated) {
-    BOOL success = [self presentViewController:self.errorAlert];
+- (void)resetToInitialImportStage:(DataImportResetReason)reason {
+  if (self.importStage == SafariDataImportStage::kNotStarted) {
+    return;
+  }
+  UIAlertController* alert = nil;
+  switch (reason) {
+    case DataImportResetReason::kUserInitiated:
+      break;
+    case DataImportResetReason::kNoImportableData: {
+      /// If the user has not explicitly canceled the import, alert the user
+      /// that they selected the wrong file.
+      NSString* title = l10n_util::GetNSString(
+          IDS_IOS_SAFARI_IMPORT_IMPORT_FAILURE_MESSAGE_TITLE);
+      NSString* message = l10n_util::GetNSString(
+          IDS_IOS_SAFARI_IMPORT_IMPORT_FAILURE_MESSAGE_DESCRIPTION);
+      alert = [self alertWithTitle:title message:message];
+      break;
+    }
+    case DataImportResetReason::kAllDataBlockedByPolicy: {
+      NSString* title = l10n_util::GetNSString(
+          IDS_IOS_SAFARI_IMPORT_IMPORT_NOT_ALLOWED_TITLE);
+      NSString* message = l10n_util::GetNSString(
+          IDS_IOS_SAFARI_IMPORT_IMPORT_NOT_ALLOWED_MESSAGE);
+      alert = [self alertWithTitle:title message:message];
+      break;
+    }
+  }
+
+  if (alert) {
+    BOOL success = [self presentViewController:alert];
     RecordSafariDataImportFailure(success);
   }
+
   [self.mediator reset];
   _containerViewController.importStage = SafariDataImportStage::kNotStarted;
 }
@@ -274,12 +284,23 @@
   NSArray<PasswordImportItem*>* invalidPasswords =
       self.mediator.invalidPasswords;
   CHECK_GT(invalidPasswords.count, 0u);
-  SafariDataInvalidPasswordsViewController* invalidPasswordsViewController =
-      [[SafariDataInvalidPasswordsViewController alloc]
-          initWithInvalidPasswords:invalidPasswords];
+  DataImportInvalidCredentialsViewController* invalidPasswordsViewController =
+      [[DataImportInvalidCredentialsViewController alloc]
+          initWithInvalidCredentials:invalidPasswords
+                                type:CredentialType::kPassword];
   [self presentViewController:
             [[UINavigationController alloc]
                 initWithRootViewController:invalidPasswordsViewController]];
+}
+
+#pragma mark - DataImportCredentialConflictResolutionViewControllerDelegate
+
+- (void)cancelledConflictResolution {
+  [_containerViewController dismissViewControllerAnimated:YES completion:nil];
+}
+
+- (void)resolvedCredentialConflicts {
+  [_containerViewController dismissViewControllerAnimated:YES completion:nil];
 }
 
 #pragma mark - Private
@@ -311,16 +332,18 @@
   CHECK(passwordConflicts);
   if (passwordConflicts.count == 0) {
     /// Continue to import passwords without conflict override.
-    [self.mediator continueToImportPasswords:[NSArray array]];
+    [self.mediator continueToImportPasswords:[NSArray array] passkeys:@[]];
     return;
   }
   /// Wraps the password conflict view in a navigation controller to display
   /// navigation bar and toolbar.
-  SafariDataImportPasswordConflictResolutionViewController*
+  DataImportCredentialConflictResolutionViewController*
       conflictResolutionViewController =
-          [[SafariDataImportPasswordConflictResolutionViewController alloc]
-              initWithPasswordConflicts:passwordConflicts];
+          [[DataImportCredentialConflictResolutionViewController alloc]
+              initWithPasswordConflicts:passwordConflicts
+                       passkeyConflicts:[NSArray array]];
   conflictResolutionViewController.mutator = self.mediator;
+  conflictResolutionViewController.delegate = self;
   UINavigationController* wrapper = [[UINavigationController alloc]
       initWithRootViewController:conflictResolutionViewController];
   wrapper.toolbarHidden = NO;
@@ -371,8 +394,24 @@
 
 /// Dismisses Safari import workflow.
 - (void)dismissWorkflow {
-  RecordSafariDataImportEndsAtImportStage(_containerViewController.importStage);
+  RecordSafariDataImportEndsAtImportStage(self.importStage);
   [self.delegate safariDataImportCoordinatorWillDismissWorkflow:self];
+}
+
+/// Creates and returns an alert controller.
+- (UIAlertController*)alertWithTitle:(NSString*)title
+                             message:(NSString*)message {
+  UIAlertController* alert =
+      [UIAlertController alertControllerWithTitle:title
+                                          message:message
+                                   preferredStyle:UIAlertControllerStyleAlert];
+  NSString* buttonText = l10n_util::GetNSString(IDS_OK);
+  UIAlertAction* dismiss =
+      [UIAlertAction actionWithTitle:buttonText
+                               style:UIAlertActionStyleDefault
+                             handler:nil];
+  [alert addAction:dismiss];
+  return alert;
 }
 
 @end

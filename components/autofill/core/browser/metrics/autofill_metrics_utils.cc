@@ -20,6 +20,8 @@ constexpr DenseSet<FormType> kCreditCardFormTypes = {
     FormType::kCreditCardForm, FormType::kStandaloneCvcForm};
 constexpr DenseSet<FormType> kLoyaltyCardFormTypes = {
     FormType::kLoyaltyCardForm};
+constexpr DenseSet<FormType> kOneTimePasswordFormTypes = {
+    FormType::kOneTimePasswordForm};
 constexpr FieldTypeSet kFieldTypesOfATypicalStoreLocatorForm = {
     ADDRESS_HOME_CITY, ADDRESS_HOME_STATE, ADDRESS_HOME_ZIP};
 
@@ -96,6 +98,9 @@ DenseSet<FormTypeNameForLogging> GetFormTypesForLogging(
       case FormType::kLoyaltyCardForm:
         form_types.insert(FormTypeNameForLogging::kLoyaltyCardForm);
         break;
+      case FormType::kOneTimePasswordForm:
+        form_types.insert(FormTypeNameForLogging::kOneTimePasswordForm);
+        break;
       case FormType::kPasswordForm:
       case FormType::kUnknownFormType:
         break;
@@ -141,6 +146,25 @@ const char* GetProfileCategorySuffix(
     case AutofillProfileRecordTypeCategory::kAccountNameEmail:
       return "AccountNameEmail";
   }
+}
+
+const char* GetProfileRecordTypeSuffix(
+    AutofillProfile::RecordType record_type) {
+  // LINT.IfChange(ProfileRecordTypeSuffix)
+  using RecordType = AutofillProfile::RecordType;
+  switch (record_type) {
+    case RecordType::kLocalOrSyncable:
+      return "LocalOrSyncable";
+    case RecordType::kAccount:
+      return "Account";
+    case RecordType::kAccountHome:
+      return "AccountHome";
+    case RecordType::kAccountWork:
+      return "AccountWork";
+    case RecordType::kAccountNameEmail:
+      return "AccountNameEmail";
+  }
+  // LINT.ThenChange(/tools/metrics/histograms/metadata/autofill/histograms.xml:ProfileRecordTypeSuffix)
 }
 
 SettingsVisibleFieldTypeForMetrics ConvertSettingsVisibleFieldTypeForMetrics(
@@ -197,6 +221,12 @@ DenseSet<FormTypeNameForLogging> GetAddressFormTypesForLogging(
   return internal::GetFormTypesForLogging(form, internal::kAddressFormTypes);
 }
 
+DenseSet<FormTypeNameForLogging> GetOneTimePasswordTypesForLogging(
+    const FormStructure& form) {
+  return internal::GetFormTypesForLogging(form,
+                                          internal::kOneTimePasswordFormTypes);
+}
+
 DenseSet<FormTypeNameForLogging> GetLoyaltyFormTypesForLogging(
     const FormStructure& form) {
   return internal::GetFormTypesForLogging(form,
@@ -206,6 +236,19 @@ DenseSet<FormTypeNameForLogging> GetLoyaltyFormTypesForLogging(
 DenseSet<FormTypeNameForLogging> GetCreditCardFormTypesForLogging(
     const FormStructure& form) {
   return internal::GetFormTypesForLogging(form, internal::kCreditCardFormTypes);
+}
+
+bool IsPostalAddress(const AutofillProfile& profile) {
+  static constexpr FieldTypeSet kPostalAddressFieldTypes = {
+      ADDRESS_HOME_CITY, ADDRESS_HOME_STATE, ADDRESS_HOME_STREET_ADDRESS,
+      ADDRESS_HOME_ZIP};
+  int number_of_set_fields = 0;
+  for (FieldType type : kPostalAddressFieldTypes) {
+    if (!profile.GetRawInfo(type).empty()) {
+      number_of_set_fields++;
+    }
+  }
+  return number_of_set_fields >= 2;
 }
 
 bool ShouldLogAutofillSuggestionShown(
@@ -220,8 +263,6 @@ bool ShouldLogAutofillSuggestionShown(
     case AutofillSuggestionTriggerSource::kComposeDialogLostFocus:
     case AutofillSuggestionTriggerSource::kPasswordManager:
     case AutofillSuggestionTriggerSource::kiOS:
-    case AutofillSuggestionTriggerSource::
-        kShowPromptAfterDialogClosedNonManualFallback:
     case AutofillSuggestionTriggerSource::kPasswordManagerProcessedFocusedField:
     case AutofillSuggestionTriggerSource::kManualFallbackPasswords:
     case AutofillSuggestionTriggerSource::kManualFallbackPlusAddresses:
@@ -229,7 +270,6 @@ bool ShouldLogAutofillSuggestionShown(
       return true;
     case AutofillSuggestionTriggerSource::kTextFieldValueChanged:
     case AutofillSuggestionTriggerSource::kComposeDelayedProactiveNudge:
-    case AutofillSuggestionTriggerSource::kAutofillAi:
     case AutofillSuggestionTriggerSource::kPlusAddressUpdatedInBrowserProcess:
       return false;
   }

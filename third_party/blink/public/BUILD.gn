@@ -12,6 +12,7 @@ import("//third_party/blink/renderer/core/core.gni")
 import("//third_party/webrtc/webrtc.gni")
 import("//tools/grit/grit_rule.gni")
 import("//tools/grit/repack.gni")
+import("//v8/gni/v8.gni")
 
 if (is_android) {
   import("//build/config/android/config.gni")
@@ -77,12 +78,14 @@ buildflag_header("buildflags") {
   flags = [
     "USE_MINIKIN_HYPHENATION=$use_minikin_hyphenation",
     "ENABLE_UNHANDLED_TAP=$enable_unhandled_tap",
+    "VERBOSE_PERSISTENT=$cppgc_enable_object_names",
   ]
 }
 
 if (is_android) {
   java_cpp_enum("blink_headers_java_enums_srcjar") {
     sources = [
+      "./common/context_menu_data/context_menu_data.h",
       "./common/input/web_input_event.h",
       "./mojom/context_menu/context_menu.mojom",
       "./mojom/input/input_handler.mojom",
@@ -222,7 +225,6 @@ source_set("blink_headers") {
     "platform/web_media_player_encrypted_media_client.h",
     "platform/web_media_player_source.h",
     "platform/web_media_source.h",
-    "platform/web_memory_pressure_listener.h",
     "platform/web_navigation_body_loader.h",
     "platform/web_network_state_notifier.h",
     "platform/web_policy_container.h",
@@ -241,7 +243,6 @@ source_set("blink_headers") {
     "platform/web_text_input_info.h",
     "platform/web_text_input_mode.h",
     "platform/web_text_input_type.h",
-    "platform/web_text_run.h",
     "platform/web_theme_engine.h",
     "platform/web_thread_safe_data.h",
     "platform/web_time_range.h",
@@ -324,6 +325,8 @@ source_set("blink_headers") {
     "web/web_image_cache.h",
     "web/web_input_element.h",
     "web/web_input_method_controller.h",
+    "web/web_interaction_effects_monitor.h",
+    "web/web_interaction_effects_monitor_observer.h",
     "web/web_label_element.h",
     "web/web_language_detection_details.h",
     "web/web_lifecycle_update.h",
@@ -451,7 +454,6 @@ source_set("blink_headers") {
     "//components/viz/common",
     "//media/capture:capture_base",
     "//media/capture:capture_lib",
-    "//media/webrtc",
     "//mojo/public/cpp/bindings",
     "//mojo/public/cpp/system",
     "//printing/mojom",

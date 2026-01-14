@@ -609,16 +609,6 @@ class VIEWS_EXPORT HWNDMessageHandler : public gfx::WindowImpl,
   // Updates DWM frame to extend into client area if needed.
   void UpdateDwmFrame();
 
-  // Generates a touch event and adds it to the |touch_events| parameter.
-  // |point| is the point where the touch was initiated.
-  // |id| is the event id associated with the touch event.
-  // |time_stamp| is the time stamp associated with the message.
-  void GenerateTouchEvent(ui::EventType event_type,
-                          const gfx::Point& point,
-                          ui::PointerId id,
-                          base::TimeTicks time_stamp,
-                          TouchEvents* touch_events);
-
   // Handles WM_NCLBUTTONDOWN and WM_NCMOUSEMOVE messages on the caption.
   // Returns true if the message was handled.
   bool HandleMouseInputForCaption(unsigned int message,
@@ -672,7 +662,7 @@ class VIEWS_EXPORT HWNDMessageHandler : public gfx::WindowImpl,
   std::optional<float> aspect_ratio_;
 
   // Size to exclude from aspect ratio calculation.
-  gfx::Size excluded_margin_;
+  gfx::Size excluded_margin_dip_;
 
   // The current DPI.
   int dpi_;
@@ -803,10 +793,10 @@ class VIEWS_EXPORT HWNDMessageHandler : public gfx::WindowImpl,
   // cause re-entrancy during teardown. https://crbug.com/1087553
   bool did_return_uia_object_;
 
-  // Set to true immediately before disconnecting the fragment root's element
-  // provider. From that point onward, any request for UiaRootObjectId via
-  // WM_GET_OBJECT will be ignored.
-  bool disconnecting_fragment_root_ = false;
+  // Set to true once WM_CREATE handling has completed and back to false before
+  // processing WM_DESTROY. Requests for accessibility objects via WM_GETOBJECT
+  // are ignored outside of this window.
+  bool may_service_accessibility_requests_ = false;
 
   // The location where the user clicked on the caption. We cache this when we
   // receive the WM_NCLBUTTONDOWN message. We use this in the subsequent

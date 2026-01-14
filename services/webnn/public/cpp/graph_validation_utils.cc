@@ -13,7 +13,6 @@
 
 #include "base/check.h"
 #include "base/check_op.h"
-#include "base/containers/contains.h"
 #include "base/notreached.h"
 #include "base/numerics/checked_math.h"
 #include "base/numerics/safe_conversions.h"
@@ -251,7 +250,7 @@ ValidateReduceAxesAndInferOutput(base::span<const uint32_t> input_dimensions,
     }
   } else {
     for (size_t i = 0; i < input_rank; i++) {
-      if (!base::Contains(axes, i)) {
+      if (!std::ranges::contains(axes, i)) {
         output_shape.push_back(input_dimensions[i]);
       }
     }
@@ -446,12 +445,12 @@ base::expected<OperandDescriptor, std::string> ValidateArgMinMaxAndInferOutput(
             input, context_properties.data_type_limits.arg_min_max_input)));
   }
 
-  if (!context_properties.data_type_limits.arg_min_max_output.Has(
+  if (!context_properties.data_type_limits.arg_min_max_output.data_types.Has(
           output_data_type)) {
     return base::unexpected(ErrorWithLabel(
         label, NotSupportedOpOutputTypeError(
-                   output_data_type,
-                   context_properties.data_type_limits.arg_min_max_output)));
+                   output_data_type, context_properties.data_type_limits
+                                         .arg_min_max_output.data_types)));
   }
 
   ASSIGN_OR_RETURN(std::vector<uint32_t> output_shape,
@@ -1074,6 +1073,14 @@ base::expected<OperandDescriptor, std::string> ValidateExpandAndInferOutput(
     return base::unexpected(ErrorWithLabel(
         label, NotSupportedInputArgumentError(
                    input, context_properties.data_type_limits.expand_input)));
+  }
+
+  if (!context_properties.data_type_limits.expand_input.ranks.Supports(
+          new_shape.size())) {
+    return base::unexpected(ErrorWithLabel(
+        label, NotSupportedOpOutputRankError(
+                   static_cast<uint32_t>(new_shape.size()),
+                   context_properties.data_type_limits.expand_input.ranks)));
   }
 
   std::optional<std::vector<uint32_t>> output_shape =
@@ -3003,9 +3010,11 @@ base::expected<void, std::string> ValidateTensor(
 
   // TODO(crbug.com/356905054): Consider adding `DataTypeLimits` specific to
   // `MLTensor` rather than using `input`.
-  if (!context_properties.data_type_limits.input.Has(descriptor.data_type())) {
+  if (!context_properties.data_type_limits.input.data_types.Has(
+          descriptor.data_type())) {
     return base::unexpected(NotSupportedMLTensorTypeError(
-        descriptor.data_type(), context_properties.data_type_limits.input));
+        descriptor.data_type(),
+        context_properties.data_type_limits.input.data_types));
   }
 
   const size_t byte_length = descriptor.PackedByteLength();

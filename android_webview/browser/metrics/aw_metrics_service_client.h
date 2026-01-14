@@ -65,15 +65,18 @@ extern const char kCrashpadHistogramAllocatorName[];
 //
 //   startup
 //      │
-//      ├────────────┐
-//      │            ▼
-//      │         query GMS for consent
-//      ▼            │
-//   Initialize()    │
-//      │            ▼
-//      │         SetHaveMetricsConsent()
-//      │            │
-//      │ ┌──────────┘
+//      ├───────────────┐
+//      │               ▼
+//      │            query GMS for consent
+//      ▼               │
+//   Initialize()       │
+//      │               │
+//      ▼               │
+//   SetUpMetricsDir()  │
+//      │               ▼
+//      │            SetHaveMetricsConsent()
+//      │               │
+//      │ ┌─────────────┘
 //      ▼ ▼
 //   MaybeStartMetrics()
 //      │
@@ -85,11 +88,13 @@ extern const char kCrashpadHistogramAllocatorName[];
 // SetHaveMetricsConsent(). Querying GMS is slow, so SetHaveMetricsConsent()
 // typically happens after Initialize(), but it may happen before.
 //
+// Initialize() is called before Finch is set up, and SetUpMetricsDir() is
+// called afterward to allow it to check base::Feature flags.
+//
 // Each path sets a flag, |init_finished_| or |set_consent_finished_|, to show
-// that path has finished, and then calls MaybeStartMetrics(). When
-// MaybeStartMetrics() is called the first time, it sees only one flag is true,
-// and does nothing. When MaybeStartMetrics() is called the second time, it
-// decides whether to start metrics.
+// that path has finished, and |metrics_dir_| must also have been set. Each of
+// the steps ends by calling MaybeStartMetrics(), which does nothing unless all
+// three steps have happened.
 //
 // If consent was granted, MaybeStartMetrics() determines sampling by hashing
 // the client ID (generating a new ID if there was none). If this client is in
@@ -130,6 +135,7 @@ class AwMetricsServiceClient
       std::unique_ptr<AwMetricsServiceClient> aw_metrics_service_client);
 
   static void RegisterMetricsPrefs(PrefRegistrySimple* registry);
+  static base::FilePath GetNoBackupFilesDir();
 
   explicit AwMetricsServiceClient(std::unique_ptr<Delegate> delegate);
 
@@ -144,10 +150,6 @@ class AwMetricsServiceClient
   void SetHaveMetricsConsent(bool user_consent, bool app_consent);
   void SetFastStartupForTesting(bool fast_startup_for_testing);
   void SetUploadIntervalForTesting(const base::TimeDelta& upload_interval);
-
-  // Whether or not consent state has been determined, regardless of whether
-  // it is positive or negative.
-  bool IsConsentDetermined() const;
 
   // EnabledStateProvider:
   bool IsConsentGiven() const override;
@@ -228,19 +230,30 @@ class AwMetricsServiceClient
   // Returns the installer type of the app. Virtual for testing.
   virtual InstallerPackageType GetInstallerPackageType();
 
+  // Path where files related to metrics are stored.
+  base::FilePath GetMetricsDir();
+
+  // Path for the pre-migration metrics directory, used for migration testing.
+  base::FilePath GetOldMetricsDirForTesting();
+
+  // Set up the path used to store metrics. Separate from `Initialize` to enable
+  // this to check feature flags, which aren't initialized yet when `Initialize`
+  // runs.
+  void SetUpMetricsDir();
+
   // WebViewAppStateObserver
   void OnAppStateChanged(WebViewAppStateObserver::State state) override;
 
-  // - return `true` if client used to be sampled out.
-  // - return `false` if client used to be in-sampled.
+  // Determines if the client should have metrics filtering applied, or if they
+  // are in the sample of clients which upload unfiltered metrics.
   virtual bool ShouldApplyMetricsFiltering() const;
 
  protected:
-  // Returns the metrics sampling rate, to be used by IsInSample(). This is a
-  // per mille value, so this integer must always be in the inclusive range [0,
-  // 1000]. A value of 0 will always be out-of-sample, and a value of 1000 is
-  // always in-sample.
-  virtual int GetSampleRatePerMille() const;
+  // Returns the unfiltered metrics sampling rate, to be used by
+  // ShouldApplyMetricsFiltering(). This is a per mille value, so this integer
+  // must always be in the inclusive range [0, 1000]. A value of 0 will always
+  // be out-of-sample, and a value of 1000 is  always in-sample.
+  virtual int GetUnfilteredSampleRatePerMille() const;
 
   // Returns a value in the inclusive range [0, 999], to be compared against a
   // per mille sample rate. This value will be based on a persisted value, so it
@@ -249,18 +262,13 @@ class AwMetricsServiceClient
   // Virtual for testing.
   virtual int GetSampleBucketValue() const;
 
-  // Determines if the client is within the random sample of clients for which
-  // we log metrics. If this returns false, MetricsServiceClient should
-  // indicate reporting is disabled. Sampling is due to storage/bandwidth
-  // considerations.
-  virtual bool IsInSample() const;
-
   // Determines if the embedder app is the type of app for which we may log the
   // package name. If this returns false, GetAppPackageNameIfLoggable() must
   // return empty string. Virtual for testing.
   virtual bool CanRecordPackageNameForAppType();
 
  private:
+  bool IsReadyToStart() const;
   void MaybeStartMetrics();
   void RegisterForNotifications();
 
@@ -308,6 +316,8 @@ class AwMetricsServiceClient
   bool app_in_foreground_ = false;
   base::Time time_created_;
   std::unique_ptr<Delegate> delegate_;
+  base::FilePath metrics_dir_;
+  base::FilePath old_metrics_dir_;
 
   base::WeakPtrFactory<AwMetricsServiceClient> weak_ptr_factory_{this};
 };

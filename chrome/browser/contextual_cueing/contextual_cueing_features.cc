@@ -10,19 +10,37 @@
 #include "components/variations/service/variations_service.h"
 
 #if BUILDFLAG(ENABLE_GLIC)
-#include "chrome/browser/glic/glic_enabling.h"
 #include "chrome/browser/glic/host/glic_features.mojom.h"
+#include "chrome/browser/glic/public/glic_enabling.h"
 #endif  // BUILDFLAG(ENABLE_GLIC)
 
 namespace contextual_cueing {
 
-BASE_FEATURE(kContextualCueing,
-             "ContextualCueing",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+BASE_FEATURE(kContextualCueing, base::FEATURE_DISABLED_BY_DEFAULT);
 
-BASE_FEATURE(kGlicZeroStateSuggestions,
-             "GlicZeroStateSuggestions",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+BASE_FEATURE(kGlicZeroStateSuggestions, base::FEATURE_DISABLED_BY_DEFAULT);
+
+BASE_FEATURE(kZeroStateSuggestionsUseLegion, base::FEATURE_DISABLED_BY_DEFAULT);
+
+bool IsContextualCueingEnabled() {
+#if BUILDFLAG(ENABLE_GLIC)
+  // If the feature is overridden (e.g. via server-side config or command-line),
+  // use that state.
+  auto* feature_list = base::FeatureList::GetInstance();
+  if (feature_list &&
+      feature_list->IsFeatureOverridden(kContextualCueing.name)) {
+    // Important: If a server-side config applies to this client (i.e. after
+    // accounting for its filters), but the client gets assigned to the default
+    // group, they will still take this code path and receive the state
+    // specified via BASE_FEATURE() above.
+    return base::FeatureList::IsEnabled(kContextualCueing);
+  }
+
+  return glic::GlicEnabling::IsEnabledByFlags();
+#else
+  return base::FeatureList::IsEnabled(kContextualCueing);
+#endif
+}
 
 bool IsZeroStateSuggestionsEnabled() {
 #if BUILDFLAG(ENABLE_GLIC)
@@ -38,7 +56,7 @@ bool IsZeroStateSuggestionsEnabled() {
     return base::FeatureList::IsEnabled(kGlicZeroStateSuggestions);
   }
 
-  return glic::GlicEnabling::IsInRolloutLocation();
+  return glic::GlicEnabling::IsEnabledByFlags();
 #else
   return false;
 #endif
@@ -63,7 +81,7 @@ const base::FeatureParam<int> kNudgeCapCount(&kContextualCueing,
 const base::FeatureParam<base::TimeDelta> kNudgeCapTimePerDomain(
     &kContextualCueing,
     "NudgeCapTimePerDomain",
-    base::Hours(8));
+    base::Hours(4));
 
 const base::FeatureParam<int> kNudgeCapCountPerDomain(&kContextualCueing,
                                                       "NudgeCapCountPerDomain",
@@ -92,6 +110,10 @@ const base::FeatureParam<bool> kEnablePageContentExtraction(
     &kContextualCueing,
     "EnablePageContentExtraction",
     true);
+
+const base::FeatureParam<bool> kUseDynamicCues(&kContextualCueing,
+                                               "UseDynamicCues",
+                                               false);
 
 const base::FeatureParam<bool> kExtractInnerTextForZeroStateSuggestions(
     &kGlicZeroStateSuggestions,

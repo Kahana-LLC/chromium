@@ -11,7 +11,6 @@
 #include "ash/wm/window_state.h"
 #include "ash/wm/window_state_observer.h"
 #include "ash/wm/window_util.h"
-#include "base/functional/callback_forward.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/strings/strcat.h"
 #include "base/timer/elapsed_timer.h"
@@ -119,7 +118,7 @@ class ArcWmMetrics::WindowStateChangeObserver
   void RecordWindowStateChangeDelay(ash::WindowState* state) {
     const chromeos::AppType app_type =
         window_->GetProperty(chromeos::kAppTypeKey);
-    if (display::Screen::GetScreen()->InTabletMode()) {
+    if (display::Screen::Get()->InTabletMode()) {
       // When entering tablet mode, we only collect the data of visible window.
       if (state->IsMaximized() && window_->IsVisible()) {
         base::UmaHistogramCustomTimes(
@@ -341,7 +340,7 @@ void ArcWmMetrics::OnWindowPropertyChanged(aura::Window* window,
     return;
   }
 
-  if (display::Screen::GetScreen()->InTabletMode()) {
+  if (display::Screen::Get()->InTabletMode()) {
     return;
   }
 
@@ -444,7 +443,7 @@ void ArcWmMetrics::OnDisplayTabletStateChanged(display::TabletState state) {
 }
 
 void ArcWmMetrics::OnScreenCopiedBeforeRotation() {
-  if (!display::Screen::GetScreen()->InTabletMode()) {
+  if (!display::Screen::Get()->InTabletMode()) {
     return;
   }
 

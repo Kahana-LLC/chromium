@@ -45,7 +45,6 @@
 
 using testing::_;
 using testing::AnyNumber;
-using testing::Invoke;
 using testing::Return;
 using testing::StrictMock;
 
@@ -91,9 +90,8 @@ class VideoMockCompositorFrameSink
   }
 
   MOCK_METHOD1(SetNeedsBeginFrame, void(bool));
-  MOCK_METHOD0(SetWantsAnimateOnlyBeginFrames, void());
-  MOCK_METHOD0(SetWantsBeginFrameAcks, void());
-  MOCK_METHOD0(SetAutoNeedsBeginFrame, void());
+  MOCK_METHOD1(SetParams,
+               void(viz::mojom::blink::CompositorFrameSinkParamsPtr));
   MOCK_METHOD0(NotifyNewLocalSurfaceIdExpectedWhilePaused, void());
 
   MOCK_METHOD2(DoSubmitCompositorFrame,
@@ -137,7 +135,7 @@ class MockVideoFrameResourceProvider
 
   MOCK_METHOD2(Initialize,
                void(viz::RasterContextProvider*,
-                    scoped_refptr<gpu::ClientSharedImageInterface>));
+                    scoped_refptr<gpu::SharedImageInterface>));
   MOCK_METHOD4(AppendQuads,
                void(viz::CompositorRenderPass*,
                     scoped_refptr<media::VideoFrame>,
@@ -185,11 +183,20 @@ class VideoFrameSubmitterTest : public testing::Test {
       : now_src_(new base::SimpleTestTickClock()),
         begin_frame_source_(new viz::FakeExternalBeginFrameSource(0.f, false)),
         video_frame_provider_(new StrictMock<MockVideoFrameProvider>()),
-        context_provider_(viz::TestContextProvider::Create()),
+        context_provider_(viz::TestContextProvider::CreateRaster()),
         client_shared_image_interface_(
             base::MakeRefCounted<TestClientSharedImageInterface>()) {
     context_provider_->BindToCurrentSequence();
     MakeSubmitter();
+    task_environment_.RunUntilIdle();
+  }
+
+  void TearDown() override {
+    // Make sure GpuChannelHost is completely destroyed to avoid ASAN memory
+    // leak errors.
+    resource_provider_ = nullptr;
+    client_shared_image_interface_.reset();
+    submitter_.reset();
     task_environment_.RunUntilIdle();
   }
 
@@ -795,7 +802,30 @@ TEST_F(VideoFrameSubmitterTest,
   EXPECT_CALL(*video_frame_provider_, OnContextLost()).Times(1);
   submitter_->OnContextLost();
   OnReceivedContextProvider(false, nullptr, nullptr);
-  task_environment_.QuitClosure();
+  task_environment_.RunUntilIdle();
+}
+
+// Test software compositing after GpuChannel is lost, but the new GpuChannel is
+// initially lost too.
+TEST_F(VideoFrameSubmitterTest,
+       GpuChannelArrivesAlreadyLostAfterContextLostSoftwareCompositing) {
+  MockEmbeddedFrameSinkProvider mock_embedded_frame_sink_provider;
+  mojo::ReceiverSet<mojom::blink::EmbeddedFrameSinkProvider>
+      embedded_frame_sink_provider_receivers;
+  auto override =
+      mock_embedded_frame_sink_provider.CreateScopedOverrideMojoInterface(
+          embedded_frame_sink_provider_receivers);
+
+  EXPECT_CALL(*resource_provider_, Initialize(_, _)).Times(0);
+  EXPECT_CALL(mock_embedded_frame_sink_provider, ConnectToEmbedder(_, _))
+      .Times(0);
+  EXPECT_CALL(mock_embedded_frame_sink_provider, CreateCompositorFrameSink_(_))
+      .Times(0);
+  EXPECT_CALL(*video_frame_provider_, OnContextLost()).Times(1);
+  submitter_->OnContextLost();
+  client_shared_image_interface_->gpu_channel()->DestroyChannel();
+  OnReceivedContextProvider(false, nullptr, client_shared_image_interface_);
+  task_environment_.RunUntilIdle();
 }
 
 // This test simulates a race condition in which the |video_frame_provider_| is
@@ -1135,8 +1165,7 @@ TEST_F(VideoFrameSubmitterTest, ProcessTimingDetails) {
   EXPECT_CALL(*video_frame_provider_, UpdateCurrentFrame)
       .WillRepeatedly(Return(true));
   EXPECT_CALL(*video_frame_provider_, PutCurrentFrame).Times(AnyNumber());
-  EXPECT_CALL(*sink_, DoSubmitCompositorFrame)
-      .WillRepeatedly(Invoke(sink_submit));
+  EXPECT_CALL(*sink_, DoSubmitCompositorFrame).WillRepeatedly(sink_submit);
   EXPECT_CALL(*resource_provider_, AppendQuads).Times(AnyNumber());
   EXPECT_CALL(*resource_provider_, PrepareSendToParent).Times(AnyNumber());
   EXPECT_CALL(*resource_provider_, ReleaseFrameResources).Times(AnyNumber());
@@ -1155,8 +1184,10 @@ TEST_F(VideoFrameSubmitterTest, ProcessTimingDetails) {
     task_environment_.RunUntilIdle();
     AckSubmittedFrame();
   }
+  EXPECT_CALL(*sink_, SetNeedsBeginFrame(false));
   submitter_->StopRendering();
   EXPECT_EQ(reports, 1);
+  task_environment_.RunUntilIdle();
 }
 
 TEST_F(VideoFrameSubmitterTest, OpaqueFramesNotifyEmbedder) {

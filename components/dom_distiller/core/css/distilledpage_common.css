@@ -207,6 +207,11 @@ body {
 .monospace {
   font-family: monospace;
 }
+
+.Lexend {
+  font-family: 'Lexend', sans-serif;
+  font-optical-sizing: auto;
+}
 </if>
 
 <if expr="is_ios">
@@ -221,9 +226,26 @@ body {
 .monospace {
   font-family: ui-monospace, SFMono-Regular, ui-monospace, Monaco, 'Andale Mono', 'Ubuntu Mono', monospace;
 }
+
+.Lexend {
+  font-family: "Lexend", sans-serif;
+  font-optical-sizing: auto;
+  font-weight: 100;
+  font-style: normal;
+}
 </if>
 
 /* Content. */
+
+<if expr="is_ios or is_android">
+.desktop-only {
+  display: none;
+}
+</if>
+
+body .hidden {
+  display: none;
+}
 
 #loading-indicator {
   padding-bottom: 2em;
@@ -249,3 +271,32 @@ video::-webkit-media-controls-fullscreen-button {
   display: none;
 }
 </if>
+
+
+/* Video styling. */
+
+video::-webkit-media-controls-fullscreen-button {
+  display: none;
+}
+
+/* Iframe sizing. */
+.youtubeContainer {
+  height: 0;
+  /* This is the perecnt height of a standard HD video. */
+  padding-bottom: 56.25%;
+  position: relative;
+  width: 100%;
+}
+
+.youtubeIframe {
+  height: 100%;
+  position: absolute;
+  start: 0;
+  top: 0;
+  width: 100%;
+}
+
+/* Always hide nav elements. */
+nav {
+  display: none;
+}

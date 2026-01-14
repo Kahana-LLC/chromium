@@ -6,7 +6,6 @@ package org.chromium.chrome.browser.toolbar.bottom;
 
 import org.chromium.base.CallbackController;
 import org.chromium.base.supplier.ObservableSupplier;
-import org.chromium.base.supplier.Supplier;
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.browser_controls.BottomControlsLayer;
@@ -17,17 +16,18 @@ import org.chromium.chrome.browser.browser_controls.BottomControlsStacker.LayerV
 import org.chromium.chrome.browser.browser_controls.BrowserControlsOffsetTagsInfo;
 import org.chromium.chrome.browser.browser_controls.BrowserControlsStateProvider;
 import org.chromium.chrome.browser.browser_controls.BrowserStateBrowserControlsVisibilityDelegate;
-import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.fullscreen.FullscreenManager;
 import org.chromium.chrome.browser.layouts.LayoutStateProvider;
 import org.chromium.chrome.browser.layouts.LayoutStateProvider.LayoutStateObserver;
 import org.chromium.chrome.browser.layouts.LayoutType;
 import org.chromium.chrome.browser.tab.TabObscuringHandler;
 import org.chromium.chrome.browser.ui.edge_to_edge.EdgeToEdgeController;
-import org.chromium.components.browser_ui.edge_to_edge.EdgeToEdgeSupplier.ChangeObserver;
 import org.chromium.ui.KeyboardVisibilityDelegate;
 import org.chromium.ui.base.WindowAndroid;
+import org.chromium.ui.edge_to_edge.EdgeToEdgeSupplier.ChangeObserver;
 import org.chromium.ui.modelutil.PropertyModel;
+
+import java.util.function.Supplier;
 
 /**
  * This class is responsible for reacting to events from the outside world, interacting with other
@@ -294,9 +294,7 @@ class BottomControlsMediator
 
     @Override
     public int getType() {
-        return ChromeFeatureList.sAndroidBottomToolbar.isEnabled()
-                ? LayerType.TABSTRIP_TOOLBAR_BELOW_READALOUD
-                : LayerType.TABSTRIP_TOOLBAR;
+        return LayerType.TABSTRIP_TOOLBAR_BELOW_READALOUD;
     }
 
     @Override
@@ -306,9 +304,7 @@ class BottomControlsMediator
 
     @Override
     public @LayerScrollBehavior int getScrollBehavior() {
-        return ChromeFeatureList.sAndroidBottomToolbar.isEnabled()
-                ? LayerScrollBehavior.DEFAULT_SCROLL_OFF
-                : LayerScrollBehavior.ALWAYS_SCROLL_OFF;
+        return LayerScrollBehavior.DEFAULT_SCROLL_OFF;
     }
 
     @Override

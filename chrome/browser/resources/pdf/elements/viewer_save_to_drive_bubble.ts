@@ -3,21 +3,26 @@
 // found in the LICENSE file.
 
 import './icons.html.js';
+import 'chrome://resources/cr_elements/cr_button/cr_button.js';
 import 'chrome://resources/cr_elements/cr_icon_button/cr_icon_button.js';
 import 'chrome://resources/cr_elements/cr_icon/cr_icon.js';
 import 'chrome://resources/cr_elements/cr_progress/cr_progress.js';
+import 'chrome://resources/cr_elements/icons.html.js';
 
 import {I18nMixinLit} from 'chrome://resources/cr_elements/i18n_mixin_lit.js';
+import {assertNotReached} from 'chrome://resources/js/assert.js';
 import {EventTracker} from 'chrome://resources/js/event_tracker.js';
 import {sanitizeInnerHtml} from 'chrome://resources/js/parse_html_subset.js';
 import {isRTL} from 'chrome://resources/js/util.js';
 import {CrLitElement} from 'chrome://resources/lit/v3_0/lit.rollup.js';
 import type {PropertyValues} from 'chrome://resources/lit/v3_0/lit.rollup.js';
 
-import {SaveToDriveState} from '../constants.js';
+import {SaveToDriveBubbleRequestType, SaveToDriveState} from '../constants.js';
 
 import {getCss} from './viewer_save_to_drive_bubble.css.js';
 import {getHtml} from './viewer_save_to_drive_bubble.html.js';
+
+const DISMISS_TIMEOUT_MS = 5000;
 
 const ViewerSaveToDriveBubbleElementBase = I18nMixinLit(CrLitElement);
 
@@ -43,9 +48,8 @@ export class ViewerSaveToDriveBubbleElement extends
 
   static override get properties() {
     return {
-      bytesToTransfer: {type: Number},
-      bytesTransferred: {type: Number},
-      fileName: {type: String},
+      docTitle: {type: String},
+      progress: {type: Object},
       state: {type: String},
 
       description_: {
@@ -57,24 +61,21 @@ export class ViewerSaveToDriveBubbleElement extends
         type: String,
         state: true,
       },
-
-      fileMetadata_: {
-        type: String,
-        state: true,
-      },
     };
   }
 
-  accessor bytesToTransfer: number = 0;
-  accessor bytesTransferred: number = 0;
-  accessor fileName: string = '';
+  accessor docTitle: string = '';
+  accessor progress: chrome.pdfViewerPrivate.SaveToDriveProgress = {
+    status: chrome.pdfViewerPrivate.SaveToDriveStatus.NOT_STARTED,
+    errorType: chrome.pdfViewerPrivate.SaveToDriveErrorType.NO_ERROR,
+  };
   accessor state: SaveToDriveState = SaveToDriveState.UNINITIALIZED;
   protected accessor description_: TrustedHTML = sanitizeInnerHtml('');
   protected accessor dialogTitle_: string = '';
-  protected accessor fileMetadata_: string = '';
 
   private anchor_: HTMLElement|null = null;
   private eventTracker_: EventTracker = new EventTracker();
+  private dismissTimeoutId_: number|null = null;
 
   override disconnectedCallback() {
     super.disconnectedCallback();
@@ -88,24 +89,80 @@ export class ViewerSaveToDriveBubbleElement extends
     }
   }
 
-  showAt(anchor: HTMLElement) {
+  // If `autoDismiss` is true, the bubble will be automatically dismissed after
+  // 5 seconds. However, if the bubble is already open manually, the timeout
+  // will be ignored.
+  showAt(anchor: HTMLElement, autoDismiss: boolean = false) {
+    if (this.$.dialog.open && autoDismiss && !this.dismissTimeoutId_) {
+      return;
+    }
     this.$.dialog.show();
     this.anchor_ = anchor;
     this.positionDialog_();
     this.$.dialog.focus();
+    this.eventTracker_.remove(window, 'resize');
     this.eventTracker_.add(window, 'resize', this.positionDialog_.bind(this));
+    if (autoDismiss) {
+      this.setDismissTimeout_();
+    }
   }
 
-  protected isUploading_(): boolean {
-    return this.state === SaveToDriveState.UPLOADING;
+  protected getFileName_(): string {
+    return this.progress.fileName ?? this.docTitle;
+  }
+
+  protected getFileSizeBytes_(): number {
+    return this.progress.fileSizeBytes ?? 0;
+  }
+
+  protected getMetadata_(): string {
+    return this.progress.fileMetadata ?? '';
+  }
+
+  protected getUploadedBytes_(): number {
+    return this.progress.uploadedBytes ?? 0;
+  }
+
+  protected isSaveToDriveState_(state: SaveToDriveState): boolean {
+    return this.state === state;
+  }
+
+  protected onRequestButtonClick_() {
+    let requestType: SaveToDriveBubbleRequestType;
+    switch (this.state) {
+      case SaveToDriveState.UPLOADING:
+        requestType = SaveToDriveBubbleRequestType.CANCEL_UPLOAD;
+        break;
+      case SaveToDriveState.STORAGE_FULL_ERROR:
+        requestType = SaveToDriveBubbleRequestType.MANAGE_STORAGE;
+        break;
+      case SaveToDriveState.SUCCESS:
+        requestType = SaveToDriveBubbleRequestType.OPEN_IN_DRIVE;
+        break;
+      case SaveToDriveState.CONNECTION_ERROR:
+      case SaveToDriveState.SESSION_TIMEOUT_ERROR:
+        requestType = SaveToDriveBubbleRequestType.RETRY;
+        break;
+      default:
+        assertNotReached(`Invalid bubble action: ${this.state}`);
+    }
+    this.fire('save-to-drive-bubble-action', requestType);
+    this.$.dialog.close();
   }
 
   protected onCloseClick_() {
+    this.fire(
+        'save-to-drive-bubble-action',
+        SaveToDriveBubbleRequestType.DIALOG_CLOSED);
     this.$.dialog.close();
   }
 
   protected onDialogClose_() {
     this.eventTracker_.removeAll();
+    if (this.dismissTimeoutId_) {
+      clearTimeout(this.dismissTimeoutId_);
+      this.dismissTimeoutId_ = null;
+    }
   }
 
   protected onFocusout_(e: FocusEvent) {
@@ -117,28 +174,8 @@ export class ViewerSaveToDriveBubbleElement extends
   }
 
   private onStateChanged_() {
-    switch (this.state) {
-      case SaveToDriveState.UPLOADING:
-        this.dialogTitle_ = this.i18n('saveToDriveDialogUploadingTitle');
-        this.description_ = window.trustedTypes!.emptyHTML;
-        // TODO(crbug.com/427451594): Use a translated fileMetadata string.
-        this.fileMetadata_ = '304/503 KB · 4 seconds left';
-        break;
-      // TODO(crbug.com/427451594): Set the strings for the following states.
-      case SaveToDriveState.SUCCESS:
-      case SaveToDriveState.CONNECTION_ERROR:
-      case SaveToDriveState.STORAGE_FULL_ERROR:
-      case SaveToDriveState.SESSION_TIMEOUT_ERROR:
-      case SaveToDriveState.UNKNOWN_ERROR:
-        this.dialogTitle_ = `Save to Drive ${String(this.state)}`;
-        this.description_ = sanitizeInnerHtml(
-            `A string that contains a <a>link</a> ${String(this.state)}`);
-        this.fileMetadata_ =
-            `304/503 KB · 4 seconds left (${String(this.state)})`;
-        break;
-      default:
-        break;
-    }
+    this.updateDescription_();
+    this.updateDialogTitle_();
   }
 
   private positionDialog_() {
@@ -166,6 +203,76 @@ export class ViewerSaveToDriveBubbleElement extends
     } else {
       this.$.dialog.style.top =
           `${this.anchor_.offsetTop + this.anchor_.offsetHeight}px`;
+    }
+  }
+
+  private setDismissTimeout_() {
+    this.dismissTimeoutId_ = setTimeout(() => {
+      this.dismissTimeoutId_ = null;
+      this.$.dialog.close();
+    }, DISMISS_TIMEOUT_MS);
+  }
+
+  private updateDescription_() {
+    switch (this.state) {
+      case SaveToDriveState.UNINITIALIZED:
+      case SaveToDriveState.UPLOADING:
+        this.description_ = window.trustedTypes!.emptyHTML;
+        break;
+      case SaveToDriveState.SUCCESS:
+        this.description_ =
+            this.i18nAdvanced('saveToDriveDialogSuccessMessage', {
+              tags: ['b'],
+              substitutions: [
+                this.progress.parentFolderName ?? '',
+              ],
+            });
+        break;
+      case SaveToDriveState.CONNECTION_ERROR:
+        this.description_ =
+            this.i18nAdvanced('saveToDriveDialogConnectionErrorMessage');
+        break;
+      case SaveToDriveState.STORAGE_FULL_ERROR:
+        this.description_ =
+            this.i18nAdvanced('saveToDriveDialogStorageFullErrorMessage');
+        break;
+      case SaveToDriveState.SESSION_TIMEOUT_ERROR:
+        this.description_ =
+            this.i18nAdvanced('saveToDriveDialogSessionTimeoutErrorMessage');
+        break;
+      case SaveToDriveState.UNKNOWN_ERROR:
+        this.description_ =
+            this.i18nAdvanced('saveToDriveDialogUnknownErrorMessage', {
+              tags: ['a'],
+              substitutions: [
+                this.i18n('pdfSaveToDriveHelpCenterURL'),
+              ],
+            });
+        break;
+      default:
+        assertNotReached(`Invalid state for description: ${this.state}`);
+    }
+  }
+
+  private updateDialogTitle_() {
+    switch (this.state) {
+      case SaveToDriveState.UNINITIALIZED:
+        this.dialogTitle_ = this.state;
+        break;
+      case SaveToDriveState.UPLOADING:
+        this.dialogTitle_ = this.i18n('saveToDriveDialogUploadingTitle');
+        break;
+      case SaveToDriveState.SUCCESS:
+        this.dialogTitle_ = this.i18n('saveToDriveDialogSuccessTitle');
+        break;
+      case SaveToDriveState.CONNECTION_ERROR:
+      case SaveToDriveState.STORAGE_FULL_ERROR:
+      case SaveToDriveState.SESSION_TIMEOUT_ERROR:
+      case SaveToDriveState.UNKNOWN_ERROR:
+        this.dialogTitle_ = this.i18n('saveToDriveDialogErrorTitle');
+        break;
+      default:
+        assertNotReached(`Invalid state for dialog title: ${this.state}`);
     }
   }
 }

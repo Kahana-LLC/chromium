@@ -2,10 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <algorithm>
 #include <memory>
 #include <vector>
 
-#include "base/containers/contains.h"
 #include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
 #include "base/run_loop.h"
@@ -152,7 +152,8 @@ class TestInputEventObserver : public RenderWidgetHost::InputEventObserver {
   ~TestInputEventObserver() override {}
 
   void OnInputEvent(const RenderWidgetHost& widget,
-                    const blink::WebInputEvent& event) override {
+                    const blink::WebInputEvent& event,
+                    InputEventSource source) override {
     dispatched_events_.push_back(event.GetType());
   }
 
@@ -294,8 +295,8 @@ IN_PROC_BROWSER_TEST_F(RenderWidgetHostTouchEmulatorBrowserTest,
     // that we generated a GestureScrollEnd and routed it without crashing.
     TestInputEventObserver::EventTypeVector dispatched_events =
         observer.GetAndResetDispatchedEventTypes();
-    EXPECT_TRUE(base::Contains(dispatched_events,
-                               blink::WebInputEvent::Type::kGestureScrollEnd));
+    EXPECT_TRUE(std::ranges::contains(
+        dispatched_events, blink::WebInputEvent::Type::kGestureScrollEnd));
   } while (!touch_emulator->suppress_next_fling_cancel_for_testing());
 }
 #endif  // !BUILDFLAG(IS_ANDROID)
@@ -402,7 +403,10 @@ IN_PROC_BROWSER_TEST_F(RenderWidgetHostTouchEmulatorBrowserTest,
 
   SimulateRoutedMouseEvent(blink::WebInputEvent::Type::kMouseUp, 10, 60, 0,
                            true);
-  WaitForAckWith(blink::WebInputEvent::Type::kTouchEnd);
+  if (observer.acked_touch_event_type() !=
+      blink::WebInputEvent::Type::kTouchEnd) {
+    WaitForAckWith(blink::WebInputEvent::Type::kTouchEnd);
+  }
   EXPECT_EQ(blink::WebInputEvent::Type::kTouchEnd,
             observer.acked_touch_event_type());
   dispatched_events = observer.GetAndResetDispatchedEventTypes();
@@ -1273,8 +1277,7 @@ class RenderWidgetHostSameDocNavUpdatesLocalSurfaceIdTest
     host_resolver()->AddRule("*", "127.0.0.1");
     ASSERT_TRUE(embedded_test_server()->Start());
     auto preferences = web_contents()->GetOrCreateWebPreferences();
-    preferences.increment_local_surface_id_for_mainframe_same_doc_navigation =
-        GetParam();
+    preferences.should_screenshot_on_mainframe_same_doc_navigation = GetParam();
     web_contents()->SetWebPreferences(preferences);
   }
 

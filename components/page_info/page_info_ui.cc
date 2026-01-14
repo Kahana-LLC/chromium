@@ -3,10 +3,6 @@
 // found in the LICENSE file.
 
 #include <variant>
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
 
 #include <utility>
 
@@ -72,6 +68,9 @@ base::span<const PageInfoUI::PermissionUIInfo> GetContentSettingsUIInfo() {
       {ContentSettingsType::POPUPS, IDS_SITE_SETTINGS_TYPE_POPUPS_REDIRECTS,
        IDS_SITE_SETTINGS_TYPE_POPUPS_REDIRECTS_MID_SENTENCE},
       {ContentSettingsType::GEOLOCATION, IDS_SITE_SETTINGS_TYPE_LOCATION,
+       IDS_SITE_SETTINGS_TYPE_LOCATION_MID_SENTENCE},
+      {ContentSettingsType::GEOLOCATION_WITH_OPTIONS,
+       IDS_SITE_SETTINGS_TYPE_LOCATION,
        IDS_SITE_SETTINGS_TYPE_LOCATION_MID_SENTENCE},
       {ContentSettingsType::NOTIFICATIONS, IDS_SITE_SETTINGS_TYPE_NOTIFICATIONS,
        IDS_SITE_SETTINGS_TYPE_NOTIFICATIONS_MID_SENTENCE},
@@ -145,14 +144,19 @@ base::span<const PageInfoUI::PermissionUIInfo> GetContentSettingsUIInfo() {
       {ContentSettingsType::LOCAL_NETWORK_ACCESS,
        IDS_SITE_SETTINGS_TYPE_LOCAL_NETWORK_ACCESS,
        IDS_SITE_SETTINGS_TYPE_LOCAL_NETWORK_ACCESS_MID_SENTENCE},
+      {ContentSettingsType::LOCAL_NETWORK, IDS_SITE_SETTINGS_TYPE_LOCAL_NETWORK,
+       IDS_SITE_SETTINGS_TYPE_LOCAL_NETWORK_MID_SENTENCE},
+      {ContentSettingsType::LOOPBACK_NETWORK,
+       IDS_SITE_SETTINGS_TYPE_LOOPBACK_NETWORK,
+       IDS_SITE_SETTINGS_TYPE_LOOPBACK_NETWORK_MID_SENTENCE},
       {ContentSettingsType::WINDOW_MANAGEMENT,
        IDS_SITE_SETTINGS_TYPE_WINDOW_MANAGEMENT,
        IDS_SITE_SETTINGS_TYPE_WINDOW_MANAGEMENT_MID_SENTENCE},
-#if !BUILDFLAG(IS_ANDROID)
-      // Page Info Permissions that are not defined in Android.
       {ContentSettingsType::AUTO_PICTURE_IN_PICTURE,
        IDS_SITE_SETTINGS_TYPE_AUTO_PICTURE_IN_PICTURE,
        IDS_SITE_SETTINGS_TYPE_AUTO_PICTURE_IN_PICTURE_MID_SENTENCE},
+#if !BUILDFLAG(IS_ANDROID)
+      // Page Info Permissions that are not defined in Android.
       {ContentSettingsType::CAPTURED_SURFACE_CONTROL,
        IDS_SITE_SETTINGS_TYPE_CAPTURED_SURFACE_CONTROL_SHARED_TABS,
        IDS_SITE_SETTINGS_TYPE_CAPTURED_SURFACE_CONTROL_SHARED_TABS_MID_SENTENCE},
@@ -219,8 +223,7 @@ PermissionSetting GetEffectiveSetting(
     const std::optional<PermissionSetting>& setting,
     const PermissionSetting& default_setting) {
   // Check that we are passing nullopt instead of CONTENT_SETTING_DEFAULT.
-  CHECK(!setting || !std::holds_alternative<ContentSetting>(*setting) ||
-        std::get<ContentSetting>(*setting) != CONTENT_SETTING_DEFAULT);
+  CHECK_NE(setting, PermissionSetting{CONTENT_SETTING_DEFAULT});
   return setting.value_or(default_setting);
 }
 
@@ -301,6 +304,12 @@ std::u16string GetPermissionAskStateString(ContentSettingsType type) {
       break;
     case ContentSettingsType::LOCAL_NETWORK_ACCESS:
       message_id = IDS_PAGE_INFO_STATE_TEXT_LOCAL_NETWORK_ACCESS_ASK;
+      break;
+    case ContentSettingsType::LOCAL_NETWORK:
+      message_id = IDS_PAGE_INFO_STATE_TEXT_LOCAL_NETWORK_ASK;
+      break;
+    case ContentSettingsType::LOOPBACK_NETWORK:
+      message_id = IDS_PAGE_INFO_STATE_TEXT_LOOPBACK_NETWORK_ASK;
       break;
     // Guard content settings:
     case ContentSettingsType::USB_GUARD:
@@ -884,8 +893,13 @@ SkColor PageInfoUI::GetSecondaryTextColor() {
 // static
 int PageInfoUI::GetIdentityIconID(PageInfo::SiteIdentityStatus status) {
   switch (status) {
-    case PageInfo::SITE_IDENTITY_STATUS_UNKNOWN:
     case PageInfo::SITE_IDENTITY_STATUS_INTERNAL_PAGE:
+      if (base::FeatureList::IsEnabled(net::features::kVerifyQWACs)) {
+        return IDR_PAGEINFO_INTERNAL;
+      } else {
+        return IDR_PAGEINFO_GOOD;
+      }
+    case PageInfo::SITE_IDENTITY_STATUS_UNKNOWN:
     case PageInfo::SITE_IDENTITY_STATUS_CERT:
     case PageInfo::SITE_IDENTITY_STATUS_EV_CERT:
     case PageInfo::SITE_IDENTITY_STATUS_1QWAC_CERT:

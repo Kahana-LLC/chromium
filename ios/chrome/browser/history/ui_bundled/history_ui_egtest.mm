@@ -10,13 +10,12 @@
 #import "components/browsing_data/core/pref_names.h"
 #import "components/sync/base/command_line_switches.h"
 #import "components/url_formatter/elide_url.h"
-#import "ios/chrome/browser/authentication/ui_bundled/signin_earl_grey.h"
-#import "ios/chrome/browser/authentication/ui_bundled/signin_earl_grey_ui_test_util.h"
+#import "ios/chrome/browser/authentication/test/signin_earl_grey.h"
+#import "ios/chrome/browser/authentication/test/signin_earl_grey_ui_test_util.h"
 #import "ios/chrome/browser/history/ui_bundled/history_ui_constants.h"
 #import "ios/chrome/browser/menu/ui_bundled/menu_action_type.h"
 #import "ios/chrome/browser/metrics/model/metrics_app_interface.h"
-#import "ios/chrome/browser/popup_menu/ui_bundled/popup_menu_constants.h"
-#import "ios/chrome/browser/settings/ui_bundled/clear_browsing_data/features.h"
+#import "ios/chrome/browser/popup_menu/public/popup_menu_constants.h"
 #import "ios/chrome/browser/shared/public/features/features.h"
 #import "ios/chrome/browser/shared/ui/table_view/table_view_constants.h"
 #import "ios/chrome/browser/signin/model/fake_system_identity.h"
@@ -97,16 +96,16 @@ void ExpectContextMenuHistoryEntryActionsHistogram(int count,
   GURL _URL3;
 }
 
+- (BOOL)loadMinimalAppUI {
+  return YES;
+}
+
 - (void)setUp {
   [super setUp];
 
   _URL1 = GURL(kURL1);
   _URL2 = GURL(kURL2);
   _URL3 = GURL(kURL3);
-
-  if (![ChromeTestCase forceRestartAndWipe]) {
-    [ChromeEarlGrey clearBrowsingHistory];
-  }
 
   // Some tests rely on a clean state for the "Clear Browsing Data" settings
   // screen.
@@ -118,6 +117,7 @@ void ExpectContextMenuHistoryEntryActionsHistogram(int count,
 }
 
 - (void)tearDownHelper {
+  [ChromeCoordinatorAppInterface reset];
   [MetricsAppInterface stopOverridingMetricsAndCrashReportingForTesting];
   chrome_test_util::GREYAssertErrorNil(
       [MetricsAppInterface releaseHistogramTester]);
@@ -133,9 +133,9 @@ void ExpectContextMenuHistoryEntryActionsHistogram(int count,
 
 // Tests that no history is shown if there has been no navigation.
 - (void)testDisplayNoHistory {
+  [ChromeEarlGrey clearBrowsingHistory];
   [ChromeCoordinatorAppInterface startHistoryCoordinator];
   [ChromeEarlGreyUI assertHistoryHasNoEntries];
-  [ChromeCoordinatorAppInterface reset];
 }
 
 // Tests that the history panel displays navigation history.
@@ -160,7 +160,6 @@ void ExpectContextMenuHistoryEntryActionsHistogram(int count,
   GREYAssertEqualObjects(ChromeCoordinatorAppInterface.lastURLLoaded,
                          net::NSURLWithGURL(_URL1),
                          @"URL1 should have loaded.");
-  [ChromeCoordinatorAppInterface reset];
 }
 
 // Tests that searching history displays only entries matching the search term.
@@ -181,7 +180,7 @@ void ExpectContextMenuHistoryEntryActionsHistogram(int count,
       assertWithMatcher:grey_notNil()];
 
   NSString* searchString =
-      [NSString stringWithFormat:@"%s", _URL1.path().c_str()];
+      [NSString stringWithFormat:@"%s", _URL1.GetPath().c_str()];
 
   [[EarlGrey selectElementWithMatcher:SearchIconButton()]
       performAction:grey_replaceText(searchString)];
@@ -197,7 +196,6 @@ void ExpectContextMenuHistoryEntryActionsHistogram(int count,
       assertWithMatcher:grey_nil()];
   [[EarlGrey selectElementWithMatcher:HistoryEntry(_URL3, _URL3.GetContent())]
       assertWithMatcher:grey_nil()];
-  [ChromeCoordinatorAppInterface reset];
 }
 
 // Tests that long press on scrim while search box is enabled dismisses the
@@ -235,7 +233,6 @@ void ExpectContextMenuHistoryEntryActionsHistogram(int count,
       assertWithMatcher:grey_notNil()];
   [[EarlGrey selectElementWithMatcher:HistoryEntry(_URL3, _URL3.GetContent())]
       assertWithMatcher:grey_notNil()];
-  [ChromeCoordinatorAppInterface reset];
 }
 
 // Tests deletion of history entries.
@@ -290,8 +287,6 @@ void ExpectContextMenuHistoryEntryActionsHistogram(int count,
   // Assert that the DeleteBrowsingData histogram contains two bucket after the
   // second deletion was requested.
   ExpectDeleteBrowsingDataHistoryHistogram(2);
-
-  [ChromeCoordinatorAppInterface reset];
 }
 
 // Tests that tapping the Clear Browsing Data button/link.
@@ -302,9 +297,25 @@ void ExpectContextMenuHistoryEntryActionsHistogram(int count,
       performAction:grey_tap()];
   GREYAssert([ChromeCoordinatorAppInterface
                  selectorWasDispatched:
-                     @"showQuickDeleteAndCanPerformTabsClosureAnimation:"],
+                     @"showQuickDeleteAndCanPerformRadialWipeAnimation:"],
              @"Command was not dispatched");
-  [ChromeCoordinatorAppInterface reset];
+}
+
+// Tests clear browsing history.
+- (void)testClearBrowsingHistory {
+  [self addTestURLsToHistory];
+  [ChromeCoordinatorAppInterface startHistoryCoordinator];
+
+  // Assert that history displays three entries.
+  [[EarlGrey selectElementWithMatcher:HistoryEntry(_URL1, kTitle1)]
+      assertWithMatcher:grey_notNil()];
+  [[EarlGrey selectElementWithMatcher:HistoryEntry(_URL2, kTitle2)]
+      assertWithMatcher:grey_notNil()];
+  [[EarlGrey selectElementWithMatcher:HistoryEntry(_URL3, _URL3.GetContent())]
+      assertWithMatcher:grey_notNil()];
+
+  [ChromeEarlGrey clearBrowsingHistory];
+  [ChromeEarlGreyUI assertHistoryHasNoEntries];
 }
 
 // Tests display and selection of 'Open in New Tab' in a context menu on a
@@ -333,7 +344,6 @@ void ExpectContextMenuHistoryEntryActionsHistogram(int count,
   // Assert that the Context Menu History Entry Actions metric is populated.
   ExpectContextMenuHistoryEntryActionsHistogram(
       /*count=*/1, /*action=*/MenuActionType::OpenInNewTab);
-  [ChromeCoordinatorAppInterface reset];
 }
 
 // Tests display and selection of 'Open in New Window' in a context menu on a
@@ -364,7 +374,6 @@ void ExpectContextMenuHistoryEntryActionsHistogram(int count,
   // Assert that the Context Menu History Entry Actions metric is populated.
   ExpectContextMenuHistoryEntryActionsHistogram(
       /*count=*/1, /*action=*/MenuActionType::OpenInNewWindow);
-  [ChromeCoordinatorAppInterface reset];
 }
 
 // Tests display and selection of 'Open in New Incognito Tab' in a context menu
@@ -384,7 +393,6 @@ void ExpectContextMenuHistoryEntryActionsHistogram(int count,
 
   // Select "Open in New Incognito Tab" and confirm that new tab is opened in
   // incognito with the selected URL.
-  //  [ChromeEarlGrey verifyOpenInIncognitoActionWithURL:_URL1.GetContent()];
   [[EarlGrey selectElementWithMatcher:OpenLinkInIncognitoButton()]
       performAction:grey_tap()];
   GREYAssertEqualObjects(ChromeCoordinatorAppInterface.lastURLLoaded,
@@ -396,7 +404,6 @@ void ExpectContextMenuHistoryEntryActionsHistogram(int count,
   // Assert that the Context Menu History Entry Actions metric is populated.
   ExpectContextMenuHistoryEntryActionsHistogram(
       /*count=*/1, /*action=*/MenuActionType::OpenInNewIncognitoTab);
-  [ChromeCoordinatorAppInterface reset];
 }
 
 // Tests display and selection of 'Copy URL' in a context menu on a history
@@ -423,7 +430,6 @@ void ExpectContextMenuHistoryEntryActionsHistogram(int count,
   // Assert that the Context Menu History Entry Actions metric is populated.
   ExpectContextMenuHistoryEntryActionsHistogram(
       /*count=*/1, /*action=*/MenuActionType::CopyURL);
-  [ChromeCoordinatorAppInterface reset];
 }
 
 // Tests display and selection of "Share" in the context menu for a history
@@ -448,7 +454,6 @@ void ExpectContextMenuHistoryEntryActionsHistogram(int count,
   // Assert that the Context Menu History Entry Actions metric is populated.
   ExpectContextMenuHistoryEntryActionsHistogram(
       /*count=*/1, /*action=*/MenuActionType::Share);
-  [ChromeCoordinatorAppInterface reset];
 }
 
 // Tests the Delete context menu action for a History entry.
@@ -489,7 +494,6 @@ void ExpectContextMenuHistoryEntryActionsHistogram(int count,
   // Assert that the Context Menu History Entry Actions metric is populated.
   ExpectContextMenuHistoryEntryActionsHistogram(
       /*count=*/1, /*action=*/MenuActionType::Delete);
-  [ChromeCoordinatorAppInterface reset];
 }
 
 // Tests that the VC can be dismissed by swiping down.
@@ -511,7 +515,6 @@ void ExpectContextMenuHistoryEntryActionsHistogram(int count,
   [[EarlGrey selectElementWithMatcher:grey_accessibilityID(
                                           kHistoryTableViewIdentifier)]
       assertWithMatcher:grey_nil()];
-  [ChromeCoordinatorAppInterface reset];
 }
 
 // Tests that the VC can be dismissed by swiping down while its searching.
@@ -533,7 +536,7 @@ void ExpectContextMenuHistoryEntryActionsHistogram(int count,
   [[EarlGrey selectElementWithMatcher:SearchIconButton()]
       performAction:grey_tap()];
   NSString* searchString =
-      [NSString stringWithFormat:@"%s", _URL1.path().c_str()];
+      [NSString stringWithFormat:@"%s", _URL1.GetPath().c_str()];
   [[EarlGrey selectElementWithMatcher:SearchIconButton()]
       performAction:grey_replaceText(searchString)];
 
@@ -546,7 +549,6 @@ void ExpectContextMenuHistoryEntryActionsHistogram(int count,
   [[EarlGrey selectElementWithMatcher:grey_accessibilityID(
                                           kHistoryTableViewIdentifier)]
       assertWithMatcher:grey_nil()];
-  [ChromeCoordinatorAppInterface reset];
 }
 
 // Navigates to history and checks elements for accessibility.
@@ -556,7 +558,6 @@ void ExpectContextMenuHistoryEntryActionsHistogram(int count,
   [ChromeEarlGrey waitForSufficientlyVisibleElementWithMatcher:
                       grey_accessibilityID(kHistoryTableViewIdentifier)];
   [ChromeEarlGrey verifyAccessibilityForCurrentScreen];
-  [ChromeCoordinatorAppInterface reset];
 }
 
 #pragma mark Helper Methods

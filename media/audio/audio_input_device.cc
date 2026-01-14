@@ -160,9 +160,8 @@ void AudioInputDevice::Stop() {
 
   if (enable_uma_) {
     if (detect_dead_stream_ == DeadStreamDetection::kEnabled) {
-      UMA_HISTOGRAM_BOOLEAN(
-          "Media.Audio.Capture.DetectedMissingCallbacks",
-          alive_checker_ ? alive_checker_->DetectedDead() : false);
+      UMA_HISTOGRAM_BOOLEAN("Media.Audio.Capture.DetectedMissingCallbacks",
+                            alive_checker_ && alive_checker_->DetectedDead());
     }
 
     UMA_HISTOGRAM_ENUMERATION("Media.Audio.Capture.StreamCallbackError2",
@@ -240,7 +239,7 @@ void AudioInputDevice::OnStreamCreated(
   TRACE_EVENT0("audio", "AudioInputDevice::OnStreamCreated");
   DCHECK(shared_memory_region.IsValid());
 #if BUILDFLAG(IS_WIN)
-  DCHECK(socket_handle.IsValid());
+  DCHECK(socket_handle.is_valid());
 #else
   DCHECK(socket_handle.is_valid());
 #endif
@@ -419,11 +418,18 @@ void AudioInputDevice::AudioThreadCallback::MapSharedMemory() {
   base::SpanReader span_reader(
       shared_memory_mapping_.GetMemoryAsSpan<uint8_t>());
   for (uint32_t i = 0; i < total_segments_; ++i) {
+    auto segment = *span_reader.Read(segment_length_);
+    auto input_audio_data =
+        segment.subspan<sizeof(media::AudioInputBufferParameters)>();
+
     const media::AudioInputBuffer* buffer =
-        reinterpret_cast<const media::AudioInputBuffer*>(
-            span_reader.Read(segment_length_)->data());
+        reinterpret_cast<const media::AudioInputBuffer*>(segment.data());
+    CHECK_EQ(input_audio_data.data(), buffer->audio);
+
+    // `audio_buses_` will prevent writes to `input_audio_data`, as it stores
+    // the wrappers as `const AudioBus`.
     audio_buses_.push_back(
-        media::AudioBus::WrapReadOnlyMemory(audio_parameters_, buffer->audio));
+        media::AudioBus::WrapMemory(audio_parameters_, input_audio_data));
   }
   CHECK_EQ(span_reader.remaining(), 0u);
 

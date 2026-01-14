@@ -18,7 +18,6 @@ import type {Token} from '//resources/mojo/mojo/public/mojom/base/token.mojom-we
 import {TraceConfig, TraceConfig_BufferConfig_FillPolicy} from './perfetto_config.js';
 import type {DataSourceConfig, TraceConfig_BufferConfig, TrackEventConfig} from './perfetto_config.js';
 // <if expr="is_win">
-import {EtwConfig_KernelFlag} from './perfetto_config.js';
 import type {EtwConfig} from './perfetto_config.js';
 // </if>
 import {getCss} from './trace_recorder.css.js';
@@ -41,6 +40,10 @@ export interface TraceRecorderElement {
     select: HTMLSelectElement,
   };
 }
+
+// <if expr="is_win">
+type EtwProviderType = 'scheduler'|'memory'|'file';
+// </if>
 
 export class TraceRecorderElement extends CrLitElement {
   static get is() {
@@ -67,8 +70,8 @@ export class TraceRecorderElement extends CrLitElement {
       enabledCategories: {type: Object},
       enabledTags: {type: Object},
       // <if expr="is_win">
-      etwProducers: {type: Array},
-      enabledEtwProducers: {type: Object},
+      etwEvents: {type: Array},
+      enabledEtwEvents: {type: Object},
       etwExpanded_: {type: Boolean},
       // </if>
       disabledTags: {type: Object},
@@ -117,12 +120,19 @@ export class TraceRecorderElement extends CrLitElement {
 
   // <if expr="is_win">
   protected etwConfig: EtwConfig|undefined;
-  protected accessor etwProducers: Array<{
+
+  protected accessor etwEvents: Array<{
     name: string,
-    flag: EtwConfig_KernelFlag,
+    keyword: string,
+    provider: EtwProviderType,
     description: string,
   }> = [];
-  protected accessor enabledEtwProducers: Set<EtwConfig_KernelFlag> = new Set();
+  protected accessor enabledEtwEvents:
+      {[provider in EtwProviderType]: Set<string>} = {
+        'memory': new Set(),
+        'scheduler': new Set(),
+        'file': new Set(),
+      };
   protected accessor etwExpanded_: boolean = false;
   // </if>
 
@@ -262,6 +272,15 @@ export class TraceRecorderElement extends CrLitElement {
     return this.isCategoryForced(category);
   }
 
+  protected canonicalCategoryName(category: TraceCategory): string {
+    const disabledPrefix = 'disabled-by-default-';
+    if (category.name.startsWith(disabledPrefix)) {
+      const mainPart = category.name.substring(disabledPrefix.length);
+      return `${mainPart} (disabled-by-default)`;
+    }
+    return category.name;
+  }
+
   protected isCategoryForced(category: TraceCategory): boolean {
     for (const tag of category.tags) {
       if (this.disabledTags.has(tag)) {
@@ -330,24 +349,27 @@ export class TraceRecorderElement extends CrLitElement {
     this.etwExpanded_ = e.detail.value;
   }
 
-  protected isEtwProducerEnabled(producer: EtwConfig_KernelFlag): boolean {
-    return this.enabledEtwProducers.has(producer);
+  protected isEtwEventEnabled(provider: EtwProviderType, keyword: string):
+      boolean {
+    return this.enabledEtwEvents[provider].has(keyword);
   }
 
-  protected onEtwProducerChange_(
-      event: CustomEvent<boolean>, producer: EtwConfig_KernelFlag): void {
+  protected onEtwEVentChange_(
+      event: CustomEvent<boolean>, provider: EtwProviderType,
+      keyword: string): void {
     if (!this.traceConfig) {
       return;
     }
     const isChecked = event.detail;
 
     if (isChecked) {
-      this.enabledEtwProducers.add(producer);
+      this.enabledEtwEvents[provider].add(keyword);
     } else {
-      this.enabledEtwProducers.delete(producer);
+      this.enabledEtwEvents[provider].delete(keyword);
     }
-    if (this.enabledEtwProducers.size === 0) {
-      this.enabledEtwProducers = new Set();
+    if (Object.values(this.enabledEtwEvents)
+            .every((value) => value.size === 0)) {
+      this.enabledEtwEvents[provider] = new Set();
       this.etwConfig = undefined;
       this.traceConfig.dataSources = this.traceConfig.dataSources?.filter(
           ds => ds.config?.etwConfig === undefined);
@@ -360,8 +382,13 @@ export class TraceRecorderElement extends CrLitElement {
           etwConfig: this.etwConfig,
         });
       }
-      this.etwConfig.kernelFlags = [...this.enabledEtwProducers];
-      this.enabledEtwProducers = new Set(this.etwConfig.kernelFlags);
+      this.enabledEtwEvents[provider] =
+          new Set(this.enabledEtwEvents[provider]);
+      this.etwConfig.schedulerProviderEvents =
+          [...this.enabledEtwEvents['scheduler']];
+      this.etwConfig.memoryProviderEvents =
+          [...this.enabledEtwEvents['memory']];
+      this.etwConfig.fileProviderEvents = [...this.enabledEtwEvents['file']];
     }
 
     this.updateUrlFromConfig_();
@@ -433,16 +460,30 @@ export class TraceRecorderElement extends CrLitElement {
         [...new Set(categories.map(category => category.tags).flat())];
 
     // <if expr="is_win">
-    this.etwProducers = [
+    this.etwEvents = [
       {
         name: 'Context switch',
-        flag: EtwConfig_KernelFlag.CSWITCH,
+        keyword: 'CONTEXT_SWITCH',
+        provider: 'scheduler',
         description: 'Enables context switch events',
       },
       {
         name: 'Ready Thread',
-        flag: EtwConfig_KernelFlag.DISPATCHER,
+        keyword: 'DISPATCHER',
+        provider: 'scheduler',
         description: 'Enables ready thread events',
+      },
+      {
+        name: 'Memory Counters',
+        keyword: 'MEMINFO',
+        provider: 'memory',
+        description: 'Enables memory counters (free list, zero list, etc.)',
+      },
+      {
+        name: 'File I/O',
+        keyword: 'FILE_IO',
+        provider: 'file',
+        description: 'Enables file I/O events',
       },
     ];
     // </if>
@@ -653,7 +694,12 @@ export class TraceRecorderElement extends CrLitElement {
 
     // <if expr="is_win">
     if (this.etwConfig) {
-      this.enabledEtwProducers = new Set(this.etwConfig.kernelFlags);
+      this.enabledEtwEvents['scheduler'] =
+          new Set(this.etwConfig.schedulerProviderEvents);
+      this.enabledEtwEvents['memory'] =
+          new Set(this.etwConfig.memoryProviderEvents);
+      this.enabledEtwEvents['file'] =
+          new Set(this.etwConfig.fileProviderEvents);
     }
     // </if>
   }

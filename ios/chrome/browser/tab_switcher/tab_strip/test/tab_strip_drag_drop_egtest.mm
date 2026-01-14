@@ -5,7 +5,7 @@
 #import <XCTest/XCTest.h>
 
 #import "base/test/ios/wait_util.h"
-#import "ios/chrome/browser/tab_switcher/ui_bundled/tab_strip/ui/swift_constants_for_objective_c.h"
+#import "ios/chrome/browser/tab_switcher/tab_strip/ui/swift_constants_for_objective_c.h"
 #import "ios/chrome/grit/ios_strings.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey_ui.h"
@@ -93,15 +93,7 @@ void AssertRegularCellMovedToNewPosition(unsigned int tab_index,
 
 // Checks that dragging a regular cell to a new position correctly moves the
 // cell.
-// TODO(crbug.com/40285917): Test is flaky on simluator.
-#if TARGET_OS_SIMULATOR
-#define MAYBE_testDragTabStripTabCellInTabStripView \
-  FLAKY_testDragTabStripTabCellInTabStripView
-#else
-#define MAYBE_testDragTabStripTabCellInTabStripView \
-  testDragTabStripTabCellInTabStripView
-#endif
-- (void)MAYBE_testDragTabStripTabCellInTabStripView {
+- (void)testDragTabStripTabCellInTabStripView {
   if ([ChromeEarlGrey isCompactWidth]) {
     EARL_GREY_TEST_SKIPPED(@"No tab strip on this device.");
   }

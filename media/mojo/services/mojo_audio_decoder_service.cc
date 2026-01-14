@@ -12,6 +12,7 @@
 #include "base/functional/callback_helpers.h"
 #include "base/logging.h"
 #include "base/metrics/histogram_functions.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/trace_event/trace_event.h"
 #include "base/types/optional_util.h"
 #include "media/base/content_decryption_module.h"
@@ -188,8 +189,7 @@ void MojoAudioDecoderService::OnReaderFlushDone(ResetCallback callback) {
 
 void MojoAudioDecoderService::OnDecodeStatus(DecodeCallback callback,
                                              const DecoderStatus status) {
-  DVLOG(3) << __func__ << " status=" << status.group() << ":"
-           << static_cast<int>(status.code());
+  status.DebugLog(3);
   last_decode_status_ = status;
   std::move(callback).Run(std::move(status));
 }

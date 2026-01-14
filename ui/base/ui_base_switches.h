@@ -20,6 +20,13 @@ inline constexpr char kDisableOverscrollEdgeEffect[] =
 // Disable the pull-to-refresh effect when vertically overscrolling content.
 inline constexpr char kDisablePullToRefreshEffect[] =
     "disable-pull-to-refresh-effect";
+
+// Enables drawing debug layers for edge-to-edge components to highlight the
+// system insets those components are drawing into.
+// LINT.IfChange(EnableEdgeToEdgeDebugLayers)
+inline constexpr char kEnableEdgeToEdgeDebugLayers[] =
+    "enable-edge-to-edge-debug-layers";
+// LINT.ThenChange(//ui/android/java/src/org/chromium/ui/UiSwitches.java:EnableEdgeToEdgeDebugLayers)
 #endif
 
 #if BUILDFLAG(IS_MAC)
@@ -57,9 +64,8 @@ inline constexpr char kForceCaptionStyle[] = "force-caption-style";
 // Forces dark mode in UI for platforms that support it.
 inline constexpr char kForceDarkMode[] = "force-dark-mode";
 
-// Forces high-contrast mode in native UI drawing, regardless of system
-// settings. Note that this has limited effect on Windows: only Aura colors will
-// be switched to high contrast, not other system colors.
+// Forces high-contrast mode for native UI and web content, regardless of system
+// settings.
 inline constexpr char kForceHighContrast[] = "force-high-contrast";
 
 // The language file that we want to try to open. Of the form

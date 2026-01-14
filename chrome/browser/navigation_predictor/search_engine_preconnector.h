@@ -6,12 +6,15 @@
 #define CHROME_BROWSER_NAVIGATION_PREDICTOR_SEARCH_ENGINE_PRECONNECTOR_H_
 
 #include "base/feature_list.h"
+#include "base/gtest_prod_util.h"
 #include "base/memory/raw_ptr.h"
+#include "base/metrics/field_trial_params.h"
 #include "base/numerics/clamped_math.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/timer/timer.h"
 #include "components/keyed_service/core/keyed_service.h"
 #include "content/public/browser/preconnect_manager.h"
+#include "mojo/public/cpp/bindings/receiver.h"
 #include "services/network/public/mojom/connection_change_observer_client.mojom.h"
 #include "url/origin.h"
 
@@ -23,6 +26,18 @@ class WebContents;
 namespace features {
 BASE_DECLARE_FEATURE(kPreconnectFromKeyedService);
 BASE_DECLARE_FEATURE(kPreconnectToSearch);
+
+// Enum to represent the event that triggers the rebinding of the receiver.
+// This is used to control the rebinding frequency.
+enum class RebindReceiverEvent {
+  // Rebind the receiver every time the preconnect occurs.
+  kEverytime = 0,
+  // Rebind the receiver only when the connection is closed or failed.
+  kOnlyOnConnectionClosedOrFailed = 1,
+};
+
+BASE_DECLARE_FEATURE(kRebindPreconnectReceivers);
+BASE_DECLARE_FEATURE_PARAM(RebindReceiverEvent, kRebindReceiverEvent);
 }  // namespace features
 
 // Class to keep track of the current visibility. It is used to determine if the
@@ -179,6 +194,9 @@ class SearchEnginePreconnector
 
   // Invoked when the mojo pipe to the reconnect observer is disconnected.
   void OnReconnectObserverPipeDisconnected();
+
+  // Resets the receiver.
+  void ResetReceiver();
 
   void RecordPreconnectAttemptHistogram(base::TimeDelta delay,
                                         PreconnectTriggerEvent event);

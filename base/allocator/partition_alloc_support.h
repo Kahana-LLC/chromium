@@ -2,28 +2,26 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
-#pragma allow_unsafe_buffers
-#endif
-
 #ifndef BASE_ALLOCATOR_PARTITION_ALLOC_SUPPORT_H_
 #define BASE_ALLOCATOR_PARTITION_ALLOC_SUPPORT_H_
 
 #include <map>
 #include <string>
 
-#include "base/allocator/partition_alloc_features.h"
+#include "base/allocator/scheduler_loop_quarantine_config.h"
 #include "base/base_export.h"
-#include "base/feature_list.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/synchronization/lock.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/thread_annotations.h"
+#include "base/time/time.h"
 #include "partition_alloc/buildflags.h"
 #include "partition_alloc/partition_alloc_config.h"
-#include "partition_alloc/scheduler_loop_quarantine_support.h"
-#include "partition_alloc/thread_cache.h"
+
+#if PA_CONFIG(THREAD_CACHE_SUPPORTED) && \
+    PA_BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)
+#include "partition_alloc/partition_alloc_constants.h"
+#endif
 
 namespace base::allocator {
 
@@ -50,6 +48,11 @@ BASE_EXPORT void InstallUnretainedDanglingRawPtrChecks();
 // is not active.
 // Does nothing if allocator shim support is not built.
 BASE_EXPORT void MakeFreeNoOp();
+
+// Apply specialized configuration to the quarantine branch for the current
+// thread.
+BASE_EXPORT void ReconfigureSchedulerLoopQuarantineBranch(
+    SchedulerLoopQuarantineBranchType branch_type);
 
 // Allows to re-configure PartitionAlloc at run-time.
 class BASE_EXPORT PartitionAllocSupport {
@@ -177,9 +180,6 @@ BASE_EXPORT void CheckHeapIntegrity(const void* ptr);
 // `DoubleFreeOrCorruptionDetected()`. We provide an address for the slot start
 // to the function, and it may use that for debugging purpose.
 BASE_EXPORT void SetDoubleFreeOrCorruptionDetectedFn(void (*fn)(uintptr_t));
-
-using partition_alloc::SchedulerLoopQuarantineScanPolicyUpdater;
-using partition_alloc::ScopedSchedulerLoopQuarantineExclusion;
 
 }  // namespace base::allocator
 

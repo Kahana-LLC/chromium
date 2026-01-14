@@ -36,6 +36,7 @@ import org.chromium.chrome.test.transit.AutoResetCtaTransitTestRule;
 import org.chromium.chrome.test.transit.ChromeTransitTestRules;
 import org.chromium.chrome.test.transit.page.WebPageStation;
 import org.chromium.chrome.test.util.browser.contextmenu.ContextMenuUtils;
+import org.chromium.components.browser_ui.widget.ContextMenuDialog;
 import org.chromium.components.embedder_support.contextmenu.ContextMenuSwitches;
 import org.chromium.content_public.browser.test.util.DOMUtils;
 import org.chromium.content_public.common.ContentFeatures;
@@ -43,6 +44,7 @@ import org.chromium.net.test.EmbeddedTestServer;
 import org.chromium.ui.base.ViewAndroidDelegate;
 import org.chromium.ui.dragdrop.DragAndDropDelegate;
 import org.chromium.ui.dragdrop.DropDataAndroid;
+import org.chromium.ui.hierarchicalmenu.FlyoutController;
 
 import java.util.concurrent.TimeoutException;
 
@@ -66,7 +68,7 @@ public class ContextMenuDragTest {
     // This ensures the long press/ right click is simulated at the correct
     // coordinates of the specified element. See crbug.com/432281754.
     private static final float PAGE_SCALE_FACTOR = 1.0f;
-    // LINT.ThenChange(//chrome/test/data/android/contextmenu/context_menu_test.html:PageScaleFactor
+    // LINT.ThenChange(//chrome/test/data/android/contextmenu/context_menu_test.html:PageScaleFactor)
     private static final String TEST_IMAGE_ID = "testImage";
 
     static TestDragAndDropDelegate sTestDragAndDropDelegate = new TestDragAndDropDelegate();
@@ -175,11 +177,18 @@ public class ContextMenuDragTest {
     }
 
     private void assertContextMenuShowing(boolean showing) {
-        Assert.assertNotNull("Context menu dialog is null.", mContextMenu.getDialogForTest());
-        Assert.assertEquals(
-                "Context menu dialog is not showing.",
-                showing,
-                mContextMenu.getDialogForTest().isShowing());
+        FlyoutController<ContextMenuDialog> controller =
+                mContextMenu.getHierarchicalMenuControllerForTest().getFlyoutController();
+        if (showing) {
+            Assert.assertEquals(
+                    "There should be exactly 1 dialog.", 1, controller.getNumberOfPopups());
+            Assert.assertEquals(
+                    "Context menu dialog is not showing.",
+                    showing,
+                    controller.getMainPopup().isShowing());
+        } else {
+            Assert.assertEquals("There should be no dialog.", null, controller);
+        }
     }
 
     private DropDataAndroid getDropData() {

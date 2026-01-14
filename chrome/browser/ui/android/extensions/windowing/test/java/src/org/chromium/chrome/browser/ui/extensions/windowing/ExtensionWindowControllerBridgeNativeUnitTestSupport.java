@@ -4,6 +4,8 @@
 
 package org.chromium.chrome.browser.ui.extensions.windowing;
 
+import android.graphics.Rect;
+
 import org.jni_zero.CalledByNative;
 
 import org.chromium.build.annotations.NullMarked;
@@ -35,7 +37,10 @@ final class ExtensionWindowControllerBridgeNativeUnitTestSupport {
         // BrowserWindowInterface pointer that ExtensionWindowControllerBridge depends on.
         mChromeAndroidTask =
                 ChromeAndroidTaskUnitTestSupport.createChromeAndroidTaskWithMockDeps(
-                                FAKE_CHROME_ANDROID_TASK_ID, /* mockNatives= */ false)
+                                FAKE_CHROME_ANDROID_TASK_ID,
+                                /* mockNatives= */ false,
+                                /* isPendingTask= */ false,
+                                /* isDesktopMode= */ true)
                         .mChromeAndroidTask;
 
         mExtensionWindowControllerBridge =
@@ -59,7 +64,24 @@ final class ExtensionWindowControllerBridgeNativeUnitTestSupport {
     }
 
     @CalledByNative
+    private void invokeOnTaskBoundsChanged() {
+        mExtensionWindowControllerBridge.onTaskBoundsChanged(
+                // Native code doesn't need the new bounds, so what we pass here doesn't matter.
+                new Rect());
+    }
+
+    @CalledByNative
+    private void invokeOnTaskFocusChanged(boolean hasFocus) {
+        mExtensionWindowControllerBridge.onTaskFocusChanged(hasFocus);
+    }
+
+    @CalledByNative
     private long invokeGetNativePtrForTesting() {
         return mExtensionWindowControllerBridge.getNativePtrForTesting();
+    }
+
+    @CalledByNative
+    private long getNativeBrowserWindowPtr() {
+        return mChromeAndroidTask.getOrCreateNativeBrowserWindowPtr();
     }
 }

@@ -12,6 +12,7 @@
 #include "base/check_deref.h"
 #include "base/containers/contains.h"
 #include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/autofill/core/browser/foundations/autofill_client.h"
@@ -281,7 +282,8 @@ void PasswordManualFallbackFlow::DidAcceptSuggestion(
       password_manager_driver_->FillField(
           field_id_, suggestion.main_text.value,
           autofill::FieldPropertiesFlags::
-              kAutofilledPasswordFormFilledViaManualFallback);
+              kAutofilledPasswordFormFilledViaManualFallback,
+          base::DoNothing());
       break;
     case autofill::SuggestionType::kFillPassword: {
       Suggestion::PasswordSuggestionDetails payload =
@@ -290,12 +292,13 @@ void PasswordManualFallbackFlow::DidAcceptSuggestion(
           payload, /*on_allowed=*/base::BindOnce(
               &PasswordManualFallbackFlow::MaybeAuthenticateBeforeFilling,
               weak_ptr_factory_.GetWeakPtr(),
-              base::BindOnce(
-                  &PasswordManagerDriver::FillField,
-                  base::Unretained(password_manager_driver_), field_id_,
-                  payload.password,
-                  autofill::FieldPropertiesFlags::
-                      kAutofilledPasswordFormFilledViaManualFallback),
+              base::BindOnce(&PasswordManagerDriver::FillField,
+                             base::Unretained(password_manager_driver_),
+                             field_id_, payload.password,
+                             autofill::FieldPropertiesFlags::
+                                 kAutofilledPasswordFormFilledViaManualFallback,
+                             base::DoNothing()),
+
               // Request reauth if filling the password on a non password field.
               form ? field_id_ != form->password_element_renderer_id : true));
       break;
@@ -317,7 +320,7 @@ void PasswordManualFallbackFlow::DidAcceptSuggestion(
     case autofill::SuggestionType::kAllSavedPasswordsEntry:
       password_client_->NavigateToManagePasswordsPage(
           ManagePasswordsReferrer::kPasswordDropdown);
-      metrics_util::LogPasswordDropdownItemSelected(
+      metrics_util::LogPasswordSuggestionSelected(
           metrics_util::PasswordDropdownSelectedOption::kShowAll,
           password_client_->IsOffTheRecord());
       break;

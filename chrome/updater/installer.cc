@@ -200,14 +200,20 @@ Installer::Result Installer::InstallHelper(
                   kErrorMissingInstallParams);
   }
 
+  const base::FilePath installer_path =
+      unpack_path.AppendUTF8(install_params->run);
+  if (installer_path.ReferencesParent()) {
+    return Result(GOOPDATEINSTALL_E_FILENAME_INVALID,
+                  kErrorPathReferencesParent);
+  }
+
   // Assume the install params are ASCII for now.
   // Upon success, when the control flow returns back to the |update_client|,
   // the prefs are updated asynchronously with the new |pv| and |fingerprint|.
   // The task sequencing guarantees that the prefs will be updated by the
   // time another CrxDataCallback is invoked, which needs updated values.
   return RunApplicationInstaller(
-      app_info_, unpack_path.AppendUTF8(install_params->run),
-      install_params->arguments,
+      app_info_, installer_path, install_params->arguments,
       WriteInstallerDataToTempFile(unpack_path,
                                    client_install_data_.empty()
                                        ? install_params->server_install_data
@@ -226,11 +232,20 @@ void Installer::InstallWithSyncPrimitives(
                                                 base::BlockingType::WILL_BLOCK);
   const auto result = InstallHelper(unpack_path, std::move(install_params),
                                     std::move(progress_callback));
+  if (result.result.category != update_client::ErrorCategory::kNone) {
+    for (const auto& log_file :
+         GetFilesWithPredicate(unpack_path, [](const base::FilePath& item) {
+           return item.MatchesFinalExtension(FILE_PATH_LITERAL(".log"));
+         })) {
+      VLOG(2) << "===== Begin log file: " << log_file;
+      std::string log;
+      if (base::ReadFileToString(log_file, &log)) {
+        VLOG(2) << log;
+      }
+      VLOG(2) << "===== End log file: " << log_file;
+    }
+  }
   std::move(callback).Run(result);
-}
-
-void Installer::OnUpdateError(int error) {
-  LOG(ERROR) << "updater error: " << error << " for " << app_id_;
 }
 
 void Installer::Install(const base::FilePath& unpack_path,

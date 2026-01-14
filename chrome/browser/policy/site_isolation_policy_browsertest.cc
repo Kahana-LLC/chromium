@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "content/public/browser/site_isolation_policy.h"
 
 #include "base/command_line.h"
@@ -14,7 +9,6 @@
 #include "base/feature_list.h"
 #include "base/test/scoped_amount_of_physical_memory_override.h"
 #include "base/test/scoped_feature_list.h"
-#include "build/android_buildflags.h"
 #include "build/build_config.h"
 #include "chrome/browser/chrome_content_browser_client.h"
 #include "chrome/browser/profiles/profile.h"
@@ -65,37 +59,26 @@ class SiteIsolationPolicyBrowserTest : public PlatformBrowserTest {
     bool isolated;
   };
 
-  void CheckExpectations(base::span<Expectations> expectations,
-                         size_t spanification_suspected_redundant_count) {
-    // TODO(crbug.com/431824301): Remove unneeded parameter once validated to be
-    // redundant in M143.
-    CHECK(spanification_suspected_redundant_count == expectations.size(),
-          base::NotFatalUntil::M143);
+  void CheckExpectations(base::span<Expectations> expectations) {
     content::BrowserContext* context = chrome_test_utils::GetProfile(this);
-    for (size_t i = 0; i < spanification_suspected_redundant_count; ++i) {
-      const GURL url(expectations[i].url);
+    for (auto& expectation : expectations) {
+      const GURL url(expectation.url);
       auto instance = content::SiteInstance::CreateForURL(context, url);
-      EXPECT_EQ(expectations[i].isolated, instance->RequiresDedicatedProcess())
+      EXPECT_EQ(expectation.isolated, instance->RequiresDedicatedProcess())
           << "; url = " << url;
     }
   }
 
-  void CheckIsolatedOriginExpectations(
-      base::span<Expectations> expectations,
-      size_t spanification_suspected_redundant_count) {
-    // TODO(crbug.com/431824301): Remove unneeded parameter once validated to be
-    // redundant in M143.
-    CHECK(spanification_suspected_redundant_count == expectations.size(),
-          base::NotFatalUntil::M143);
+  void CheckIsolatedOriginExpectations(base::span<Expectations> expectations) {
     if (!content::AreAllSitesIsolatedForTesting()) {
-      CheckExpectations(expectations, spanification_suspected_redundant_count);
+      CheckExpectations(expectations);
     }
 
     auto* policy = content::ChildProcessSecurityPolicy::GetInstance();
-    for (size_t i = 0; i < spanification_suspected_redundant_count; ++i) {
-      const GURL url(expectations[i].url);
+    for (auto& expectation : expectations) {
+      const GURL url(expectation.url);
       const url::Origin origin = url::Origin::Create(url);
-      EXPECT_EQ(expectations[i].isolated,
+      EXPECT_EQ(expectation.isolated,
                 policy->IsGloballyIsolatedOriginForTesting(origin))
           << "; origin = " << origin;
     }
@@ -171,7 +154,7 @@ IN_PROC_BROWSER_TEST_F(SitePerProcessPolicyBrowserTestEnabled, Simple) {
       {"http://foo.com/", true},
       {"http://example.org/pumpkins.html", true},
   };
-  CheckExpectations(expectations, std::size(expectations));
+  CheckExpectations(expectations);
 }
 
 #if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_CHROMEOS)
@@ -215,7 +198,7 @@ IN_PROC_BROWSER_TEST_F(IsolateOriginsPolicyBrowserTest, Simple) {
       {"https://policy1.example.org/pumpkins.html", true},
       {"http://policy2.example.com/index.php", true},
   };
-  CheckIsolatedOriginExpectations(expectations, std::size(expectations));
+  CheckIsolatedOriginExpectations(expectations);
 
   // Simulate updating the policy at "browser runtime".
   policy::PolicyMap values;
@@ -239,7 +222,7 @@ IN_PROC_BROWSER_TEST_F(IsolateOriginsPolicyBrowserTest, Simple) {
       {"https://policy3.example.org/pumpkins.html", true},
       {"http://policy4.example.com/index.php", true},
   };
-  CheckIsolatedOriginExpectations(expectations2, std::size(expectations2));
+  CheckIsolatedOriginExpectations(expectations2);
 }
 #endif
 
@@ -248,7 +231,7 @@ IN_PROC_BROWSER_TEST_F(NoOverrideSitePerProcessPolicyBrowserTest, Simple) {
       {"https://foo.com/noodles.html", true},
       {"http://example.org/pumpkins.html", true},
   };
-  CheckExpectations(expectations, std::size(expectations));
+  CheckExpectations(expectations);
 }
 
 // After https://crbug.com/910273 was fixed, enterprise policy can only be used
@@ -296,7 +279,7 @@ IN_PROC_BROWSER_TEST_F(SitePerProcessPolicyBrowserTestFieldTrialTest, Simple) {
       {"https://foo.com/noodles.html", false},
       {"http://example.org/pumpkins.html", false},
   };
-  CheckExpectations(expectations, std::size(expectations));
+  CheckExpectations(expectations);
 }
 #endif
 
@@ -304,12 +287,12 @@ IN_PROC_BROWSER_TEST_F(SitePerProcessPolicyBrowserTestFieldTrialTest, Simple) {
 namespace {
 bool CheckUseDedicatedProcessesForAllSitesWithAndroidState(
     bool is_under_advanced_protection,
-    uint64_t ram_kb) {
+    base::ByteSize ram) {
   safe_browsing::SetAdvancedProtectionStateForTesting(
       is_under_advanced_protection);
   ChromeContentBrowserClient::DisableAdvancedProtectionCachingForTests();
 
-  base::test::ScopedAmountOfPhysicalMemoryOverride memory_override(ram_kb);
+  base::test::ScopedAmountOfPhysicalMemoryOverride memory_override(ram);
   site_isolation::SiteIsolationPolicy::
       SetDisallowMemoryThresholdCachingForTesting(true);
   return content::SiteIsolationPolicy::UseDedicatedProcessesForAllSites();
@@ -323,16 +306,19 @@ IN_PROC_BROWSER_TEST_F(SiteIsolationPolicyBrowserTest,
   // without an explicit enterprise policy).
   EXPECT_FALSE(base::CommandLine::ForCurrentProcess()->HasSwitch(
       switches::kDisableSiteIsolation));
-#if BUILDFLAG(IS_ANDROID) && !BUILDFLAG(ENABLE_ANDROID_SITE_ISOLATION)
+#if BUILDFLAG(IS_ANDROID)
   EXPECT_FALSE(base::CommandLine::ForCurrentProcess()->HasSwitch(
       switches::kDisableSiteIsolationForPolicy));
   EXPECT_EQ(CheckUseDedicatedProcessesForAllSitesWithAndroidState(
                 /*is_under_advanced_protection=*/false,
-                /*ram_kb=*/8000),
+                // TODO(crbug.com/429140103): Comments in the original code
+                // suggested that this was in KiB, but it was in fact in MiB.
+                // Needs investigation.
+                /*ram=*/base::MiBU(8000)),
             base::FeatureList::IsEnabled(features::kSitePerProcess));
 #else
   EXPECT_TRUE(content::SiteIsolationPolicy::UseDedicatedProcessesForAllSites());
-#endif  // BUILDFLAG(IS_ANDROID) && !BUILDFLAG(ENABLE_ANDROID_SITE_ISOLATION)
+#endif  // BUILDFLAG(IS_ANDROID)
 }
 
 #if BUILDFLAG(IS_ANDROID)
@@ -344,7 +330,9 @@ IN_PROC_BROWSER_TEST_F(SiteIsolationPolicyBrowserTest,
       command_line->HasSwitch(switches::kDisableSiteIsolationForPolicy));
   EXPECT_TRUE(CheckUseDedicatedProcessesForAllSitesWithAndroidState(
       /*is_under_advanced_protection=*/true,
-      /*ram_kb=*/8000));
+      // TODO(crbug.com/429140103): Comments in the original code suggested that
+      // this was in KiB, but it was in fact in MiB. Needs investigation.
+      /*ram=*/base::MiBU(8000)));
 }
 
 IN_PROC_BROWSER_TEST_F(SiteIsolationPolicyBrowserTest,
@@ -361,7 +349,9 @@ IN_PROC_BROWSER_TEST_F(SiteIsolationPolicyBrowserTest,
       command_line->HasSwitch(switches::kDisableSiteIsolationForPolicy));
   EXPECT_FALSE(CheckUseDedicatedProcessesForAllSitesWithAndroidState(
       /*is_under_advanced_protection=*/true,
-      /*ram_kb=*/1000));
+      // TODO(crbug.com/429140103): Comments in the original code suggested that
+      // this was in KiB, but it was in fact in MiB. Needs investigation.
+      /*ram=*/base::MiBU(1000)));
 }
 #endif
 

@@ -9,7 +9,8 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
-import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.isNotNull;
+import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.lenient;
@@ -19,6 +20,8 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.robolectric.Shadows.shadowOf;
+
+import static org.chromium.chrome.browser.url_constants.UrlConstantResolver.getOriginalNativeNtpUrl;
 
 import android.content.Context;
 import android.content.res.Resources;
@@ -50,8 +53,8 @@ import org.chromium.chrome.browser.omnibox.test.R;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.search_engines.TemplateUrlServiceFactory;
 import org.chromium.chrome.browser.ui.favicon.FaviconHelper;
-import org.chromium.components.embedder_support.util.UrlConstants;
 import org.chromium.components.metrics.OmniboxEventProtos.OmniboxEventProto.PageClassification;
+import org.chromium.components.omnibox.AutocompleteRequestType;
 import org.chromium.components.search_engines.TemplateUrl;
 import org.chromium.components.search_engines.TemplateUrlService;
 import org.chromium.url.GURL;
@@ -127,8 +130,10 @@ public class SearchEngineUtilsUnitTest {
         assertFalse(searchEngineUtils.shouldShowSearchEngineLogo());
 
         // Verify default placeholder text.
-        verify(mHintTextObserver)
-                .onSearchBoxHintTextChanged(mContext.getString(R.string.omnibox_empty_hint));
+        verify(mHintTextObserver).onSearchBoxHintTextChanged();
+        assertEquals(
+                searchEngineUtils.getOmniboxHintText(AutocompleteRequestType.SEARCH),
+                mContext.getString(R.string.omnibox_empty_hint));
     }
 
     @Test
@@ -171,9 +176,7 @@ public class SearchEngineUtilsUnitTest {
 
         histograms.assertExpected();
 
-        verify(mEngineIconObserver).onSearchEngineIconChanged(mStatusIconCaptor.capture());
-
-        assertEquals(mStatusIconCaptor.getValue(), new StatusIconResource(LOGO_URL, mBitmap, 0));
+        verify(mEngineIconObserver).onSearchEngineIconChanged(isNotNull());
     }
 
     @Test
@@ -219,7 +222,7 @@ public class SearchEngineUtilsUnitTest {
 
     private void verifyNoSearchEngineSpecificDataInCache() {
         var jumpStartContext = CachedZeroSuggestionsManager.readJumpStartContext();
-        assertEquals(UrlConstants.NTP_URL, jumpStartContext.url.getSpec());
+        assertEquals(getOriginalNativeNtpUrl(), jumpStartContext.url.getSpec());
         assertEquals(
                 PageClassification.INSTANT_NTP_WITH_OMNIBOX_AS_STARTING_FOCUS_VALUE,
                 jumpStartContext.pageClass);
@@ -290,8 +293,11 @@ public class SearchEngineUtilsUnitTest {
             searchEngineUtils.addSearchBoxHintTextObserver(mHintTextObserver);
 
             // Verify updated placeholder text.
-            verify(mHintTextObserver).onSearchBoxHintTextChanged("Search Google or type URL");
-            reset(mHintTextObserver);
+            verify(mHintTextObserver).onSearchBoxHintTextChanged();
+            assertEquals(
+                    "Search Google or type URL",
+                    searchEngineUtils.getOmniboxHintText(AutocompleteRequestType.SEARCH));
+            clearInvocations(mHintTextObserver);
 
             // Make an update
             saveSearchEngineSpecificDataToCache();
@@ -301,16 +307,17 @@ public class SearchEngineUtilsUnitTest {
             verifySearchEngineSpecificDataRetainedInCache();
 
             // Verify updated placeholder text.
-            verify(mHintTextObserver, never()).onSearchBoxHintTextChanged(anyString());
+            verify(mHintTextObserver, never()).onSearchBoxHintTextChanged();
         }
 
-        reset(mHintTextObserver);
+        clearInvocations(mHintTextObserver);
 
         {
             // Non-Google to same non-Google.
             configureSearchEngine("engine", "Some Engine");
             var searchEngineUtils = new SearchEngineUtils(mProfile, mFaviconHelper);
             searchEngineUtils.addSearchBoxHintTextObserver(mHintTextObserver);
+            clearInvocations(mHintTextObserver);
 
             // Make an update
             saveSearchEngineSpecificDataToCache();
@@ -320,17 +327,20 @@ public class SearchEngineUtilsUnitTest {
             verifySearchEngineSpecificDataRetainedInCache();
 
             // Verify updated placeholder text.
-            verify(mHintTextObserver)
-                    .onSearchBoxHintTextChanged("Search Another Engine or type URL");
+            verify(mHintTextObserver).onSearchBoxHintTextChanged();
+            assertEquals(
+                    "Search Another Engine or type URL",
+                    searchEngineUtils.getOmniboxHintText(AutocompleteRequestType.SEARCH));
         }
 
-        reset(mHintTextObserver);
+        clearInvocations(mHintTextObserver);
 
         {
             // Non-Google, unnamed engine
             configureSearchEngine("engine", "Some Engine");
             var searchEngineUtils = new SearchEngineUtils(mProfile, mFaviconHelper);
             searchEngineUtils.addSearchBoxHintTextObserver(mHintTextObserver);
+            clearInvocations(mHintTextObserver);
 
             // Make an update
             saveSearchEngineSpecificDataToCache();
@@ -340,23 +350,30 @@ public class SearchEngineUtilsUnitTest {
             verifySearchEngineSpecificDataRetainedInCache();
 
             // Verify default placeholder text.
-            verify(mHintTextObserver).onSearchBoxHintTextChanged("Search or type URL");
+            verify(mHintTextObserver).onSearchBoxHintTextChanged();
+            assertEquals(
+                    "Search or type URL",
+                    searchEngineUtils.getOmniboxHintText(AutocompleteRequestType.SEARCH));
         }
 
-        reset(mHintTextObserver);
+        clearInvocations(mHintTextObserver);
 
         {
             // Non-Google, unnamed engine
             configureSearchEngine("engine", "Some Engine");
             var searchEngineUtils = new SearchEngineUtils(mProfile, mFaviconHelper);
             searchEngineUtils.addSearchBoxHintTextObserver(mHintTextObserver);
+            clearInvocations(mHintTextObserver);
 
             // Make an update to no engine
             doReturn(null).when(mTemplateUrlService).getDefaultSearchEngineTemplateUrl();
             searchEngineUtils.onTemplateURLServiceChanged();
 
             // Verify default placeholder text.
-            verify(mHintTextObserver).onSearchBoxHintTextChanged("Search or type URL");
+            verify(mHintTextObserver).onSearchBoxHintTextChanged();
+            assertEquals(
+                    "Search or type URL",
+                    searchEngineUtils.getOmniboxHintText(AutocompleteRequestType.SEARCH));
         }
     }
 
@@ -381,8 +398,7 @@ public class SearchEngineUtilsUnitTest {
         verify(mFaviconHelper).getLocalFaviconImageForURL(any(), any(), anyInt(), any());
         mCallbackCaptor.getValue().onFaviconAvailable(mBitmap, new GURL(LOGO_URL));
 
-        verify(mEngineIconObserver).onSearchEngineIconChanged(mStatusIconCaptor.capture());
-        assertEquals(mStatusIconCaptor.getValue(), new StatusIconResource(LOGO_URL, mBitmap, 0));
+        verify(mEngineIconObserver).onSearchEngineIconChanged(isNotNull());
 
         histograms.assertExpected();
     }

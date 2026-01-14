@@ -49,7 +49,10 @@ bool TestTabStripModelDelegate::IsTabStripEditable() {
   return true;
 }
 
-void TestTabStripModelDelegate::DuplicateContentsAt(int index) {}
+content::WebContents* TestTabStripModelDelegate::DuplicateContentsAt(
+    int index) {
+  return nullptr;
+}
 
 void TestTabStripModelDelegate::DuplicateSplit(split_tabs::SplitTabId split) {}
 
@@ -93,11 +96,6 @@ bool TestTabStripModelDelegate::ShouldRunUnloadListenerBeforeClosing(
 bool TestTabStripModelDelegate::RunUnloadListenerBeforeClosing(
     content::WebContents* contents) {
   return false;
-}
-
-bool TestTabStripModelDelegate::ShouldDisplayFavicon(
-    content::WebContents* web_contents) const {
-  return true;
 }
 
 bool TestTabStripModelDelegate::CanReload() const {
@@ -164,4 +162,7 @@ bool TestTabStripModelDelegate::GlicUnpinTabs(
 }
 
 void TestTabStripModelDelegate::OpenGlicWindowFromSharedTab() {}
+
+void TestTabStripModelDelegate::GlicUnpinTabsFromAllConversations(
+    base::span<const tabs::TabHandle> tab_handles) {}
 #endif

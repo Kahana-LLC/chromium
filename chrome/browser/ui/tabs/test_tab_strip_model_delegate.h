@@ -55,7 +55,7 @@ class TestTabStripModelDelegate : public TabStripModelDelegate {
   int GetDragActions() const override;
   bool CanDuplicateContentsAt(int index) override;
   bool IsTabStripEditable() override;
-  void DuplicateContentsAt(int index) override;
+  content::WebContents* DuplicateContentsAt(int index) override;
   void DuplicateSplit(split_tabs::SplitTabId split) override;
   void MoveToExistingWindow(const std::vector<int>& indices,
                             int browser_index) override;
@@ -71,7 +71,6 @@ class TestTabStripModelDelegate : public TabStripModelDelegate {
   bool ShouldRunUnloadListenerBeforeClosing(
       content::WebContents* contents) override;
   bool RunUnloadListenerBeforeClosing(content::WebContents* contents) override;
-  bool ShouldDisplayFavicon(content::WebContents* web_contents) const override;
   bool CanReload() const override;
   void AddToReadLater(std::vector<content::WebContents*> web_contents) override;
   bool SupportsReadLater() override;
@@ -94,6 +93,8 @@ class TestTabStripModelDelegate : public TabStripModelDelegate {
   bool GlicPinTabs(base::span<const tabs::TabHandle> tab_handles) override;
   bool GlicUnpinTabs(base::span<const tabs::TabHandle> tab_handles) override;
   void OpenGlicWindowFromSharedTab() override;
+  void GlicUnpinTabsFromAllConversations(
+      base::span<const tabs::TabHandle> tab_handles) override;
 #endif
 
  private:

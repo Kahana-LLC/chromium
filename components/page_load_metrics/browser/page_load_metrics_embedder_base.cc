@@ -46,16 +46,13 @@ void PageLoadMetricsEmbedderBase::RegisterCommonObservers(
     return;
   }
 
-  bool is_incognito = IsIncognito(tracker->GetWebContents());
   tracker->AddObserver(
-      std::make_unique<BackForwardCachePageLoadMetricsObserver>(is_incognito));
-  tracker->AddObserver(
-      std::make_unique<UmaPageLoadMetricsObserver>(is_incognito));
+      std::make_unique<BackForwardCachePageLoadMetricsObserver>());
+  tracker->AddObserver(std::make_unique<UmaPageLoadMetricsObserver>());
   tracker->AddObserver(std::make_unique<UseCounterPageLoadMetricsObserver>());
   tracker->AddObserver(std::make_unique<EarlyHintsPageLoadMetricsObserver>());
   tracker->AddObserver(std::make_unique<FencedFramesPageLoadMetricsObserver>());
-  tracker->AddObserver(
-      std::make_unique<PrerenderPageLoadMetricsObserver>(is_incognito));
+  tracker->AddObserver(std::make_unique<PrerenderPageLoadMetricsObserver>());
   tracker->AddObserver(std::make_unique<SameOriginPageLoadMetricsObserver>());
   tracker->AddObserver(std::make_unique<CrossOriginPageLoadMetricsObserver>());
   if (base::FeatureList::IsEnabled(network::features::kSharedStorageAPI)) {
@@ -74,6 +71,14 @@ void PageLoadMetricsEmbedderBase::RegisterCommonObservers(
 
 std::unique_ptr<base::OneShotTimer> PageLoadMetricsEmbedderBase::CreateTimer() {
   return std::make_unique<base::OneShotTimer>();
+}
+
+bool PageLoadMetricsEmbedderBase::HasWebUIConfig(const GURL& url) {
+  return false;
+}
+
+bool PageLoadMetricsEmbedderBase::IsInternalWebUI(const GURL& url) {
+  return true;
 }
 
 bool PageLoadMetricsEmbedderBase::ShouldObserveScheme(std::string_view scheme) {

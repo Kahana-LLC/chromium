@@ -34,6 +34,7 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/timer/elapsed_timer.h"
+#include "net/base/net_errors.h"
 #include "services/network/public/cpp/resource_request.h"
 #include "services/network/public/cpp/single_request_url_loader_factory.h"
 #include "third_party/blink/public/common/storage_key/storage_key.h"
@@ -131,20 +132,15 @@ class EmptyLocalFrameClientWithFailingLoaderFactory final
  public:
   scoped_refptr<network::SharedURLLoaderFactory> GetURLLoaderFactory()
       override {
-    // TODO(crbug.com/1413912): CreateFragmentFromMarkupWithContext may
-    // call this method for data: URL resources. But ResourceLoader::Start()
-    // don't need to call GetURLLoaderFactory() for data: URL because
-    // ResourceLoader handles the data: URL resource load without the returned
-    // SharedURLLoaderFactory.
-    // Note: Non-data: URL resource can't be loaded because the security checks
-    // in BaseFetchContext::CanRequestInternal fails for non-data: URL
-    // resources.
     return base::MakeRefCounted<network::SingleRequestURLLoaderFactory>(
-        WTF::BindOnce(
+        BindOnce(
             [](const network::ResourceRequest& resource_request,
                mojo::PendingReceiver<network::mojom::URLLoader> receiver,
                mojo::PendingRemote<network::mojom::URLLoaderClient> client) {
-              NOTREACHED();
+              mojo::Remote<network::mojom::URLLoaderClient> remote(
+                  std::move(client));
+              remote->OnComplete(
+                  network::URLLoaderCompletionStatus(net::ERR_FAILED));
             }));
   }
 };
@@ -401,7 +397,8 @@ DocumentFragment* CreateFragmentFromMarkup(
   auto* fake_body = MakeGarbageCollected<HTMLBodyElement>(document);
   DocumentFragment* fragment = DocumentFragment::Create(document);
 
-  fragment->ParseHTML(markup, fake_body, parser_content_policy);
+  fragment->ParseHTML(markup, fake_body, /*registry*/ nullptr,
+                      parser_content_policy);
 
   if (!base_url.empty() && base_url != BlankURL() &&
       base_url != document.BaseURL())
@@ -678,6 +675,8 @@ DocumentFragment* CreateFragmentForInnerOuterHTML(
     ParserContentPolicy parser_content_policy,
     Element::ParseDeclarativeShadowRoots parse_declarative_shadows,
     Element::ForceHtml force_html,
+    ForceInertTemplate force_inert,
+    CustomElementRegistry* registry,
     ExceptionState& exception_state) {
   DCHECK(context_element);
   const HTMLTemplateElement* template_element =
@@ -687,7 +686,8 @@ DocumentFragment* CreateFragmentForInnerOuterHTML(
   }
 
   Document& document =
-      IsA<HTMLTemplateElement>(*context_element)
+      (IsA<HTMLTemplateElement>(*context_element) ||
+       force_inert == ForceInertTemplate::kForce)
           ? context_element->GetDocument().EnsureTemplateDocument()
           : context_element->GetDocument();
   DocumentFragment* fragment = DocumentFragment::Create(document);
@@ -710,6 +710,18 @@ DocumentFragment* CreateFragmentForInnerOuterHTML(
       fragment->SetHoldsUnnotifiedChildren(true);
       fragment->ParserFinishedBuildingDocumentFragment(
           DocumentFragment::ShouldNotifyInsertedNodes::kSkip);
+      // If parsed by fast path, no upgrade will be happening so we can simply
+      // set the custom element registry to the new elements to keep track.
+      // We attempt to optimize the registry setting by checking if the
+      // newly-created elements are using the same registry as the tree scope.
+      // If they're the same, we don't need to set registry on the descendants
+      // as the descendants can look up the registry from tree scope like usual.
+      if (RuntimeEnabledFeatures::ScopedCustomElementRegistryEnabled() &&
+          registry != context_element->GetTreeScope().customElementRegistry()) {
+        for (Element& element : ElementTraversal::DescendantsOf(*fragment)) {
+          element.SetCustomElementRegistry(registry);
+        }
+      }
       LogFastPathParserTotalTime(parse_timer.Elapsed());
 #if DCHECK_IS_ON()
       // As a sanity check for the fast-path, create another fragment using
@@ -717,7 +729,8 @@ DocumentFragment* CreateFragmentForInnerOuterHTML(
       // See https://bugs.chromium.org/p/chromium/issues/detail?id=1407201
       // for details.
       DocumentFragment* fragment2 = DocumentFragment::Create(document);
-      fragment2->ParseHTML(markup, context_element, parser_content_policy);
+      fragment2->ParseHTML(markup, context_element, registry,
+                           parser_content_policy);
       DCHECK_EQ(CreateMarkup(fragment), CreateMarkup(fragment2))
           << " supplied value " << markup;
       DCHECK(fragment->isEqualNode(fragment2));
@@ -725,7 +738,8 @@ DocumentFragment* CreateFragmentForInnerOuterHTML(
       return fragment;
     }
     fragment = DocumentFragment::Create(document);
-    fragment->ParseHTML(markup, context_element, parser_content_policy);
+    fragment->ParseHTML(markup, context_element, registry,
+                        parser_content_policy);
     LogFastPathParserTotalTime(parse_timer.Elapsed());
     if (log_tag_stats &&
         RuntimeEnabledFeatures::InnerHTMLParserFastpathLogFailureEnabled()) {
@@ -766,7 +780,7 @@ DocumentFragment* CreateFragmentForTransformToFragment(
     // that effect here by passing in a fake body element as context for the
     // fragment.
     auto* fake_body = MakeGarbageCollected<HTMLBodyElement>(output_doc);
-    fragment->ParseHTML(source_string, fake_body,
+    fragment->ParseHTML(source_string, fake_body, /*registry*/ nullptr,
                         kAllowScriptingContentAndDoNotMarkAlreadyStarted);
   } else if (source_mime_type == "text/plain") {
     fragment->ParserAppendChild(Text::Create(output_doc, source_string));
@@ -804,7 +818,11 @@ DocumentFragment* CreateContextualFragment(
   DocumentFragment* fragment = CreateFragmentForInnerOuterHTML(
       markup, element, parser_content_policy,
       Element::ParseDeclarativeShadowRoots::kDontParse,
-      Element::ForceHtml::kDontForce, exception_state);
+      Element::ForceHtml::kDontForce, ForceInertTemplate::kDontForce,
+      RuntimeEnabledFeatures::ScopedCustomElementRegistryEnabled()
+          ? element->customElementRegistry()
+          : element->GetDocument().customElementRegistry(),
+      exception_state);
   if (!fragment)
     return nullptr;
 

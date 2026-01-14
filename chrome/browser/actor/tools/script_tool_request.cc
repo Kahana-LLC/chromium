@@ -13,7 +13,7 @@ namespace actor {
 using ::tabs::TabHandle;
 
 ScriptToolRequest::ScriptToolRequest(tabs::TabHandle tab_handle,
-                                     const PageTarget& target,
+                                     const DomNode& target,
                                      const std::string& name,
                                      const std::string& input_arguments)
     : PageToolRequest(tab_handle, target),
@@ -21,20 +21,21 @@ ScriptToolRequest::ScriptToolRequest(tabs::TabHandle tab_handle,
       input_arguments_(input_arguments) {
   // Script tools target the Document and are not bound to any specific
   // DOM node.
-  CHECK_EQ(std::get<DomNode>(target).node_id, kRootElementDomNodeId);
+  CHECK_EQ(target.node_id, kRootElementDomNodeId);
 }
 
 ScriptToolRequest::~ScriptToolRequest() = default;
 
-std::string ScriptToolRequest::JournalEvent() const {
-  return "ScriptTool";
+std::string_view ScriptToolRequest::Name() const {
+  return kName;
 }
 
 void ScriptToolRequest::Apply(ToolRequestVisitorFunctor& f) const {
   f.Apply(*this);
 }
 
-mojom::ToolActionPtr ScriptToolRequest::ToMojoToolAction() const {
+mojom::ToolActionPtr ScriptToolRequest::ToMojoToolAction(
+    content::RenderFrameHost& frame) const {
   auto script = mojom::ScriptToolAction::New(name_, input_arguments_);
   return mojom::ToolAction::NewScriptTool(std::move(script));
 }

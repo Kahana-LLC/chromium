@@ -8,6 +8,7 @@
 
 #include <memory>
 
+#include "base/functional/callback_helpers.h"
 #include "base/task/bind_post_task.h"
 #include "base/trace_event/trace_event.h"
 #include "device/vr/android/cardboard/cardboard_image_transport.h"
@@ -454,18 +455,24 @@ void CardboardRenderLoop::SubmitFrameMissing(int16_t frame_index,
 }
 
 void CardboardRenderLoop::SubmitFrame(int16_t frame_index,
-                                      const gpu::MailboxHolder& mailbox,
                                       base::TimeDelta time_waited) {
   NOTREACHED();
 }
 
 void CardboardRenderLoop::SubmitFrameDrawnIntoTexture(
     int16_t frame_index,
+    const std::vector<LayerId>& layer_ids,
     const gpu::SyncToken& sync_token,
     base::TimeDelta time_waited) {
   TRACE_EVENT1("gpu", "CardboardRenderLoop::SubmitFrameDrawnIntoTexture",
                "frame", frame_index);
   DVLOG(2) << __func__ << ": frame=" << frame_index;
+
+  if (!layer_ids.empty()) {
+    presentation_receiver_.ReportBadMessage(
+        "Layers feature not enabled for this session");
+    return;
+  }
 
   if (!IsSubmitFrameExpected(frame_index)) {
     return;

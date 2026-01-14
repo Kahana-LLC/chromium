@@ -208,7 +208,12 @@ void LayerContextImplTest::AddFirstTimeDefaultProperties(
 
   // Root & Secondary scroll nodes are always expected
   AddScrollNode(update, cc::kInvalidPropertyNodeId);
-  AddScrollNode(update, cc::kRootPropertyNodeId);
+  viewport_property_ids.outer_scroll =
+      AddScrollNode(update, cc::kRootPropertyNodeId);
+  update->scroll_nodes.back()->element_id = cc::ElementId(1ULL);
+  viewport_property_ids.inner_scroll =
+      AddScrollNode(update, viewport_property_ids.outer_scroll);
+  update->scroll_nodes.back()->element_id = cc::ElementId(1ULL);
 
   // Root layer
   AddDefaultLayerToUpdate(update);
@@ -318,7 +323,7 @@ mojom::LayerExtraPtr LayerContextImplTest::CreateDefaultLayerExtra(
       auto extra = mojom::NinePatchThumbScrollbarLayerExtra::New();
       extra->scrollbar_base_extra = CreateDefaultScrollbarBaseExtra();
       extra->thumb_thickness = kDefaultNinePatchThumbScrollbarThumbThickness;
-      extra->thumb_length = kDefaultNinePatchThumbScrollbarThumbLength;
+      extra->minimum_thumb_length = kDefaultNinePatchThumbScrollbarThumbLength;
       extra->track_start = kDefaultNinePatchThumbScrollbarTrackStart;
       extra->track_length = kDefaultNinePatchThumbScrollbarTrackLength;
       extra->image_bounds = kDefaultNinePatchThumbScrollbarImageBounds;
@@ -358,7 +363,7 @@ mojom::LayerExtraPtr LayerContextImplTest::CreateDefaultLayerExtra(
       extra->supports_drag_snap_back =
           kDefaultPaintedScrollbarSupportsDragSnapBack;
       extra->thumb_thickness = kDefaultPaintedScrollbarThumbThickness;
-      extra->thumb_length = kDefaultPaintedScrollbarThumbLength;
+      extra->minimum_thumb_length = kDefaultPaintedScrollbarThumbLength;
       extra->track_and_buttons_ui_resource_id =
           kDefaultPaintedScrollbarTrackAndButtonsUIResourceId;
       extra->thumb_ui_resource_id = kDefaultPaintedScrollbarThumbUIResourceId;

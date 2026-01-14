@@ -4,6 +4,7 @@
 
 #include "components/page_load_metrics/browser/observers/service_worker_page_load_metrics_observer.h"
 
+#include "base/strings/strcat.h"
 #include "components/page_load_metrics/browser/page_load_metrics_observer_delegate.h"
 #include "components/page_load_metrics/browser/page_load_metrics_util.h"
 #include "content/public/browser/navigation_handle.h"
@@ -94,12 +95,14 @@ const char kHistogramNoServiceWorkerFirstContentfulPaintDocs[] =
 const char kHistogramServiceWorkerSubresourceTotalRouterEvaluationTime[] =
     "ServiceWorker.RouterEvaluator.SubresourceTotalEvaluationTime";
 
+const char kHistogramSyntheticResponseSuffix[] = ".SyntheticResponse";
+
 }  // namespace internal
 
 namespace {
 
 bool IsDocsSite(const GURL& url) {
-  return url.host_piece() == "docs.google.com";
+  return url.host() == "docs.google.com";
 }
 
 bool IsForwardBackLoad(ui::PageTransition transition) {
@@ -168,7 +171,7 @@ void ServiceWorkerPageLoadMetricsObserver::OnFirstPaintInPage(
 
 void ServiceWorkerPageLoadMetricsObserver::OnFirstContentfulPaintInPage(
     const page_load_metrics::mojom::PageLoadTiming& timing) {
-  if (!page_load_metrics::IsServiceWorkerControlled(GetDelegate())) {
+  if (!IsServiceWorkerControlledOrSyntheticResponseEnabled(GetDelegate())) {
     if (!page_load_metrics::WasStartedInForegroundOptionalEventInForeground(
             timing.paint_timing->first_contentful_paint, GetDelegate())) {
       return;
@@ -231,6 +234,13 @@ void ServiceWorkerPageLoadMetricsObserver::OnFirstContentfulPaintInPage(
             kHistogramServiceWorkerFirstContentfulPaintRaceNetworkRequestEligible,
         timing.paint_timing->first_contentful_paint.value());
   }
+
+  if (IsServiceWorkerSyntheticResponseEnabled(GetDelegate())) {
+    PAGE_LOAD_HISTOGRAM(
+        base::StrCat({internal::kHistogramServiceWorkerFirstContentfulPaint,
+                      internal::kHistogramSyntheticResponseSuffix}),
+        timing.paint_timing->first_contentful_paint.value());
+  }
 }
 
 void ServiceWorkerPageLoadMetricsObserver::OnDomContentLoadedEventStart(
@@ -270,7 +280,7 @@ void ServiceWorkerPageLoadMetricsObserver::OnFirstInputInPage(
 
 void ServiceWorkerPageLoadMetricsObserver::OnParseStart(
     const page_load_metrics::mojom::PageLoadTiming& timing) {
-  if (!page_load_metrics::IsServiceWorkerControlled(GetDelegate())) {
+  if (!IsServiceWorkerControlledOrSyntheticResponseEnabled(GetDelegate())) {
     return;
   }
 
@@ -287,6 +297,12 @@ void ServiceWorkerPageLoadMetricsObserver::OnParseStart(
             internal::kHistogramServiceWorkerParseStartForwardBackNoStore,
             timing.parse_timing->parse_start.value());
       }
+    }
+    if (IsServiceWorkerSyntheticResponseEnabled(GetDelegate())) {
+      PAGE_LOAD_HISTOGRAM(
+          base::StrCat({internal::kHistogramServiceWorkerParseStart,
+                        internal::kHistogramSyntheticResponseSuffix}),
+          timing.parse_timing->parse_start.value());
     }
   } else {
     PAGE_LOAD_HISTOGRAM(internal::kBackgroundHistogramServiceWorkerParseStart,
@@ -323,7 +339,7 @@ ServiceWorkerPageLoadMetricsObserver::FlushMetricsOnAppEnterBackground(
 }
 
 void ServiceWorkerPageLoadMetricsObserver::RecordTimingHistograms() {
-  if (!page_load_metrics::IsServiceWorkerControlled(GetDelegate())) {
+  if (!IsServiceWorkerControlledOrSyntheticResponseEnabled(GetDelegate())) {
     return;
   }
 
@@ -354,13 +370,19 @@ void ServiceWorkerPageLoadMetricsObserver::RecordTimingHistograms() {
               kHistogramServiceWorkerLargestContentfulPaintRaceNetworkRequestEligible,
           all_frames_largest_contentful_paint.Time().value());
     }
+    if (IsServiceWorkerSyntheticResponseEnabled(GetDelegate())) {
+      PAGE_LOAD_HISTOGRAM(
+          base::StrCat({internal::kHistogramServiceWorkerLargestContentfulPaint,
+                        internal::kHistogramSyntheticResponseSuffix}),
+          all_frames_largest_contentful_paint.Time().value());
+    }
   }
   RecordSubresourceLoad();
 }
 
 bool ServiceWorkerPageLoadMetricsObserver::
     IsServiceWorkerFetchHandlerSkippable() {
-  DCHECK(page_load_metrics::IsServiceWorkerControlled(GetDelegate()));
+  CHECK(IsServiceWorkerControlledOrSyntheticResponseEnabled(GetDelegate()));
   return (GetDelegate().GetMainFrameMetadata().behavior_flags &
           blink::LoadingBehaviorFlag::
               kLoadingBehaviorServiceWorkerFetchHandlerSkippable) != 0;
@@ -368,7 +390,7 @@ bool ServiceWorkerPageLoadMetricsObserver::
 
 bool ServiceWorkerPageLoadMetricsObserver::
     IsServiceWorkerEligibleForRaceNetworkRequest() {
-  CHECK(page_load_metrics::IsServiceWorkerControlled(GetDelegate()));
+  CHECK(IsServiceWorkerControlledOrSyntheticResponseEnabled(GetDelegate()));
   return (GetDelegate().GetMainFrameMetadata().behavior_flags &
           blink::LoadingBehaviorFlag::
               kLoadingBehaviorServiceWorkerRaceNetworkRequest);

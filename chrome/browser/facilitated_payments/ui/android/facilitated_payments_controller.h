@@ -11,10 +11,12 @@
 #include "base/android/scoped_java_ref.h"
 #include "base/containers/span.h"
 #include "base/functional/callback_forward.h"
+#include "base/gtest_prod_util.h"
 #include "chrome/browser/facilitated_payments/ui/android/facilitated_payments_bottom_sheet_bridge.h"
 #include "components/autofill/core/browser/data_model/payments/bank_account.h"
 #include "components/autofill/core/browser/data_model/payments/ewallet.h"
 #include "components/facilitated_payments/core/browser/facilitated_payments_app_info_list.h"
+#include "components/facilitated_payments/core/browser/payment_link_manager.h"
 #include "components/facilitated_payments/core/utils/facilitated_payments_ui_utils.h"
 
 namespace content {
@@ -47,9 +49,8 @@ class FacilitatedPaymentsController {
       base::span<const autofill::Ewallet> ewallet_suggestions,
       std::unique_ptr<payments::facilitated::FacilitatedPaymentsAppInfoList>
           app_suggestions,
-      base::OnceCallback<void(int64_t)> on_payment_account_selected,
-      base::OnceCallback<void(std::string_view, std::string_view)>
-          on_payment_app_selected);
+      base::OnceCallback<void(payments::facilitated::SelectedFopData)>
+          on_fop_selected);
 
   // Asks the `view_` to show the progress screen. Virtual for overriding in
   // tests.
@@ -69,7 +70,7 @@ class FacilitatedPaymentsController {
           ui_event_listener);
 
   // Called by the Java view to communicate `payments::facilitated::UiEvent`.
-  void OnUiEvent(JNIEnv* env, jint event);
+  void OnUiEvent(JNIEnv* env, int32_t event);
 
   void OnBankAccountSelected(JNIEnv* env, jlong instrument_id);
 
@@ -77,8 +78,8 @@ class FacilitatedPaymentsController {
 
   void OnPaymentAppSelected(
       JNIEnv* env,
-      const base::android::JavaParamRef<jstring>& package_name,
-      const base::android::JavaParamRef<jstring>& activity_name);
+      const base::android::JavaRef<jstring>& package_name,
+      const base::android::JavaRef<jstring>& activity_name);
 
   // Asks the `view_` to show the PIX account linking prompt. Virtual for
   // overriding in tests.
@@ -118,9 +119,9 @@ class FacilitatedPaymentsController {
   // Called when user selects the payment account to pay with.
   base::OnceCallback<void(int64_t)> on_payment_account_selected_;
 
-  // Called when a payment app is selected.
-  base::OnceCallback<void(std::string_view, std::string_view)>
-      on_payment_app_selected_;
+  // Called when an eWallet or payment app is selected.
+  base::OnceCallback<void(payments::facilitated::SelectedFopData)>
+      on_fop_selected_;
 
   // Callback used to communicate view events to the feature.
   base::RepeatingCallback<void(payments::facilitated::UiEvent)>

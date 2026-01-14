@@ -29,7 +29,7 @@ class AddressFieldParserTest : public FormFieldParserTestBase,
 
  protected:
   std::unique_ptr<FormFieldParser> Parse(ParsingContext& context,
-                                         AutofillScanner* scanner) override {
+                                         AutofillScanner& scanner) override {
     return AddressFieldParser::Parse(context, scanner);
   }
 
@@ -268,6 +268,20 @@ TEST_F(AddressFieldParserTest, ParseOverflowAndLandmark) {
 TEST_F(AddressFieldParserTest, ParseCity) {
   AddTextFormFieldData("city", "City", ADDRESS_HOME_CITY);
   ClassifyAndVerify();
+}
+
+TEST_F(AddressFieldParserTest, ParseCity_IgnoreNonCityWordsEndingInCity) {
+  AddTextFormFieldData("opacity", "Opacity", UNKNOWN_TYPE);
+  AddTextFormFieldData("ethnicity", "Ethnicity", UNKNOWN_TYPE);
+  AddTextFormFieldData("capacity", "Capacity", UNKNOWN_TYPE);
+  AddTextFormFieldData("incapacity", "Incapacity", UNKNOWN_TYPE);
+  AddTextFormFieldData("electricity", "Electricity", UNKNOWN_TYPE);
+  AddTextFormFieldData("velocity", "Velocity", UNKNOWN_TYPE);
+  AddTextFormFieldData("publicity", "Publicity", UNKNOWN_TYPE);
+  AddTextFormFieldData("simplicity", "Simplicity", UNKNOWN_TYPE);
+  AddTextFormFieldData("caloricity", "Caloricity", UNKNOWN_TYPE);
+  AddTextFormFieldData("homecity", "Homecity", ADDRESS_HOME_CITY);
+  ClassifyAndVerifyWithMultipleParses();
 }
 
 TEST_F(AddressFieldParserTest, ParseState) {

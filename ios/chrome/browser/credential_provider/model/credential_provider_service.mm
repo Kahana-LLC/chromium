@@ -81,11 +81,18 @@ ErrorForReportingForASCredentialIdentityStoreErrorCode(
   return CredentialIdentityStoreErrorForReporting::kUnknownError;
 }
 
+// We can't sync store when the app is backgrounded, as it loses access to files
+// and stores provided by iOS.
+bool CanSyncStore() {
+  return UIApplication.sharedApplication.applicationState !=
+         UIApplicationStateBackground;
+}
+
 // Writes ASCredentialIdentity objects corresponding to `credentials` into the
 // ASCredentialIdentityStore used for OS-initated credential lookups.
 void SyncASIdentityStore(NSArray<id<Credential>>* credentials) {
   auto stateCompletion = ^(ASCredentialIdentityStoreState* state) {
-    if (!state.enabled) {
+    if (!state.enabled || !CanSyncStore()) {
       return;
     }
     auto replaceCompletion = ^(BOOL success, NSError* error) {
@@ -106,6 +113,11 @@ void SyncASIdentityStore(NSArray<id<Credential>>* credentials) {
         [NSMutableArray arrayWithCapacity:credentials.count];
     for (id<Credential> credential in credentials) {
       if (credential.isPasskey) {
+        // Hidden passkeys shouldn't be surfaced in the sign-in suggestions.
+        if (base::FeatureList::IsEnabled(kCredentialProviderSignalAPI) &&
+            credential.hidden) {
+          continue;
+        }
         [storeIdentities addObject:[[ASPasskeyCredentialIdentity alloc]
                                        cr_initWithCredential:credential]];
       } else {
@@ -320,13 +332,16 @@ void CredentialProviderService::SyncAllCredentials(
   AddCredentials(memoryCredentialStore, std::move(forms));
   // We only sync passkeys into the account store.
   if (passkey_model_ && (store == account_password_store_)) {
-    AddCredentials(memoryCredentialStore, passkey_model_->GetAllPasskeys());
+    AddCredentials(memoryCredentialStore,
+                   passkey_model_->GetPasskeys(
+                       webauthn::PasskeyModel::AnyRp(),
+                       webauthn::PasskeyModel::ShadowedCredentials::kExclude));
   }
   SyncStore();
 }
 
 void CredentialProviderService::SyncStore() {
-  if (!IsLastUsedProfile()) {
+  if (!IsLastUsedProfile() || !CanSyncStore()) {
     return;
   }
 
@@ -356,6 +371,10 @@ void CredentialProviderService::SyncStore() {
 
 void CredentialProviderService::CompleteSync(
     NSArray<id<Credential>>* credentials) {
+  if (!CanSyncStore()) {
+    return;
+  }
+
   [dual_credential_store_ removeAllCredentials];
   for (id<Credential> credential in credentials) {
     [dual_credential_store_ addCredential:credential];
@@ -472,8 +491,12 @@ void CredentialProviderService::AddCredentials(
   const bool fallback_to_google_server = CanSendHistoryData(sync_service_);
   NSString* gaia = PrimaryAccountId();
 
-  for (const auto& passkey : passkeys) {
-    if (passkey.hidden()) {
+  for (const sync_pb::WebauthnCredentialSpecifics& passkey : passkeys) {
+    // With the feature enabled, hidden passkeys are only filtered out before
+    // being added to ASCredentialIdentityStore, they should still be added to
+    // `store`.
+    if (!base::FeatureList::IsEnabled(kCredentialProviderSignalAPI) &&
+        passkey.hidden()) {
       continue;
     }
 
@@ -575,9 +598,7 @@ void CredentialProviderService::UpdateAutomaticPasskeyUpgradeSetting() {
     return;
   }
 
-  BOOL is_enabled = base::FeatureList::IsEnabled(
-                        kCredentialProviderAutomaticPasskeyUpgrade) &&
-                    saving_passwords_enabled_.GetValue() &&
+  BOOL is_enabled = saving_passwords_enabled_.GetValue() &&
                     saving_passkeys_enabled_.GetValue() &&
                     automatic_passkey_upgrades_enabled_.GetValue();
   [app_group::GetGroupUserDefaults()
@@ -666,6 +687,11 @@ void CredentialProviderService::OnStateChanged(syncer::SyncService* sync) {
   UpdatePasswordSyncSetting();
 }
 
+void CredentialProviderService::OnSyncShutdown(syncer::SyncService* sync) {
+  // Unreachable, since this service is Shutdown() before the SyncService.
+  NOTREACHED();
+}
+
 // PasskeyModel::Observer:
 void CredentialProviderService::OnPasskeysChanged(
     const std::vector<webauthn::PasskeyModelChange>& changes) {
@@ -686,7 +712,7 @@ void CredentialProviderService::OnPasskeysChanged(
         passkeys_to_remove.push_back(passkey);
         break;
       case webauthn::PasskeyModelChange::ChangeType::UPDATE:
-        // TODO(crbug.com/330355124): do something more optimal than this.
+        // TODO(crbug.com/458784354): do something more optimal than this.
         passkeys_to_add.push_back(passkey);
         passkeys_to_remove.push_back(passkey);
         break;

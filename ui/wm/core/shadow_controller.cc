@@ -4,10 +4,10 @@
 
 #include "ui/wm/core/shadow_controller.h"
 
+#include <algorithm>
 #include <utility>
 
 #include "base/check.h"
-#include "base/containers/contains.h"
 #include "base/containers/flat_set.h"
 #include "base/memory/raw_ptr.h"
 #include "base/no_destructor.h"
@@ -55,8 +55,10 @@ int GetShadowElevationForActiveState(aura::Window* window) {
 int GetShadowElevationForWindowLosingActive(aura::Window* losing_active,
                                             aura::Window* gaining_active) {
   if (gaining_active && GetHideOnDeactivate(gaining_active)) {
-    if (base::Contains(GetTransientChildren(losing_active), gaining_active))
+    if (std::ranges::contains(GetTransientChildren(losing_active),
+                              gaining_active)) {
       return kShadowElevationActiveWindow;
+    }
   }
   return kShadowElevationInactiveWindow;
 }
@@ -135,6 +137,8 @@ class ShadowController::Impl :
   // The shadow's bounds are initialized and it is added to the window's layer.
   void CreateShadowForWindow(aura::Window* window);
 
+  bool IsObservingWindowForTest(aura::Window* window) const;  // IN-TEST
+
   const raw_ptr<aura::Env> env_;
   base::ScopedMultiSourceObservation<aura::Window, aura::WindowObserver>
       observation_manager_{this};
@@ -165,6 +169,9 @@ void ShadowController::Impl::UpdateShadowForWindow(aura::Window* window) {
 }
 
 void ShadowController::Impl::OnWindowInitialized(aura::Window* window) {
+  if (delegate_ && !delegate_->ShouldObserveWindow(window)) {
+    return;
+  }
   DCHECK(!window->parent());
   DCHECK(!window->TargetVisibility());
   observation_manager_.AddObservation(window);
@@ -323,7 +330,9 @@ void ShadowController::Impl::HandlePossibleShadowVisibilityChange(
   if (shadow) {
     shadow->SetElevation(GetShadowElevationForActiveState(window));
     MaybeSetShadowRadiusForWindow(window);
-    shadow->layer()->SetVisible(should_show);
+    if (shadow->layer()->GetTargetVisibility() != should_show) {
+      shadow->layer()->SetVisible(should_show);
+    }
   } else if (should_show) {
     CreateShadowForWindow(window);
   }
@@ -349,6 +358,11 @@ void ShadowController::Impl::CreateShadowForWindow(aura::Window* window) {
   if (delegate_) {
     delegate_->ApplyColorThemeToWindowShadow(window);
   }
+}
+
+bool ShadowController::Impl::IsObservingWindowForTest(
+    aura::Window* window) const {
+  return observation_manager_.IsObservingSource(window);
 }
 
 ShadowController::Impl::Impl(aura::Env* env)
@@ -422,6 +436,10 @@ void ShadowController::OnWindowActivated(ActivationReason reason,
                                          aura::Window* gained_active,
                                          aura::Window* lost_active) {
   impl_->OnWindowActivated(reason, gained_active, lost_active);
+}
+
+bool ShadowController::IsObservingWindowForTest(aura::Window* window) const {
+  return impl_->IsObservingWindowForTest(window);  // IN-TEST
 }
 
 }  // namespace wm

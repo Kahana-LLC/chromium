@@ -17,6 +17,7 @@
 #include "mojo/public/cpp/bindings/pending_associated_receiver.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "mojo/public/cpp/bindings/remote.h"
+#include "pdf/buildflags.h"
 #include "pdf/mojom/pdf.mojom.h"
 #include "services/screen_ai/buildflags/buildflags.h"
 #include "ui/gfx/geometry/point_f.h"
@@ -107,6 +108,13 @@ class PDFDocumentHelper
   void GetPdfBytes(uint32_t size_limit,
                    pdf::mojom::PdfListener::GetPdfBytesCallback callback);
 
+#if BUILDFLAG(ENABLE_PDF_SAVE_TO_DRIVE)
+  void GetSaveDataBufferHandlerForDrive(
+      pdf::mojom::SaveRequestType request_type,
+      pdf::mojom::PdfListener::GetSaveDataBufferHandlerForDriveCallback
+          callback);
+#endif
+
   // Returns text of the given page. If called before document is loaded, the
   // callback will be invoked with an empty string.
   void GetPageText(int32_t page_index,
@@ -118,8 +126,11 @@ class PDFDocumentHelper
   // Registers `callback` to be run when document load completes successfully.
   // When the PDF is already loaded, `callback` is invoked immediately. Will not
   // be invoked when the load fails. This is useful to wait for document
-  // metadata to be loaded, before calls to `GetPdfBytes`, and `GetPageText`
+  // metadata to be loaded, before calls to `GetPdfBytes()`, and `GetPageText()`
   // should be made.
+  //
+  // This `callback` will run before
+  // `PDFDocumentHelperClient::OnDocumentLoadComplete()`.
   void RegisterForDocumentLoadComplete(base::OnceClosure callback);
 
 #if BUILDFLAG(ENABLE_SCREEN_AI_SERVICE)

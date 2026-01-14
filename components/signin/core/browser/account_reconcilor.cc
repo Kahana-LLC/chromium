@@ -249,6 +249,7 @@ void AccountReconcilor::Shutdown() {
   }
   was_shut_down_ = true;
   DisableReconcile(false /* logout_all_accounts */);
+  client_ = nullptr;
   delegate_.reset();
   DCHECK(WasShutDown());
   identity_manager_observer_.Reset();
@@ -413,12 +414,10 @@ void AccountReconcilor::PerformSetCookiesAction(
   reconcile_is_noop_ = false;
   VLOG(1) << "AccountReconcilor::PerformSetCookiesAction: "
           << base::JoinString(ToStringList(parameters.accounts_to_send), " ");
-  // Using `Unretained()` is safe here because `IdentityManager` outlives
-  // `AccountReconcilor`.
   identity_manager_->GetAccountsCookieMutator()->SetAccountsInCookie(
       parameters, delegate_->GetGaiaApiSource(),
       base::BindOnce(&AccountReconcilor::OnSetAccountsInCookieCompleted,
-                     base::Unretained(this), parameters.accounts_to_send));
+                     weak_factory_.GetWeakPtr(), parameters.accounts_to_send));
 }
 
 void AccountReconcilor::PerformLogoutAllAccountsAction() {

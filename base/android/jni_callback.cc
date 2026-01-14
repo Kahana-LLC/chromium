@@ -107,11 +107,11 @@ ScopedJavaLocalRef<jobject> ToJniCallback(
                std::move(callback)));
 }
 
-void JNI_JniCallbackImpl_OnResult(
+static void JNI_JniCallbackImpl_OnResult(
     JNIEnv* env,
-    jboolean isRepeating,
+    bool isRepeating,
     jlong callbackPtr,
-    const jni_zero::JavaParamRef<jobject>& j_result) {
+    const jni_zero::JavaRef<jobject>& j_result) {
   if (isRepeating) {
     auto* callback =
         reinterpret_cast<JniRepeatingWrappedCallbackType*>(callbackPtr);
@@ -123,9 +123,9 @@ void JNI_JniCallbackImpl_OnResult(
   }
 }
 
-void JNI_JniCallbackImpl_Destroy(JNIEnv* env,
-                                 jboolean isRepeating,
-                                 jlong callbackPtr) {
+static void JNI_JniCallbackImpl_Destroy(JNIEnv* env,
+                                        bool isRepeating,
+                                        jlong callbackPtr) {
   if (isRepeating) {
     auto* callback =
         reinterpret_cast<JniRepeatingWrappedCallbackType*>(callbackPtr);
@@ -142,4 +142,4 @@ void JNI_JniCallbackImpl_Destroy(JNIEnv* env,
 
 }  // namespace base::android
 
-DEFINE_JNI_FOR_JniCallbackImpl()
+DEFINE_JNI(JniCallbackImpl)

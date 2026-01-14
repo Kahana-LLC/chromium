@@ -26,6 +26,9 @@ for handover; however, the oncoming primary shepherd should operate on the
 premise all new or _under_-triaged issues are your responsibility. Please do not
 leave any unaddressed red cells in the dashboard at the end of your shift.
 
+See also: [shepherding AI reports][shepherding-ai-reports.md], for guidance on
+how to handle reports you think may have been composed with AI assistance.
+
 ## TL;DR Checklist for Primary Shepherding
 (“I’m Primary Shepherd, what do I do???”)
 
@@ -58,6 +61,13 @@ were not completed from ClusterFuzz auto-triage or previous work on the bug.
 
 All this is hard, so please remember to [ask for help](#Ask-for-help).
 [Yell if you must](https://www.youtube.com/watch?v=5y_SbnPx_cE&t=37s)!
+
+### IMPORTANT! In the wild (0-day) bugs
+If you see a bug that you determine is under active exploitation in the
+wild (0-day), triage it **as soon as possible**. Often, such a bug is reported
+by Google's Threat Analysis Group (TAG) and is described as a 0-day. Even if you
+are not sure, reach out in the Shepherds chat to see if you need an Incident
+Responder (IR). See [Incident response](#Incident-response) for further details.
 
 ## TL;DR Checklist for Secondary Shepherding
 (“I’m Secondary Shepherd, what do I do???”)
@@ -357,7 +367,7 @@ pass it along to / include someone who can direct it more precisely.
       memory corruption.
     * Set a provisional `Found In` of the current Extended Stable.
     * Assign it to the current [V8
-      Sheriff](https://goto.google.com/current-v8-sheriff) with
+      Shepherd](https://goto.google.com/current-v8-sheriff) with
       a comment explaining that the severity and `Found In` are provisional.
       Note that V8 CHECK failure crashes can have security implications, so
       don't triage it yourself.
@@ -373,7 +383,7 @@ pass it along to / include someone who can direct it more precisely.
     * Set a provisional severity of Medium (S2).
     * Set a provisional priority of P1.
     * Assign to the current [V8
-      Sheriff](https://goto.google.com/current-v8-sheriff).
+      Shepherd](https://goto.google.com/current-v8-sheriff).
     * Apply the `Security_Impact-None` hotlist (hotlistID:5433277).
     * If possible, please also apply the `V8 Sandbox` hotlist
       (hotlistID:4802478).

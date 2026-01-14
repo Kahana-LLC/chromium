@@ -16,12 +16,14 @@ import android.hardware.display.VirtualDisplay;
 import android.media.Image.Plane;
 import android.media.projection.MediaProjection;
 import android.media.projection.MediaProjectionManager;
+import android.os.Build;
 import android.os.ConditionVariable;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.WindowManager;
 
 import androidx.activity.result.ActivityResult;
+import androidx.annotation.RequiresApi;
 import androidx.annotation.VisibleForTesting;
 
 import org.jni_zero.CalledByNative;
@@ -97,7 +99,8 @@ public class ScreenCapture implements ImageHandler.Delegate {
     // Starting a MediaProjection session involves plumbing the results from the content picker,
     // which is done via ActivityResult. This class does not handle how that is achieved, but
     // requires this state to begin the session.
-    private static final AtomicReference<PickState> sNextPickState = new AtomicReference<>(null);
+    private static final AtomicReference<@Nullable PickState> sNextPickState =
+            new AtomicReference<>();
 
     // Starting a MediaProjection session requires a foreground service to be running. This class
     // does not handle how that is achieved, but `sLatch` provides a way for this class to wait
@@ -157,7 +160,7 @@ public class ScreenCapture implements ImageHandler.Delegate {
         assert oldPickState == null;
     }
 
-    static void resetStaticStateForTesting() {
+    public static void resetStaticStateForTesting() {
         sLatch.close();
         sNextPickState.set(null);
     }
@@ -182,6 +185,7 @@ public class ScreenCapture implements ImageHandler.Delegate {
         return new ScreenCapture(nativeDesktopCapturerAndroid);
     }
 
+    @RequiresApi(Build.VERSION_CODES.R)
     @CalledByNative
     boolean startCapture() {
         final PickState pickState = sNextPickState.getAndSet(null);
@@ -439,6 +443,41 @@ public class ScreenCapture implements ImageHandler.Delegate {
     }
 
     @Override
+    public void onI420FrameAvailable(
+            ImageHandler imageHandler,
+            Runnable releaseCb,
+            long timestampNs,
+            Plane[] planes,
+            Rect cropRect) {
+        // If the native side was destroyed, then exit without calling JNI methods.
+        if (mNativeDesktopCapturerAndroid == 0) return;
+
+        // Don't close old `ImageHandler`s until we have a Image written to the new
+        // Image handler. This is to make sure that if the OS is still trying to write
+        // to an older Surface from `ImageReader` it can.
+        closeImageHandlersBefore(imageHandler);
+
+        ScreenCaptureJni.get()
+                .onI420FrameAvailable(
+                        mNativeDesktopCapturerAndroid,
+                        releaseCb,
+                        timestampNs,
+                        planes[0].getBuffer(),
+                        planes[0].getPixelStride(),
+                        planes[0].getRowStride(),
+                        planes[1].getBuffer(),
+                        planes[1].getPixelStride(),
+                        planes[1].getRowStride(),
+                        planes[2].getBuffer(),
+                        planes[2].getPixelStride(),
+                        planes[2].getRowStride(),
+                        cropRect.left,
+                        cropRect.top,
+                        cropRect.right,
+                        cropRect.bottom);
+    }
+
+    @Override
     public void onClose(ImageHandler imageHandler) {
         final boolean removed = mImageHandlerQueue.remove(imageHandler);
         assert removed;
@@ -461,6 +500,24 @@ public class ScreenCapture implements ImageHandler.Delegate {
                 ByteBuffer buf,
                 int pixelStride,
                 int rowStride,
+                int left,
+                int top,
+                int right,
+                int bottom);
+
+        void onI420FrameAvailable(
+                long nativeDesktopCapturerAndroid,
+                Runnable releaseCb,
+                long timestampNs,
+                ByteBuffer yBuffer,
+                int yPixelStride,
+                int yRowStride,
+                ByteBuffer uBuffer,
+                int uPixelStride,
+                int uRowStride,
+                ByteBuffer vBuffer,
+                int vPixelStride,
+                int vRowStride,
                 int left,
                 int top,
                 int right,

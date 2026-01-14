@@ -38,11 +38,13 @@
 #include "third_party/blink/renderer/bindings/core/v8/v8_message_port.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_mojo_handle.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_offscreen_canvas.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_quota_exceeded_error.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_readable_stream.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_throw_dom_exception.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_transform_stream.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_writable_stream.h"
 #include "third_party/blink/renderer/core/dom/dom_exception.h"
+#include "third_party/blink/renderer/core/dom/quota_exceeded_error.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/core/fileapi/blob.h"
 #include "third_party/blink/renderer/core/fileapi/file.h"
@@ -74,7 +76,6 @@
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/text/layout_locale.h"
-#include "third_party/blink/renderer/platform/wtf/date_math.h"
 
 namespace blink {
 
@@ -803,6 +804,20 @@ ScriptWrappable* V8ScriptValueDeserializer::ReadDOMObject(
       // DOMException::Create takes its arguments in the opposite order.
       return DOMException::Create(message, name);
     }
+    case kQuotaExceededErrorTag: {
+      // See the serialization side for |stack_unused|.
+      String message, stack_unused;
+      uint32_t has_quota, has_requested;
+      double quota, requested;
+      if (!ReadUTF8String(&message) || !ReadUTF8String(&stack_unused) ||
+          !ReadUint32(&has_quota) || !ReadDouble(&quota) ||
+          !ReadUint32(&has_requested) || !ReadDouble(&requested)) {
+        return nullptr;
+      }
+      return QuotaExceededError::Create(
+          message, has_quota ? std::make_optional(quota) : std::nullopt,
+          has_requested ? std::make_optional(requested) : std::nullopt);
+    }
     case kFencedFrameConfigTag: {
       String url_string, shared_storage_context, urn_uuid_string;
       uint32_t has_shared_storage_context, has_container_size, container_width,
@@ -879,17 +894,22 @@ File* V8ScriptValueDeserializer::ReadFile() {
   String path, name, relative_path, uuid, type;
   uint32_t has_snapshot = 0;
   uint64_t size = 0;
-  double last_modified_ms = 0;
+  std::optional<base::Time> last_modified;
   if (!ReadUTF8String(&path) || (Version() >= 4 && !ReadUTF8String(&name)) ||
       (Version() >= 4 && !ReadUTF8String(&relative_path)) ||
       !ReadUTF8String(&uuid) || !ReadUTF8String(&type) ||
       (Version() >= 4 && !ReadUint32(&has_snapshot)))
     return nullptr;
   if (has_snapshot) {
+    double last_modified_ms = 0;
     if (!ReadUint64(&size) || !ReadDouble(&last_modified_ms))
       return nullptr;
     if (Version() < 8)
-      last_modified_ms *= kMsPerSecond;
+      last_modified_ms *= base::Time::kMillisecondsPerSecond;
+    if (std::isfinite(last_modified_ms)) {
+      last_modified =
+          base::Time::FromMillisecondsSinceUnixEpoch(last_modified_ms);
+    }
   }
   uint32_t is_user_visible = 1;
   if (Version() >= 7 && !ReadUint32(&is_user_visible))
@@ -899,11 +919,6 @@ File* V8ScriptValueDeserializer::ReadFile() {
   auto blob_handle = GetBlobDataHandle(uuid);
   if (!blob_handle)
     return nullptr;
-  std::optional<base::Time> last_modified;
-  if (has_snapshot && std::isfinite(last_modified_ms)) {
-    last_modified =
-        base::Time::FromMillisecondsSinceUnixEpoch(last_modified_ms);
-  }
   return File::CreateFromSerialization(path, name, relative_path,
                                        user_visibility, has_snapshot, size,
                                        last_modified, std::move(blob_handle));
@@ -1077,6 +1092,8 @@ bool V8ScriptValueDeserializer::ExecutionContextExposesInterface(
     }
     case kDOMExceptionTag:
       return V8DOMException::IsExposed(execution_context);
+    case kQuotaExceededErrorTag:
+      return V8QuotaExceededError::IsExposed(execution_context);
     case kFencedFrameConfigTag:
       return V8FencedFrameConfig::IsExposed(execution_context);
     default:

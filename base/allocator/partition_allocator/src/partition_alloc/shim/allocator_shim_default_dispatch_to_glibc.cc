@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
-#pragma allow_unsafe_buffers
-#endif
-
 #include <dlfcn.h>
 #include <malloc.h>
 
@@ -60,6 +55,15 @@ void* GlibcCalloc(size_t n, size_t size, void* context) {
   const auto total = partition_alloc::internal::base::CheckMul(n, size);
   if (!total.IsValid() || total.ValueOrDie() >= kMaxAllowedSize) [[unlikely]] {
     partition_alloc::TerminateBecauseOutOfMemory(size * n);
+  }
+
+  return __libc_calloc(n, size);
+}
+
+void* GlibcUncheckedCalloc(size_t n, size_t size, void* context) {
+  const auto total = partition_alloc::internal::base::CheckMul(n, size);
+  if (!total.IsValid() || total.ValueOrDie() >= kMaxAllowedSize) [[unlikely]] {
+    return nullptr;
   }
 
   return __libc_calloc(n, size);
@@ -128,6 +132,7 @@ const AllocatorDispatch AllocatorDispatch::default_dispatch = {
     &GlibcMalloc,           /* alloc_function */
     &GlibcUncheckedMalloc,  /* alloc_unchecked_function */
     &GlibcCalloc,           /* alloc_zero_initialized_function */
+    &GlibcUncheckedCalloc,  /* alloc_zero_initialized_unchecked_function */
     &GlibcMemalign,         /* alloc_aligned_function */
     &GlibcRealloc,          /* realloc_function */
     &GlibcUncheckedRealloc, /* realloc_unchecked_function */

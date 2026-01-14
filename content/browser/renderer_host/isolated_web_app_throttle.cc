@@ -69,6 +69,35 @@ bool IsNavigatingToIsolatedApplication(NavigationHandle* handle) {
       handle->GetWebContents()->GetBrowserContext(), handle->GetURL());
 }
 
+void RunNavigationInDefaultBrowser(NavigationHandle* handle) {
+  // This function must only be called if the navigation targets an IWA window
+  // with a cross-origin URL.
+  CHECK(WebContentsIsolationInfo::FromWebContents(handle->GetWebContents())
+            ->is_isolated_application());
+
+  if (IsNavigatingToIsolatedApplication(handle)) {
+    // OpenURL() navigates to the given URL as-is; for a cross-IWA navigation
+    // this implies unwanted deep-linking on the receiving end. Silently
+    // suppress this case; external clients are supposed to use protocol
+    // handlers to achieve this behavior.
+    // TODO(crbug.com/424422466): Re-evaluate cross-IWA navigations.
+    return;
+  }
+
+  // TODO(crbug.com/40830234): Should we set the referrer?
+  // TODO(crbug.com/429618748): Rethink the default browser behavior on WML.
+  OpenURLParams params(handle->GetURL(), Referrer(),
+                       WindowOpenDisposition::NEW_FOREGROUND_TAB,
+                       ui::PageTransition::PAGE_TRANSITION_LINK,
+                       /*is_renderer_initiated=*/false);
+
+  params.initiator_origin =
+      handle->GetWebContents()->GetPrimaryMainFrame()->GetLastCommittedOrigin();
+
+  GetContentClient()->browser()->OpenURL(handle->GetStartingSiteInstance(),
+                                         params, base::DoNothing());
+}
+
 }  // namespace
 
 // static
@@ -150,23 +179,6 @@ IsolatedWebAppThrottle::WillProcessResponse() {
       ThrottleAction::BLOCK_RESPONSE);
 }
 
-void IsolatedWebAppThrottle::OpenUrlExternal(const GURL& url) {
-  ui::PageTransition transition =
-      navigation_handle()->GetRedirectChain().size() > 1
-          ? ui::PageTransition::PAGE_TRANSITION_SERVER_REDIRECT
-          : ui::PageTransition::PAGE_TRANSITION_LINK;
-  // The default browser can't be changed in ChromeOS, so just open the URL
-  // directly.
-  // TODO(crbug.com/40830234): Should we set the referrer?
-  // TODO(crbug.com/429618748): Rethink the default browser behavior on WML.
-  OpenURLParams params(url, Referrer(),
-                       WindowOpenDisposition::NEW_FOREGROUND_TAB, transition,
-                       /*is_renderer_initiated=*/false);
-  GetContentClient()->browser()->OpenURL(
-      navigation_handle()->GetStartingSiteInstance(), params,
-      base::DoNothing());
-}
-
 NavigationThrottle::ThrottleCheckResult
 IsolatedWebAppThrottle::MaybeThrottleNavigationTransition(
     bool dest_needs_apps_isolation,
@@ -200,16 +212,17 @@ IsolatedWebAppThrottle::MaybeThrottleNavigationTransition(
   if (navigation_handle()->IsInMainFrame()) {
     // If the main frame tries to leave the app's origin, cancel the
     // navigation and open the URL in the systems' default application.
-    if (dest_tuple != web_contents_isolation_tuple) {
-      OpenUrlExternal(navigation_handle()->GetURL());
+    // Navigations to URLs with custom schemes (say, meow://) initiated by the
+    // IWA will have `dest_origin_` set to null, yet the derived `dest_tuple`
+    // will point back at the IWA origin; for this reason it's necessary to
+    // check `dest_needs_apps_isolation` too.
+    if (dest_tuple != web_contents_isolation_tuple ||
+        !dest_needs_apps_isolation) {
+      RunNavigationInDefaultBrowser(navigation_handle());
       return ThrottleAction::CANCEL;
     }
 
-    // It's very unlikely that `dest_needs_apps_isolation` is false at this
-    // stage. However, to gracefully handle this, the navigation will be aborted
-    // if that's the case.
-    // TODO(crbug.com/417403902): Investigate this.
-    return dest_needs_apps_isolation ? ThrottleAction::PROCEED : block_action;
+    return ThrottleAction::PROCEED;
   } else {
     // Handle iframe navigations.
     CHECK(!navigation_handle()->IsInMainFrame());

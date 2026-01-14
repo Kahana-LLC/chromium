@@ -41,7 +41,6 @@
 #include "chrome/browser/ash/plugin_vm/plugin_vm_features.h"
 #include "chrome/browser/ash/plugin_vm/plugin_vm_test_helper.h"
 #include "chrome/browser/extensions/chrome_app_icon.h"
-#include "chrome/browser/extensions/install_tracker.h"
 #include "chrome/browser/extensions/install_tracker_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/web_applications/mojom/user_display_mode.mojom.h"
@@ -79,6 +78,7 @@
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_system.h"
 #include "extensions/browser/image_loader.h"
+#include "extensions/browser/install_tracker.h"
 #include "extensions/browser/uninstall_reason.h"
 #include "extensions/common/extension_set.h"
 #include "extensions/common/manifest.h"
@@ -135,7 +135,7 @@ scoped_refptr<extensions::Extension> MakeApp(const std::string& name,
                                              const std::string& version,
                                              const std::string& url,
                                              const std::string& id) {
-  std::string err;
+  std::u16string err;
   base::Value::Dict value;
   value.Set("name", name);
   value.Set("version", version);
@@ -143,7 +143,7 @@ scoped_refptr<extensions::Extension> MakeApp(const std::string& name,
   scoped_refptr<extensions::Extension> app = extensions::Extension::Create(
       base::FilePath(), extensions::mojom::ManifestLocation::kInternal, value,
       extensions::Extension::WAS_INSTALLED_BY_DEFAULT, id, &err);
-  EXPECT_EQ(err, "");
+  EXPECT_EQ(err, u"");
   return app;
 }
 
@@ -358,13 +358,13 @@ class WebAppBuilderTest : public AppServiceAppModelBuilderTest {
         web_app::WebAppProvider::GetForTest(GetAppServiceProfile());
     ASSERT_TRUE(web_app_provider);
 
-    base::test::TestFuture<std::map<web_app::SquareSizePx, SkBitmap>>
-        read_icons_future;
+    base::test::TestFuture<web_app::IconMetadataFromDisk> read_icons_future;
     web_app_provider->icon_manager()
         .ReadTrustedIconsWithFallbackToManifestIcons(
             app_id, icon_sizes_in_px, web_app::IconPurpose::ANY,
             read_icons_future.GetCallback());
-    auto icon_bitmaps = read_icons_future.Take();
+    web_app::SizeToBitmap icon_bitmaps =
+        std::move(read_icons_future.Take().icons_map);
     for (auto [scale, size_px] : scale_to_size_in_px) {
       output_image_skia.AddRepresentation(
           gfx::ImageSkiaRep(icon_bitmaps[size_px], scale));
@@ -409,12 +409,12 @@ TEST_F(ExtensionAppTest, HideWebStore) {
   auto scoped_callback1 = std::make_unique<
       AppServiceAppModelBuilder::ScopedAppPositionInitCallbackForTest>(
       &builder1, base::BindRepeating(&InitAppPosition));
-  builder1.Initialize(nullptr, profile_.get(), &model_updater1);
+  builder1.Initialize(nullptr, profile(), &model_updater1);
   EXPECT_TRUE(model_updater1.FindItem(store->id()));
 
   // Activate the HideWebStoreIcon policy.
-  profile_->GetPrefs()->SetBoolean(policy::policy_prefs::kHideWebStoreIcon,
-                                   true);
+  profile()->GetPrefs()->SetBoolean(policy::policy_prefs::kHideWebStoreIcon,
+                                    true);
   // Now the web store should not be present anymore.
   EXPECT_FALSE(model_updater1.FindItem(store->id()));
 
@@ -425,12 +425,12 @@ TEST_F(ExtensionAppTest, HideWebStore) {
   auto scoped_callback2 = std::make_unique<
       AppServiceAppModelBuilder::ScopedAppPositionInitCallbackForTest>(
       &builder2, base::BindRepeating(&InitAppPosition));
-  builder2.Initialize(nullptr, profile_.get(), &model_updater2);
+  builder2.Initialize(nullptr, profile(), &model_updater2);
   EXPECT_FALSE(model_updater2.FindItem(store->id()));
 
   // Deactivate the HideWebStoreIcon policy again.
-  profile_->GetPrefs()->SetBoolean(policy::policy_prefs::kHideWebStoreIcon,
-                                   false);
+  profile()->GetPrefs()->SetBoolean(policy::policy_prefs::kHideWebStoreIcon,
+                                    false);
   // Now the web store should have appeared.
   EXPECT_TRUE(model_updater2.FindItem(store->id()));
 
@@ -476,7 +476,7 @@ TEST_F(ExtensionAppTest, Reinstall) {
 
   // Install kPackagedApp1Id again should not create a new entry.
   extensions::InstallTracker* tracker =
-      extensions::InstallTrackerFactory::GetForBrowserContext(profile_.get());
+      extensions::InstallTrackerFactory::GetForBrowserContext(profile());
   extensions::InstallObserver::ExtensionInstallParams params(
       kPackagedApp1Id, "", gfx::ImageSkia(), true, true);
   tracker->OnBeginExtensionInstall(params);
@@ -485,7 +485,7 @@ TEST_F(ExtensionAppTest, Reinstall) {
 }
 
 TEST_F(ExtensionAppTest, OrdinalPrefsChange) {
-  AppSorting* sorting = ExtensionSystem::Get(profile_.get())->app_sorting();
+  AppSorting* sorting = ExtensionSystem::Get(profile())->app_sorting();
 
   syncer::StringOrdinal package_app_page =
       sorting->GetPageOrdinal(kPackagedApp1Id);
@@ -507,7 +507,7 @@ TEST_F(ExtensionAppTest, OrdinalPrefsChange) {
 }
 
 TEST_F(ExtensionAppTest, OnExtensionMoved) {
-  AppSorting* sorting = ExtensionSystem::Get(profile_.get())->app_sorting();
+  AppSorting* sorting = ExtensionSystem::Get(profile())->app_sorting();
   sorting->SetPageOrdinal(kHostedAppId,
                           sorting->GetPageOrdinal(kPackagedApp1Id));
 
@@ -529,12 +529,12 @@ TEST_F(ExtensionAppTest, OnExtensionMoved) {
 
 TEST_F(ExtensionAppTest, InvalidOrdinal) {
   // Creates a no-ordinal case.
-  AppSorting* sorting = ExtensionSystem::Get(profile_.get())->app_sorting();
+  AppSorting* sorting = ExtensionSystem::Get(profile())->app_sorting();
   sorting->ClearOrdinals(kPackagedApp1Id);
 
   // Creates a corrupted ordinal case.
   extensions::ExtensionPrefs* prefs =
-      extensions::ExtensionPrefs::Get(profile_.get());
+      extensions::ExtensionPrefs::Get(profile());
   prefs->UpdateExtensionPref(kHostedAppId, "page_ordinal",
                              base::Value("a corrupted ordinal"));
 
@@ -581,7 +581,7 @@ TEST_F(WebAppBuilderTest, WebAppList) {
   const std::string kAppName = "Web App";
   CreateWebApp(kAppName);
 
-  app_service_test_.SetUp(profile_.get());
+  app_service_test_.SetUp(profile());
   RemoveApps(apps::AppType::kWeb, profile(), model_updater_.get());
   EXPECT_EQ(1u, model_updater_->ItemCount());
   EXPECT_EQ((std::vector<std::string>{kAppName}),
@@ -616,7 +616,7 @@ class WebAppBuilderDemoModeTest : public WebAppBuilderTest {
     demo_mode_test_helper_ = std::make_unique<ash::DemoModeTestHelper>();
     demo_mode_test_helper_->InitializeSession();
 
-    app_service_test_.SetUp(profile_.get());
+    app_service_test_.SetUp(profile());
     // Wait for some default apps added to AppService.
     base::RunLoop().RunUntilIdle();
     RemoveApps(apps::AppType::kWeb, profile(), model_updater_.get());
@@ -691,7 +691,7 @@ class CrostiniAppTest : public AppServiceAppModelBuilderTest {
     // the ::TearDown method, but we need it to go away before shutting down
     // DBusThreadManager to ensure all keyed services that might rely on DBus
     // clients are destroyed.
-    profile_.reset();
+    DeleteProfile();
 
     ash::SeneschalClient::Shutdown();
     ash::ConciergeClient::Shutdown();

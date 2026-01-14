@@ -9,23 +9,23 @@
 
 #include "base/debug/alias.h"
 #include "base/debug/crash_logging.h"
-#include "base/debug/dump_without_crashing.h"
 #include "base/feature_list.h"
 #include "base/logging.h"
 #include "base/memory/raw_ptr.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/strings/stringprintf.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/trace_event/trace_event.h"
 #include "ui/gfx/color_space_win.h"
+#include "ui/gfx/geometry/axis_transform2d.h"
 #include "ui/gfx/geometry/rect_conversions.h"
+#include "ui/gfx/geometry/size.h"
 #include "ui/gfx/geometry/size_conversions.h"
+#include "ui/gfx/geometry/size_f.h"
 #include "ui/gl/dc_layer_overlay_image.h"
 #include "ui/gl/dc_layer_tree.h"
 #include "ui/gl/debug_utils.h"
 #include "ui/gl/direct_composition_support.h"
-#include "ui/gl/gl_features.h"
 #include "ui/gl/gl_switches.h"
 #include "ui/gl/gl_utils.h"
 #include "ui/gl/hdr_metadata_helper_win.h"
@@ -45,13 +45,19 @@ constexpr base::TimeDelta kDelayForRetryingYUVFormat = base::Minutes(10);
 // break DWM optimizations for MF fullscreen letterboxing in
 // `PresentDCOMPSurface`. These optimizations require `dest_size` to match the
 // monitor size in order for MF to handle fullscreen letterboxing of videos.
-BASE_FEATURE(kDisableVPBLTUpscale,
-             "DisableVPBLTUpscale",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+BASE_FEATURE(kDisableVPBLTUpscale, base::FEATURE_DISABLED_BY_DEFAULT);
+
+// Limit the video swap chain size that we request from Media Foundation, opting
+// to do upscaling via DWM, rather than VPBLT.
+//
+// This is necessary in the case of very large onscreen size (particularly with
+// scaled up videos that are clipped), where large MF swap chain sizes can
+// negatively affect performance and memory usage.
+BASE_FEATURE(kLimitMFSwapChainSize, base::FEATURE_ENABLED_BY_DEFAULT);
 
 // This flag attempts to enable MPO for P010 SDR video content. The feature
 // should only be enabled when P010 MPO is detected as supported.
-BASE_FEATURE(kP010MPOForSDR, "P010MPOForSDR", base::FEATURE_ENABLED_BY_DEFAULT);
+BASE_FEATURE(kP010MPOForSDR, base::FEATURE_ENABLED_BY_DEFAULT);
 
 gfx::ColorSpace GetOutputColorSpace(const gfx::ColorSpace& input_color_space,
                                     bool is_yuv_swapchain) {
@@ -82,37 +88,12 @@ const char* ProtectedVideoTypeToString(gfx::ProtectedVideoType type) {
   }
 }
 
-bool CreateSurfaceHandleHelper(HANDLE* handle) {
-  using PFN_DCOMPOSITION_CREATE_SURFACE_HANDLE =
-      HRESULT(WINAPI*)(DWORD, SECURITY_ATTRIBUTES*, HANDLE*);
-  static PFN_DCOMPOSITION_CREATE_SURFACE_HANDLE create_surface_handle_function =
-      nullptr;
-
-  if (!create_surface_handle_function) {
-    HMODULE dcomp = ::GetModuleHandleA("dcomp.dll");
-    if (!dcomp) {
-      DLOG(ERROR) << "Failed to get handle for dcomp.dll";
-      return false;
-    }
-    create_surface_handle_function =
-        reinterpret_cast<PFN_DCOMPOSITION_CREATE_SURFACE_HANDLE>(
-            ::GetProcAddress(dcomp, "DCompositionCreateSurfaceHandle"));
-    if (!create_surface_handle_function) {
-      DLOG(ERROR)
-          << "Failed to get address for DCompositionCreateSurfaceHandle";
-      return false;
-    }
-  }
-
-  HRESULT hr = create_surface_handle_function(COMPOSITIONOBJECT_ALL_ACCESS,
-                                              nullptr, handle);
-  if (FAILED(hr)) {
-    DLOG(ERROR) << "DCompositionCreateSurfaceHandle failed with error 0x"
-                << std::hex << hr;
-    return false;
-  }
-
-  return true;
+base::win::ScopedHandle CreateDCompSurfaceHandle() {
+  HANDLE handle = INVALID_HANDLE_VALUE;
+  const HRESULT hr = ::DCompositionCreateSurfaceHandle(
+      COMPOSITIONOBJECT_ALL_ACCESS, nullptr, &handle);
+  CHECK_EQ(hr, S_OK);
+  return base::win::ScopedHandle(handle);
 }
 
 const char* DxgiFormatToString(DXGI_FORMAT format) {
@@ -1217,7 +1198,8 @@ gfx::Size SwapChainPresenter::CalculateSwapChainSize(
   // extra BLT to avoid HW downscaling. This prevents the use of hardware
   // overlays especially for protected video. Use the onscreen size (scale==1)
   // for overlay can avoid this problem.
-  // TODO(sunnyps): Support 90/180/270 deg rotations using video context.
+  // TODO(crbug.com/474398418): Support 90/180/270 deg rotations using video
+  // context.
 
   // On battery_power mode, set swap_chain_size to the source content size when
   // the swap chain presents upscaled overlay, multi-plane overlay hardware will
@@ -1384,10 +1366,9 @@ bool SwapChainPresenter::PresentToDecodeSwapChain(
                swap_chain_size.ToString());
 
   Microsoft::WRL::ComPtr<IDXGIResource> decode_resource;
-  texture.As(&decode_resource);
-  DCHECK(decode_resource);
+  HRESULT hr = texture.As(&decode_resource);
+  CHECK_EQ(hr, S_OK);
 
-  HRESULT hr = S_OK;
   if (!decode_swap_chain_ || decode_resource_ != decode_resource) {
     TRACE_EVENT0(
         "gpu",
@@ -1396,14 +1377,11 @@ bool SwapChainPresenter::PresentToDecodeSwapChain(
 
     decode_resource_ = decode_resource;
 
-    HANDLE handle = INVALID_HANDLE_VALUE;
-    if (!CreateSurfaceHandleHelper(&handle))
-      return false;
-    swap_chain_handle_.Set(handle);
+    base::win::ScopedHandle swap_chain_handle = CreateDCompSurfaceHandle();
 
     Microsoft::WRL::ComPtr<IDXGIDevice> dxgi_device;
-    d3d11_device_.As(&dxgi_device);
-    DCHECK(dxgi_device);
+    hr = d3d11_device_.As(&dxgi_device);
+    CHECK_EQ(hr, S_OK);
     Microsoft::WRL::ComPtr<IDXGIAdapter> dxgi_adapter;
     dxgi_device->GetAdapter(&dxgi_adapter);
     DCHECK(dxgi_adapter);
@@ -1418,7 +1396,7 @@ bool SwapChainPresenter::PresentToDecodeSwapChain(
     // no effects.
     desc.Flags = DXGI_SWAP_CHAIN_FLAG_FULLSCREEN_VIDEO;
     hr = media_factory->CreateDecodeSwapChainForCompositionSurfaceHandle(
-        d3d11_device_.Get(), swap_chain_handle_.Get(), &desc,
+        d3d11_device_.Get(), swap_chain_handle.Get(), &desc,
         decode_resource_.Get(), nullptr, &decode_swap_chain_);
     if (FAILED(hr)) {
       DLOG(ERROR) << "CreateDecodeSwapChainForCompositionSurfaceHandle failed "
@@ -1434,7 +1412,7 @@ bool SwapChainPresenter::PresentToDecodeSwapChain(
     dcomp_device_.As(&desktop_device);
     DCHECK(desktop_device);
 
-    hr = desktop_device->CreateSurfaceFromHandle(swap_chain_handle_.Get(),
+    hr = desktop_device->CreateSurfaceFromHandle(swap_chain_handle.Get(),
                                                  &decode_surface_);
     if (FAILED(hr)) {
       DLOG(ERROR) << "CreateSurfaceFromHandle failed with error 0x" << std::hex
@@ -1694,9 +1672,6 @@ bool SwapChainPresenter::SetupPresentToSwapChain(
       ReleaseSwapChainResources();
       return false;
     }
-    content_ = swap_chain_.Get();
-    swap_chain_size_ = swap_chain_size;
-    content_size_ = swap_chain_size;
   }
 
   if (input_texture) {
@@ -1722,7 +1697,7 @@ bool SwapChainPresenter::SetupPresentToSwapChain(
     // crashes.
     if (!IsCompatibleHDRMetadata(hdr_metadata)) {
       hdr_metadata = gfx::HDRMetadata::PopulateUnspecifiedWithDefaults(
-          std::make_optional(params.video_params.hdr_metadata));
+          params.video_params.hdr_metadata);
     }
     stream_metadata = HDRMetadataHelperWin::HDRMetadataToDXGI(hdr_metadata);
   }
@@ -1768,8 +1743,8 @@ bool SwapChainPresenter::SetupPresentToSwapChain(
     // there still may be a black flicker when presenting expensive content
     // (e.g. 4k video).
     Microsoft::WRL::ComPtr<IDXGIDevice2> dxgi_device2;
-    d3d11_device_.As(&dxgi_device2);
-    DCHECK(dxgi_device2);
+    hr = d3d11_device_.As(&dxgi_device2);
+    CHECK_EQ(hr, S_OK);
     base::WaitableEvent event(base::WaitableEvent::ResetPolicy::AUTOMATIC,
                               base::WaitableEvent::InitialState::NOT_SIGNALED);
     hr = dxgi_device2->EnqueueSetEvent(event.handle());
@@ -1922,8 +1897,9 @@ bool SwapChainPresenter::FinishPresentToSwapChain() {
   return true;
 }
 // static
-bool SwapChainPresenter::CreateSurfaceHandleHelperForTesting(HANDLE* handle) {
-  return CreateSurfaceHandleHelper(handle);
+base::win::ScopedHandle
+SwapChainPresenter::CreateDCompSurfaceHandleForTesting() {
+  return CreateDCompSurfaceHandle();
 }
 
 SwapChainPresenter::PresentationMode
@@ -2067,6 +2043,60 @@ bool SwapChainPresenter::PresentDCOMPSurface(DCLayerOverlayParams& params,
   // Note: do not intersect clip rect w/ mapped_rect. This will result
   // in Media Foundation scaling the full video to the clipped region,
   // instead of allowing clipping to a portion of the video.
+
+  if (base::FeatureList::IsEnabled(kLimitMFSwapChainSize)) {
+    // We somewhat arbitrarily choose a combination of the monitor size and
+    // video natural size as the upper limit.
+    // - The monitor size upper limit ensures that if the video is a lower
+    //   resolution than the screen and Media Foundation can do better scaling
+    //   than DWM, full screen videos will continue to be upscaled nicely.
+    // - The video natural size upper limit ensures that if a video is a higher
+    //   resolution than the screen size, we will not limit the max scale factor
+    //   to less than 1x.
+    const gfx::SizeF monitor_size = gfx::SizeF(GetMonitorSize());
+    // Note: we assume that the video has an unclipped UV rect, so the
+    // `content_rect` represents the resource size in pixels.
+    const gfx::SizeF video_natural_size =
+        gfx::SizeF(params.content_rect.size());
+    const gfx::SizeF max_swap_chain_size = gfx::SizeF(
+        std::max(monitor_size.width(), video_natural_size.width()),
+        std::max(monitor_size.height(), video_natural_size.height()));
+
+    // Since Chromium's MF renderer assumes that a MF video will be centered and
+    // scaled (maintaining aspect ratio) to fit its quad rect, we must expand
+    // one dimension of our chosen max size to match the onscreen aspect ratio.
+    // The resulting size is the smallest size that encloses
+    // `max_swap_chain_size` while maintaining the aspect ratio of
+    // `overlay_onscreen_rect`.
+    const double onscreen_to_max_size_scale =
+        std::max(max_swap_chain_size.width() / overlay_onscreen_rect.width(),
+                 max_swap_chain_size.height() / overlay_onscreen_rect.height());
+    const gfx::SizeF adjusted_max_swap_chain_size = gfx::ScaleSize(
+        overlay_onscreen_rect.size(), onscreen_to_max_size_scale);
+
+    if (overlay_onscreen_rect.width() > adjusted_max_swap_chain_size.width() ||
+        overlay_onscreen_rect.height() >
+            adjusted_max_swap_chain_size.height()) {
+      TRACE_EVENT("gpu", "PresentDCOMPSurface LimitMFSwapChainSize",
+                  "overlay_onscreen_rect", overlay_onscreen_rect.ToString(),
+                  "adjusted_max_swap_chain_size",
+                  adjusted_max_swap_chain_size.ToString());
+      mapped_rect.set_size(gfx::ToCeiledSize(adjusted_max_swap_chain_size));
+
+      if (!base::FeatureList::IsEnabled(
+              features::kEarlyFullScreenVideoOptimization)) {
+        *visual_transform = gfx::Transform(
+            gfx::AxisTransform2d(1.0f / onscreen_to_max_size_scale,
+                                 visual_transform->To2dTranslation()));
+
+        // Adjust for the difference in the floating point "ideal" size and
+        // integer swap chain size that we request to Media Foundatation.
+        visual_transform->Scale(
+            adjusted_max_swap_chain_size.width() /
+            std::ceil(adjusted_max_swap_chain_size.width()));
+      }
+    }
+  }
 
   pending_dcomp_surface_rect_in_window_ = mapped_rect;
   content_size_ = mapped_rect.size();
@@ -2283,8 +2313,6 @@ bool SwapChainPresenter::VideoProcessorBlt(
                            video_context.Get(), video_processor.Get(),
                            use_vp_auto_hdr);
       if (FAILED(hr)) {
-        enable_vp_auto_hdr_ = false;
-
         if (use_vp_auto_hdr) {
           if (!RevertSwapChainToSDR(video_device, video_processor,
                                     video_processor_enumerator, swap_chain3,
@@ -2294,6 +2322,7 @@ bool SwapChainPresenter::VideoProcessorBlt(
 
           use_vp_auto_hdr = false;
         }
+        enable_vp_auto_hdr_ = false;
       }
     }
 
@@ -2383,7 +2412,6 @@ void SwapChainPresenter::ReleaseSwapChainResources() {
     DVLOG(2) << __func__ << "(" << this << ")";
     output_view_.Reset();
     swap_chain_.Reset();
-    swap_chain_handle_.Close();
     staging_texture_.Reset();
     swap_chain_size_ = gfx::Size();
 
@@ -2416,8 +2444,8 @@ bool SwapChainPresenter::ReallocateSwapChain(
   gpu_vendor_id_ = 0;
 
   Microsoft::WRL::ComPtr<IDXGIDevice> dxgi_device;
-  d3d11_device_.As(&dxgi_device);
-  DCHECK(dxgi_device);
+  HRESULT hr = d3d11_device_.As(&dxgi_device);
+  CHECK_EQ(hr, S_OK);
   Microsoft::WRL::ComPtr<IDXGIAdapter> dxgi_adapter;
   dxgi_device->GetAdapter(&dxgi_adapter);
   DCHECK(dxgi_adapter);
@@ -2427,10 +2455,7 @@ bool SwapChainPresenter::ReallocateSwapChain(
 
   // The composition surface handle is only used to create YUV swap chains since
   // CreateSwapChainForComposition can't do that.
-  HANDLE handle = INVALID_HANDLE_VALUE;
-  if (!CreateSurfaceHandleHelper(&handle))
-    return false;
-  swap_chain_handle_.Set(handle);
+  base::win::ScopedHandle swap_chain_handle = CreateDCompSurfaceHandle();
 
   first_present_ = true;
 
@@ -2468,8 +2493,8 @@ bool SwapChainPresenter::ReallocateSwapChain(
   if (use_yuv_swap_chain) {
     TRACE_EVENT1("gpu", "SwapChainPresenter::ReallocateSwapChain::YUV",
                  "format", DxgiFormatToString(swap_chain_format));
-    HRESULT hr = media_factory->CreateSwapChainForCompositionSurfaceHandle(
-        d3d11_device_.Get(), swap_chain_handle_.Get(), &desc, nullptr,
+    hr = media_factory->CreateSwapChainForCompositionSurfaceHandle(
+        d3d11_device_.Get(), swap_chain_handle.Get(), &desc, nullptr,
         &swap_chain_);
     failed_to_create_yuv_swapchain_ = FAILED(hr);
 
@@ -2509,8 +2534,8 @@ bool SwapChainPresenter::ReallocateSwapChain(
       desc.Flags |= DXGI_SWAP_CHAIN_FLAG_HW_PROTECTED;
     }
 
-    HRESULT hr = media_factory->CreateSwapChainForCompositionSurfaceHandle(
-        d3d11_device_.Get(), swap_chain_handle_.Get(), &desc, nullptr,
+    hr = media_factory->CreateSwapChainForCompositionSurfaceHandle(
+        d3d11_device_.Get(), swap_chain_handle.Get(), &desc, nullptr,
         &swap_chain_);
 
     base::UmaHistogramSparse(kSwapChainCreationResultByVideoTypeUmaPrefix +
@@ -2535,7 +2560,7 @@ bool SwapChainPresenter::ReallocateSwapChain(
   if (DXGIWaitableSwapChainEnabled()) {
     Microsoft::WRL::ComPtr<IDXGISwapChain3> swap_chain3;
     if (SUCCEEDED(swap_chain_.As(&swap_chain3))) {
-      HRESULT hr = swap_chain3->SetMaximumFrameLatency(
+      hr = swap_chain3->SetMaximumFrameLatency(
           GetDXGIWaitableSwapChainMaxQueuedFrames());
       DCHECK(SUCCEEDED(hr)) << "SetMaximumFrameLatency failed with error "
                             << logging::SystemErrorCodeToString(hr);
@@ -2544,11 +2569,14 @@ bool SwapChainPresenter::ReallocateSwapChain(
 
   LabelSwapChainAndBuffers(swap_chain_.Get(), "SwapChainPresenter");
 
+  content_ = swap_chain_.Get();
+  content_size_ = swap_chain_size;
+  swap_chain_size_ = swap_chain_size;
   swap_chain_format_ = swap_chain_format;
   SetSwapChainPresentDuration();
 
   DXGI_ADAPTER_DESC adapter_desc;
-  HRESULT hr = dxgi_adapter->GetDesc(&adapter_desc);
+  hr = dxgi_adapter->GetDesc(&adapter_desc);
   if (SUCCEEDED(hr)) {
     gpu_vendor_id_ = adapter_desc.VendorId;
   } else {
@@ -2624,7 +2652,6 @@ bool SwapChainPresenter::RevertSwapChainToSDR(
     ReleaseSwapChainResources();
     return false;
   }
-  content_ = swap_chain_.Get();
 
   Microsoft::WRL::ComPtr<ID3D11Texture2D> swap_chain_buffer;
   swap_chain_->GetBuffer(0, IID_PPV_ARGS(&swap_chain_buffer));

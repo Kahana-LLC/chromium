@@ -168,7 +168,8 @@ base::TimeDelta GetCleanupTaskPeriodMs() {
   BOOL _cleanupScheduled;
 
   // Password Manager tied to the same web state as this helper.
-  raw_ptr<password_manager::PasswordManagerInterface> _passwordManager;
+  raw_ptr<password_manager::PasswordManagerInterface, DanglingUntriaged>
+      _passwordManager;
 }
 
 #pragma mark - Initialization
@@ -363,6 +364,25 @@ base::TimeDelta GetCleanupTaskPeriodMs() {
   _framesFormExtractionStatus.clear();
 }
 
+- (void)cleanupForFrameId:(const std::string&)frameId {
+  _fillDataMap.erase(frameId);
+  _framesFormExtractionStatus.erase(frameId);
+
+  NSString* nsFrameId = SysUTF8ToNSString(frameId);
+  NSMutableArray<PendingFormQuery*>* remainingQueries = [NSMutableArray array];
+  for (PendingFormQuery* query in _pendingFormQueries) {
+    if ([query.frameId isEqualToString:nsFrameId]) {
+      // Complete the query even if the frame is gone so any task waiting on
+      // this can be completed. Worst case: the task will be completed with
+      // no suggestions available.
+      [query runCompletion];
+    } else {
+      [remainingQueries addObject:query];
+    }
+  }
+  _pendingFormQueries = remainingQueries;
+}
+
 - (void)processWithPasswordFormFillData:(const PasswordFormFillData&)formData
                              forFrameId:(const std::string&)frameId
                             isMainFrame:(BOOL)isMainFrame
@@ -377,7 +397,7 @@ base::TimeDelta GetCleanupTaskPeriodMs() {
   // to fields which must trigger a specific behavior. In this case,
   // the username and password fields' renderer ids are sent through
   // "attachListenersForBottomSheet" so that they may trigger the
-  // password bottom sheet on focus events for these specific fields.
+  // credential bottom sheet on focus events for these specific fields.
   std::vector<autofill::FieldRendererId> rendererIds(2);
   rendererIds[0] = formData.username_element_renderer_id;
   rendererIds[1] = formData.password_element_renderer_id;
@@ -425,7 +445,7 @@ base::TimeDelta GetCleanupTaskPeriodMs() {
     return YES;
   }
 
-  autofill::FormStructure* form_structure =
+  const autofill::FormStructure* form_structure =
       driver->GetAutofillManager().FindCachedFormById(
           {driver->GetFrameToken(), formQuery.formRendererID});
   if (!form_structure) {

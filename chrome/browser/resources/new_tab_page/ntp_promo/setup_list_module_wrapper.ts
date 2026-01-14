@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import 'chrome://resources/cr_elements/cr_button/cr_button.js';
 import 'chrome://resources/cr_elements/cr_toast/cr_toast.js';
 import './setup_list.js';
 
@@ -56,8 +57,14 @@ export class SetupListModuleWrapperElement extends CrLitElement {
 
       /** Data about the most recent un-doable action. */
       undoData_: {type: Object},
+
+      maxPromos: {type: Number, attribute: true, useDefault: true},
+      maxCompletedPromos: {type: Number, attribute: true, useDefault: true},
     };
   }
+
+  accessor maxPromos: number = 0;
+  accessor maxCompletedPromos: number = 0;
 
   protected accessor moduleHidden_: boolean = false;
   protected accessor moduleReady_: boolean = false;

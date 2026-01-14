@@ -41,7 +41,6 @@ class CONTENT_EXPORT FakeIdentityRequestDialogController
       const std::vector<IdentityProviderDataPtr>& idp_list,
       const std::vector<IdentityRequestAccountPtr>& accounts,
       blink::mojom::RpMode rp_mode,
-      const std::vector<IdentityRequestAccountPtr>& new_accounts,
       AccountSelectionCallback on_selected,
       LoginToIdPCallback on_add_account,
       DismissCallback dismmiss_callback,
@@ -79,6 +78,7 @@ class CONTENT_EXPORT FakeIdentityRequestDialogController
       AccountsDisplayedCallback accounts_displayed_callback) override;
 
   std::string GetTitle() const override;
+  std::optional<std::string> GetSubtitle() const override;
 
   void ShowUrl(LinkType link_type, const GURL& url) override;
 
@@ -102,6 +102,7 @@ class CONTENT_EXPORT FakeIdentityRequestDialogController
 
   std::optional<std::string> selected_account_;
   std::string title_;
+  std::string subtitle_;
   // The caller ensures that this object does not outlive the web_contents_.
   raw_ptr<WebContents> web_contents_;
   // We observe WebContentsDestroyed to ensure that this pointer is valid.

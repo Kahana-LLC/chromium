@@ -16,6 +16,7 @@
 namespace {
 using base::android::AttachCurrentThread;
 using base::android::ScopedJavaGlobalRef;
+using base::android::ScopedJavaLocalRef;
 }  // namespace
 
 class AndroidBaseWindowUnitTest : public testing::Test {
@@ -23,11 +24,7 @@ class AndroidBaseWindowUnitTest : public testing::Test {
   AndroidBaseWindowUnitTest() = default;
   ~AndroidBaseWindowUnitTest() override = default;
 
-  void SetUp() override {
-    java_test_support_ =
-        Java_AndroidBaseWindowNativeUnitTestSupport_Constructor(
-            AttachCurrentThread());
-  }
+  void SetUp() override { SetUpJavaSupport(); }
 
   void TearDown() override { InvokeJavaDestroy(); }
 
@@ -53,7 +50,19 @@ class AndroidBaseWindowUnitTest : public testing::Test {
         AttachCurrentThread(), java_test_support_, left, top, right, bottom);
   }
 
- private:
+  void InvokeJavaVerifyBoundsToSet(const gfx::Rect& bounds_to_set) const {
+    Java_AndroidBaseWindowNativeUnitTestSupport_verifyBoundsToSet(
+        AttachCurrentThread(), java_test_support_, bounds_to_set.x(),
+        bounds_to_set.y(), bounds_to_set.right(), bounds_to_set.bottom());
+  }
+
+ protected:
+  void SetUpJavaSupport() {
+    java_test_support_ =
+        Java_AndroidBaseWindowNativeUnitTestSupport_Constructor(
+            AttachCurrentThread());
+  }
+
   ScopedJavaGlobalRef<jobject> java_test_support_;
 };
 
@@ -94,3 +103,18 @@ TEST_F(AndroidBaseWindowUnitTest, GetBoundsMethodReturnsCorrectBounds) {
   // Assert.
   EXPECT_EQ(expected_bounds, actual_bounds);
 }
+
+TEST_F(AndroidBaseWindowUnitTest,
+       SetBoundsMethodPassesCorrectBoundsToChromeAndroidTask) {
+  // Arrange.
+  AndroidBaseWindow* android_base_window = InvokeJavaGetOrCreateNativePtr();
+  gfx::Rect bounds_to_set(/*x=*/50, /*y=*/100, /*width=*/800, /*height=*/600);
+
+  // Act.
+  android_base_window->SetBounds(bounds_to_set);
+
+  // Assert.
+  InvokeJavaVerifyBoundsToSet(bounds_to_set);
+}
+
+DEFINE_JNI(AndroidBaseWindowNativeUnitTestSupport)

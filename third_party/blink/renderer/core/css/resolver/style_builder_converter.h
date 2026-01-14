@@ -43,7 +43,6 @@
 #include "third_party/blink/renderer/core/css/css_value_pair.h"
 #include "third_party/blink/renderer/core/css/css_variable_data.h"
 #include "third_party/blink/renderer/core/css/resolver/style_resolver_state.h"
-#include "third_party/blink/renderer/core/css/style_sheet_contents.h"
 #include "third_party/blink/renderer/core/style/basic_shapes.h"
 #include "third_party/blink/renderer/core/style/computed_style.h"
 #include "third_party/blink/renderer/core/style/computed_style_constants.h"
@@ -54,10 +53,11 @@
 #include "third_party/blink/renderer/core/style/scroll_marker_group.h"
 #include "third_party/blink/renderer/core/style/shadow_list.h"
 #include "third_party/blink/renderer/core/style/style_anchor_scope.h"
-#include "third_party/blink/renderer/core/style/style_border_shape.h"
+#include "third_party/blink/renderer/core/style/style_name_scope.h"
 #include "third_party/blink/renderer/core/style/style_offset_rotation.h"
 #include "third_party/blink/renderer/core/style/style_overflow_clip_margin.h"
 #include "third_party/blink/renderer/core/style/style_reflection.h"
+#include "third_party/blink/renderer/core/style/style_trigger_scope.h"
 #include "third_party/blink/renderer/core/style/style_view_transition_group.h"
 #include "third_party/blink/renderer/core/style/style_view_transition_name.h"
 #include "third_party/blink/renderer/core/style/text_overflow_data.h"
@@ -163,6 +163,8 @@ class StyleBuilderConverter {
   static scoped_refptr<FontVariationSettings> ConvertFontVariationSettings(
       const StyleResolverState&,
       const CSSValue&);
+  static AtomicString ConvertFontLanguageOverride(StyleResolverState&,
+                                                  const CSSValue&);
   static scoped_refptr<FontPalette> ConvertFontPalette(
       StyleResolverState& state,
       const CSSValue& value);
@@ -219,9 +221,13 @@ class StyleBuilderConverter {
                                                 const CSSValue&);
   static ItemTolerance ConvertItemTolerance(const StyleResolverState&,
                                             const CSSValue&);
+  static GridLanesDirection ConvertGridLanesDirection(const StyleResolverState&,
+                                                      const CSSValue&);
   static StyleHyphenateLimitChars ConvertHyphenateLimitChars(
       StyleResolverState&,
       const CSSValue&);
+  static StyleInterestDelay ConvertInterestDelayValue(const StyleResolverState&,
+                                                      const CSSValue&);
   template <typename T>
   static T ConvertLineWidth(StyleResolverState&, const CSSValue&);
   static int ConvertBorderWidth(const StyleResolverState&, const CSSValue&);
@@ -239,6 +245,8 @@ class StyleBuilderConverter {
   static TimelineInset ConvertSingleTimelineInset(StyleResolverState&,
                                                   const CSSValue&);
   static Length ConvertLengthOrAuto(const StyleResolverState&, const CSSValue&);
+  static std::optional<Length> ConvertLengthOrNone(const StyleResolverState&,
+                                                   const CSSValue&);
   static Length ConvertLengthSizing(StyleResolverState&, const CSSValue&);
   static Length ConvertLengthMaxSizing(StyleResolverState&, const CSSValue&);
   static TabSize ConvertLengthOrTabSpaces(StyleResolverState&, const CSSValue&);
@@ -247,8 +255,6 @@ class StyleBuilderConverter {
   static int ConvertInteger(StyleResolverState&, const CSSValue&);
   template <int NoneValue = 0>
   static int ConvertIntegerOrNone(StyleResolverState&, const CSSValue&);
-  static ScrollStartData ConvertScrollStart(const StyleResolverState&,
-                                            const CSSValue&);
   static float ConvertAlpha(StyleResolverState&,
                             const CSSValue&);  // clamps to [0,1]
   static ScopedCSSName* ConvertNoneOrCustomIdent(StyleResolverState&,
@@ -257,12 +263,17 @@ class StyleBuilderConverter {
                                                    const CSSValue&);
   static ScopedCSSName* ConvertCustomIdent(StyleResolverState&,
                                            const CSSValue&);
-  static ScopedCSSName* ConvertPositionAnchor(StyleResolverState&,
-                                              const CSSValue&);
+  static AtomicString ConvertNoneOrCustomIdentUnscoped(StyleResolverState&,
+                                                       const CSSValue&);
+  static AtomicString ConvertCustomIdentUnscoped(StyleResolverState&,
+                                                 const CSSValue&);
+  static StylePositionAnchor ConvertPositionAnchor(StyleResolverState&,
+                                                   const CSSValue&);
   static PositionVisibility ConvertPositionVisibility(StyleResolverState& state,
                                                       const CSSValue& value);
   static ScopedCSSNameList* ConvertAnchorName(StyleResolverState&,
                                               const CSSValue&);
+  static StyleNameScope ConvertNameScope(StyleResolverState&, const CSSValue&);
   static StyleAnchorScope ConvertAnchorScope(StyleResolverState&,
                                              const CSSValue&);
   static StyleInitialLetter ConvertInitialLetter(StyleResolverState&,
@@ -398,6 +409,7 @@ class StyleBuilderConverter {
       const StyleResolverState&,
       const CSSValue&);
 
+  // View transition related properties.
   static StyleViewTransitionName* ConvertViewTransitionName(StyleResolverState&,
                                                             const CSSValue&);
   static ScopedCSSNameList* ConvertViewTransitionClass(StyleResolverState&,
@@ -405,6 +417,12 @@ class StyleBuilderConverter {
   static StyleViewTransitionGroup ConvertViewTransitionGroup(
       StyleResolverState&,
       const CSSValue&);
+
+  // Overscroll gesture related properties.
+  static ScopedCSSNameList* ConvertOverscrollArea(StyleResolverState&,
+                                                  const CSSValue&);
+  static ScopedCSSName* ConvertOverscrollPosition(StyleResolverState&,
+                                                  const CSSValue&);
 
   // Take a list value for a specified color-scheme, extract flags for known
   // color-schemes and the 'only' modifier, and push the list items into a
@@ -426,21 +444,27 @@ class StyleBuilderConverter {
                                                       const CSSValue&);
   static Vector<TimelineInset> ConvertViewTimelineInset(StyleResolverState&,
                                                         const CSSValue&);
-  static ScopedCSSNameList* ConvertViewTimelineName(StyleResolverState&,
-                                                    const CSSValue&);
-  static ScopedCSSNameList* ConvertTimelineScope(StyleResolverState&,
-                                                 const CSSValue&);
+  static Vector<AtomicString> ConvertViewTimelineName(StyleResolverState&,
+                                                      const CSSValue&);
+  static Vector<AtomicString> ConvertTimelineScope(StyleResolverState&,
+                                                   const CSSValue&);
 
-  static PositionArea ConvertPositionArea(StyleResolverState&, const CSSValue&);
+  static PositionArea ConvertPositionArea(StyleResolverState&,
+                                          const CSSValue&,
+                                          bool allow_any_keyword = false);
   static PositionTryFallback ConvertSinglePositionTryFallback(
       StyleResolverState&,
-      const CSSValue&);
+      const CSSValue&,
+      bool allow_any_keyword_in_position_area = false);
   static FitText ConvertFitText(StyleResolverState&, const CSSValue&);
   static TextOverflowData ConvertTextOverflow(StyleResolverState&,
                                               const CSSValue&);
 
   static ScopedCSSNameList* ConvertTimelineTriggerName(StyleResolverState&,
                                                        const CSSValue&);
+
+  static StyleTriggerScope ConvertTriggerScope(StyleResolverState&,
+                                               const CSSValue&);
 };
 
 template <typename T>

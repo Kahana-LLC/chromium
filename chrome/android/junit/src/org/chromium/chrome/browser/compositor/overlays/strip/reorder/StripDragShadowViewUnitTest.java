@@ -29,7 +29,6 @@ import android.widget.TextView;
 import androidx.annotation.ColorInt;
 import androidx.annotation.ColorRes;
 import androidx.appcompat.content.res.AppCompatResources;
-import androidx.constraintlayout.widget.ConstraintLayout;
 import androidx.test.ext.junit.rules.ActivityScenarioRule;
 
 import org.junit.Before;
@@ -45,28 +44,25 @@ import org.robolectric.annotation.Config;
 
 import org.chromium.base.Callback;
 import org.chromium.base.Token;
-import org.chromium.base.supplier.Supplier;
+import org.chromium.base.supplier.ObservableSupplierImpl;
 import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.browser_controls.BrowserControlsStateProvider;
 import org.chromium.chrome.browser.compositor.LayerTitleCache;
 import org.chromium.chrome.browser.tab.Tab;
+import org.chromium.chrome.browser.tab.TabFavicon;
 import org.chromium.chrome.browser.tab.TabUtils;
 import org.chromium.chrome.browser.tab_ui.TabContentManager;
 import org.chromium.chrome.browser.tab_ui.TabThumbnailView;
 import org.chromium.chrome.browser.tab_ui.ThumbnailProvider.MultiThumbnailMetadata;
 import org.chromium.chrome.browser.tabmodel.TabGroupModelFilter;
-import org.chromium.chrome.browser.tabmodel.TabGroupModelFilterProvider;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
 import org.chromium.chrome.browser.tasks.tab_management.MultiThumbnailCardProvider;
 import org.chromium.chrome.browser.tasks.tab_management.TabUiThemeUtil;
 import org.chromium.chrome.browser.ui.favicon.FaviconHelper.FaviconImageCallback;
 import org.chromium.components.tab_groups.TabGroupColorId;
 import org.chromium.components.tab_groups.TabGroupColorPickerUtils;
-import org.chromium.content_public.browser.WebContents;
 import org.chromium.ui.base.TestActivity;
-
-import java.util.Collections;
 
 /** Unit tests for {@link StripDragShadowView}. */
 @RunWith(BaseRobolectricTestRunner.class)
@@ -82,20 +78,17 @@ public class StripDragShadowViewUnitTest {
 
     @Mock private BrowserControlsStateProvider mMockBrowserControlsStateProvider;
     @Mock private MultiThumbnailCardProvider mMockMultiThumbnailCardProvider;
-    @Mock private Supplier<TabContentManager> mMockTabContentManagerSupplier;
-    @Mock private Supplier<LayerTitleCache> mMockLayerTitleCacheSupplier;
     @Mock private TabModelSelector mMockTabModelSelector;
     @Mock private StripDragShadowView.ShadowUpdateHost mMockShadowUpdateHost;
 
     @Mock private TabContentManager mMockTabContentManager;
     @Mock private LayerTitleCache mMockLayerTitleCache;
-    @Mock private TabGroupModelFilterProvider mMockTabGroupModelFilterProvider;
     @Mock private TabGroupModelFilter mMockTabGroupModelFilter;
     @Mock private Tab mMockTab;
+    @Mock private TabFavicon mMockTabFavicon;
     @Mock private Bitmap mMockThumbnailBitmap;
     @Mock private Bitmap mMockOriginalFaviconBitmap;
     @Mock private Bitmap mMockHistoryFaviconBitmap;
-    @Mock private WebContents mMockWebContents;
 
     private static final int TAB_ID = 10;
 
@@ -117,11 +110,7 @@ public class StripDragShadowViewUnitTest {
                             mActivity.setTheme(R.style.Theme_BrowserUI_DayNight);
                         });
 
-        when(mMockTabContentManagerSupplier.get()).thenReturn(mMockTabContentManager);
-        when(mMockLayerTitleCacheSupplier.get()).thenReturn(mMockLayerTitleCache);
-        when(mMockTabModelSelector.getTabGroupModelFilterProvider())
-                .thenReturn(mMockTabGroupModelFilterProvider);
-        when(mMockTabGroupModelFilterProvider.getTabGroupModelFilter(anyBoolean()))
+        when(mMockTabModelSelector.getTabGroupModelFilter(anyBoolean()))
                 .thenReturn(mMockTabGroupModelFilter);
 
         when(mMockTab.getId()).thenReturn(TAB_ID);
@@ -135,8 +124,8 @@ public class StripDragShadowViewUnitTest {
         mStripDragShadowView.initialize(
                 mMockBrowserControlsStateProvider,
                 mMockMultiThumbnailCardProvider,
-                mMockTabContentManagerSupplier,
-                mMockLayerTitleCacheSupplier,
+                mMockTabContentManager,
+                new ObservableSupplierImpl<>(mMockLayerTitleCache),
                 mMockTabModelSelector,
                 mMockShadowUpdateHost);
 
@@ -262,26 +251,37 @@ public class StripDragShadowViewUnitTest {
 
     @Test
     public void testUpdate_OriginalFavicon() {
-        when(mMockTab.getWebContents()).thenReturn(mMockWebContents);
-        when(mMockLayerTitleCache.getOriginalFavicon(any(Tab.class)))
-                .thenReturn(mMockOriginalFaviconBitmap);
+        TabFavicon.setInstanceForTesting(mMockTabFavicon);
+        when(mMockTabFavicon.getFavicon()).thenReturn(mMockOriginalFaviconBitmap);
 
         mStripDragShadowView.prepareForTabDrag(mMockTab, 0);
-
         assertEquals(
                 "Should be using original favicon.",
                 mMockOriginalFaviconBitmap,
                 ((BitmapDrawable) mFaviconView.getDrawable()).getBitmap());
+        verify(mMockLayerTitleCache, never()).getDefaultFavicon(any());
+        verify(mMockLayerTitleCache, never()).fetchFaviconWithCallback(any(), any());
     }
 
     @Test
     public void testUpdate_HistoryFavicon() {
-        when(mMockLayerTitleCache.getOriginalFavicon(any(Tab.class)))
-                .thenReturn(mMockOriginalFaviconBitmap);
+        Bitmap defaultFavicon = Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888);
+        when(mMockLayerTitleCache.getDefaultFavicon(mMockTab)).thenReturn(defaultFavicon);
 
+        // Assume TabFavicon.getBitmap(mMockTab) returns null.
         mStripDragShadowView.prepareForTabDrag(mMockTab, 0);
+
+        // Verify default is used before fetch.
+        assertEquals(
+                "Should be using default favicon.",
+                defaultFavicon,
+                ((BitmapDrawable) mFaviconView.getDrawable()).getBitmap());
+
+        // Verify fetch is kicked off.
         verify(mMockLayerTitleCache)
                 .fetchFaviconWithCallback(eq(mMockTab), mGetFaviconCallbackCaptor.capture());
+
+        // Fulfill fetch.
         mGetFaviconCallbackCaptor
                 .getValue()
                 .onFaviconAvailable(mMockHistoryFaviconBitmap, /* iconUrl= */ null);
@@ -329,8 +329,7 @@ public class StripDragShadowViewUnitTest {
 
         // Verify card color
         @ColorRes
-        int expectedBackgroundColor =
-                TabUiThemeUtil.getTabStripSelectedTabColor(mActivity, incognito);
+        int expectedBackgroundColor = TabUiThemeUtil.getDraggedTabBackgroundColor(mActivity);
         assertEquals(
                 "Unexpected card color.",
                 expectedBackgroundColor,
@@ -387,49 +386,5 @@ public class StripDragShadowViewUnitTest {
                 TabGroupColorPickerUtils.getTabGroupColorPickerItemTextColor(
                         mActivity, colorId, incognito);
         assertEquals("Unexpected text color.", expectedTextColor, mTitleView.getCurrentTextColor());
-    }
-
-    @Test
-    public void testUpdate_TitleMargin() {
-        // Start with multi-tab drag.
-        // During multi tab drag we reset the title start margin. This test verifies that the
-        // margin is reset when switching between multi-tab and single-tab drag, and is also reset
-        // when switching to group drag.
-        mStripDragShadowView.prepareForMultiTabDrag(
-                mMockTab, Collections.singletonList(mMockTab), 0);
-
-        ConstraintLayout.LayoutParams titleLayoutParams =
-                (ConstraintLayout.LayoutParams) mTitleView.getLayoutParams();
-        int padding =
-                mActivity
-                        .getResources()
-                        .getDimensionPixelSize(R.dimen.tab_grid_card_favicon_padding_start);
-        assertEquals(
-                "Unexpected title margin for multi-tab drag.",
-                (int) (padding * 1.5f),
-                titleLayoutParams.getMarginStart());
-
-        // Switch to single-tab drag.
-        mStripDragShadowView.prepareForTabDrag(mMockTab, 0);
-        titleLayoutParams = (ConstraintLayout.LayoutParams) mTitleView.getLayoutParams();
-        assertEquals(
-                "Title margin not reset for single-tab drag.",
-                0,
-                titleLayoutParams.getMarginStart());
-
-        // Switch back to multi-tab drag.
-        mStripDragShadowView.prepareForMultiTabDrag(
-                mMockTab, Collections.singletonList(mMockTab), 0);
-        titleLayoutParams = (ConstraintLayout.LayoutParams) mTitleView.getLayoutParams();
-        assertEquals(
-                "Unexpected title margin for multi-tab drag.",
-                (int) (padding * 1.5f),
-                titleLayoutParams.getMarginStart());
-
-        // Switch to group drag.
-        mStripDragShadowView.prepareForGroupDrag(mMockTab, 0);
-        titleLayoutParams = (ConstraintLayout.LayoutParams) mTitleView.getLayoutParams();
-        assertEquals(
-                "Title margin not reset for group drag.", 0, titleLayoutParams.getMarginStart());
     }
 }

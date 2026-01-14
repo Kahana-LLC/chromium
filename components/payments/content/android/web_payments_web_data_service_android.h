@@ -25,7 +25,7 @@ namespace payments {
 
 // Android wrapper of the WebPaymentsWebDataService which provides access
 // from the Java layer.
-class WebPaymentsWebDataServiceAndroid : public WebDataServiceConsumer {
+class WebPaymentsWebDataServiceAndroid {
  public:
   WebPaymentsWebDataServiceAndroid(JNIEnv* env,
                                    const jni_zero::JavaRef<jobject>& obj,
@@ -36,12 +36,7 @@ class WebPaymentsWebDataServiceAndroid : public WebDataServiceConsumer {
   WebPaymentsWebDataServiceAndroid& operator=(
       const WebPaymentsWebDataServiceAndroid&) = delete;
 
-  ~WebPaymentsWebDataServiceAndroid() override;
-
-  // Override WebDataServiceConsumer interface.
-  void OnWebDataServiceRequestDone(
-      WebDataServiceBase::Handle h,
-      std::unique_ptr<WDTypedResult> result) override;
+  ~WebPaymentsWebDataServiceAndroid();
 
   // Destroys this object.
   void Destroy(JNIEnv* env);
@@ -50,30 +45,32 @@ class WebPaymentsWebDataServiceAndroid : public WebDataServiceConsumer {
   // cache.
   void AddPaymentMethodManifest(
       JNIEnv* env,
-      const base::android::JavaParamRef<jstring>& jmethod_name,
-      const base::android::JavaParamRef<jobjectArray>& japp_package_names);
+      const base::android::JavaRef<jstring>& jmethod_name,
+      const base::android::JavaRef<jobjectArray>& japp_package_names);
 
   // Adds the web app |jmanifest_sections|.
   void AddPaymentWebAppManifest(
       JNIEnv* env,
-      const base::android::JavaParamRef<jobjectArray>& jmanifest_sections);
+      const base::android::JavaRef<jobjectArray>& jmanifest_sections);
 
   // Gets the payment |jmethod_name|'s manifest asynchronously from the web data
   // service. Return true if the result will be returned through |jcallback|.
   bool GetPaymentMethodManifest(
       JNIEnv* env,
-      const base::android::JavaParamRef<jstring>& jmethod_name,
-      const base::android::JavaParamRef<jobject>& jcallback);
+      const base::android::JavaRef<jstring>& jmethod_name,
+      const base::android::JavaRef<jobject>& jcallback);
 
   // Gets the payment |japp_package_name|'s manifest asynchronously from the web
   // data service. Return true if the result will be returned through
   // |jcallback|.
   bool GetPaymentWebAppManifest(
       JNIEnv* env,
-      const base::android::JavaParamRef<jstring>& japp_package_name,
-      const base::android::JavaParamRef<jobject>& jcallback);
+      const base::android::JavaRef<jstring>& japp_package_name,
+      const base::android::JavaRef<jobject>& jcallback);
 
  private:
+  void OnWebDataServiceRequestDone(WebDataServiceBase::Handle h,
+                                   std::unique_ptr<WDTypedResult> result);
   void OnWebAppManifestRequestDone(JNIEnv* env,
                                    WebDataServiceBase::Handle h,
                                    std::unique_ptr<WDTypedResult> result);
@@ -92,6 +89,9 @@ class WebPaymentsWebDataServiceAndroid : public WebDataServiceConsumer {
   std::map<WebDataServiceBase::Handle,
            std::unique_ptr<base::android::ScopedJavaGlobalRef<jobject>>>
       web_data_service_requests_;
+
+  base::WeakPtrFactory<WebPaymentsWebDataServiceAndroid> weak_ptr_factory_{
+      this};
 };
 
 }  // namespace payments

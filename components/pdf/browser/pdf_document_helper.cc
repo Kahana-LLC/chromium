@@ -246,6 +246,20 @@ void PDFDocumentHelper::GetPdfBytes(
   remote_pdf_client_->GetPdfBytes(size_limit, std::move(callback));
 }
 
+#if BUILDFLAG(ENABLE_PDF_SAVE_TO_DRIVE)
+void PDFDocumentHelper::GetSaveDataBufferHandlerForDrive(
+    pdf::mojom::SaveRequestType request_type,
+    pdf::mojom::PdfListener::GetSaveDataBufferHandlerForDriveCallback
+        callback) {
+  if (!remote_pdf_client_ || !is_document_load_complete_) {
+    std::move(callback).Run(nullptr);
+    return;
+  }
+  remote_pdf_client_->GetSaveDataBufferHandlerForDrive(request_type,
+                                                       std::move(callback));
+}
+#endif  // BUILDFLAG(ENABLE_PDF_SAVE_TO_DRIVE)
+
 void PDFDocumentHelper::GetPageText(
     int32_t page_index,
     pdf::mojom::PdfListener::GetPageTextCallback callback) {
@@ -403,11 +417,13 @@ void PDFDocumentHelper::OnDocumentLoadComplete() {
     std::move(callback).Run();
   }
   document_load_complete_callbacks_.clear();
+
+  client_->OnDocumentLoadComplete(&render_frame_host());
 }
 
 void PDFDocumentHelper::SaveUrlAs(const GURL& url,
                                   network::mojom::ReferrerPolicy policy) {
-  client_->OnSaveURL(&GetWebContents());
+  client_->OnSaveURL();
 
   // Save using the PDF embedder host.
   content::RenderFrameHost* rfh =

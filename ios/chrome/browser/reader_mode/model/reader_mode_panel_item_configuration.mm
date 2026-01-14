@@ -5,8 +5,10 @@
 #import "ios/chrome/browser/reader_mode/model/reader_mode_panel_item_configuration.h"
 
 #import "base/strings/sys_string_conversions.h"
+#import "components/feature_engagement/public/event_constants.h"
 #import "ios/chrome/browser/contextual_panel/model/contextual_panel_item_type.h"
 #import "ios/chrome/browser/contextual_panel/model/contextual_panel_tab_helper.h"
+#import "ios/chrome/browser/feature_engagement/model/tracker_factory.h"
 #import "ios/chrome/browser/intelligence/bwg/model/bwg_service.h"
 #import "ios/chrome/browser/intelligence/bwg/model/bwg_service_factory.h"
 #import "ios/chrome/browser/reader_mode/model/constants.h"
@@ -18,9 +20,6 @@
 #import "ui/base/l10n/l10n_util.h"
 
 namespace {
-
-// Duration for which the large entrypoint is displayed.
-const base::TimeDelta kLargeEntrypointDisplayedDuration = base::Seconds(4);
 
 // Activates Reader mode in the `web_state` if possible.
 void ActivateReaderModeInWebState(base::WeakPtr<web::WebState> web_state) {
@@ -38,12 +37,15 @@ void ActivateReaderModeInWebState(base::WeakPtr<web::WebState> web_state) {
 }  // namespace
 
 ReaderModePanelItemConfiguration::ReaderModePanelItemConfiguration(
+    ProfileIOS* profile,
     web::WebState* web_state)
-    : ContextualPanelItemConfiguration(
-          ContextualPanelItemType::ReaderModeItem) {
+    : ContextualPanelItemConfiguration(ContextualPanelItemType::ReaderModeItem),
+      engagement_tracker_(
+          feature_engagement::TrackerFactory::GetForProfile(profile)) {
   entrypoint_message = l10n_util::GetStringUTF8(
       IDS_IOS_CONTEXTUAL_PANEL_READER_MODE_MODEL_ENTRYPOINT_MESSAGE);
-  entrypoint_message_large_entrypoint_always_shown = true;
+  entrypoint_message_large_entrypoint_always_shown =
+      CanShowLargeEntrypointMessage();
   accessibility_label = l10n_util::GetStringUTF8(
       IDS_IOS_CONTEXTUAL_PANEL_READER_MODE_MODEL_ENTRYPOINT_MESSAGE);
   accessibility_hint = l10n_util::GetStringUTF8(
@@ -53,7 +55,6 @@ ReaderModePanelItemConfiguration::ReaderModePanelItemConfiguration(
   relevance = ContextualPanelItemConfiguration::low_relevance - 1;
   entrypoint_custom_action =
       base::BindRepeating(&ActivateReaderModeInWebState, web_state->GetWeakPtr());
-  large_entrypoint_displayed_duration = kLargeEntrypointDisplayedDuration;
 
   ReaderModeTabHelper* reader_mode_tab_helper =
       ReaderModeTabHelper::FromWebState(web_state);
@@ -67,28 +68,32 @@ ReaderModePanelItemConfiguration::~ReaderModePanelItemConfiguration() = default;
 #pragma mark - ContextualPanelItemConfiguration
 
 void ReaderModePanelItemConfiguration::DidTransitionToSmallEntrypoint() {
-  if (IsProfileEligibleForBwg()) {
-    Invalidate();
+  if (engagement_tracker_) {
+    engagement_tracker_->Dismissed(
+        feature_engagement::kIPHiOSReaderModeLargeOmniboxEntrypointFeature);
   }
+  Invalidate();
 }
 
 #pragma mark - ReaderModeTabHelper::Observer
 
 void ReaderModePanelItemConfiguration::ReaderModeTabHelperDestroyed(
-    ReaderModeTabHelper* tab_helper) {
+    ReaderModeTabHelper* tab_helper,
+    web::WebState* web_state) {
   reader_mode_tab_helper_observation_.Reset();
 }
 
 void ReaderModePanelItemConfiguration::ReaderModeWebStateDidLoadContent(
-    ReaderModeTabHelper* tab_helper) {
-  if (IsProfileEligibleForBwg()) {
-    Invalidate();
-  }
+    ReaderModeTabHelper* tab_helper,
+    web::WebState* web_state) {
 }
 
 void ReaderModePanelItemConfiguration::ReaderModeWebStateWillBecomeUnavailable(
     ReaderModeTabHelper* tab_helper,
-    ReaderModeDeactivationReason reason) {}
+    web::WebState* web_state,
+    ReaderModeDeactivationReason reason) {
+  Invalidate();
+}
 
 void ReaderModePanelItemConfiguration::ReaderModeDistillationFailed(
     ReaderModeTabHelper* tab_helper) {
@@ -103,9 +108,6 @@ void ReaderModePanelItemConfiguration::WebStateDestroyed(
 }
 
 void ReaderModePanelItemConfiguration::WasHidden(web::WebState* web_state) {
-  if (IsProfileEligibleForBwg()) {
-    Invalidate();
-  }
 }
 
 #pragma mark - Private
@@ -132,4 +134,11 @@ bool ReaderModePanelItemConfiguration::IsProfileEligibleForBwg() {
       ProfileIOS::FromBrowserState(web_state->GetBrowserState());
   BwgService* bwg_service = BwgServiceFactory::GetForProfile(profile);
   return bwg_service && bwg_service->IsProfileEligibleForBwg();
+}
+
+bool ReaderModePanelItemConfiguration::CanShowLargeEntrypointMessage() {
+  return engagement_tracker_ &&
+         engagement_tracker_->ShouldTriggerHelpUI(
+             feature_engagement::
+                 kIPHiOSReaderModeLargeOmniboxEntrypointFeature);
 }

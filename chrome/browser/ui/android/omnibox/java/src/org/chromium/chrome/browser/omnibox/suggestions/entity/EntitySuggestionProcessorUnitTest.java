@@ -17,6 +17,7 @@ import android.graphics.Color;
 import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.Drawable;
+import android.graphics.drawable.VectorDrawable;
 
 import androidx.test.filters.SmallTest;
 
@@ -34,7 +35,7 @@ import org.robolectric.annotation.Config;
 import org.chromium.base.BaseSwitches;
 import org.chromium.base.Callback;
 import org.chromium.base.ContextUtils;
-import org.chromium.base.supplier.Supplier;
+import org.chromium.base.supplier.ObservableSupplierImpl;
 import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.chrome.browser.browser_controls.BrowserControlsStateProvider.ControlsPosition;
@@ -58,7 +59,7 @@ import org.chromium.ui.modelutil.PropertyModel;
 import org.chromium.url.GURL;
 import org.chromium.url.JUnitTestGURLs;
 
-import java.util.Optional;
+import java.util.function.Supplier;
 
 /** Tests for {@link EntitySuggestionProcessor}. */
 @RunWith(BaseRobolectricTestRunner.class)
@@ -130,11 +131,11 @@ public class EntitySuggestionProcessorUnitTest {
                         ContextUtils.getApplicationContext(),
                         mSuggestionHost,
                         mTextProvider,
-                        Optional.of(mImageSupplier),
+                        mImageSupplier,
                         mBookmarkState,
                         mTabSupplier,
                         mShareDelegateSupplier,
-                        () -> ControlsPosition.TOP);
+                        new ObservableSupplierImpl<>(ControlsPosition.TOP));
         mProcessor = new EntitySuggestionProcessor(uiContext);
         doReturn("").when(mTextProvider).getTextWithoutAutocomplete();
     }
@@ -159,7 +160,7 @@ public class EntitySuggestionProcessorUnitTest {
         processSuggestion(suggHelper);
 
         Assert.assertNotNull(suggHelper.getIcon());
-        assertThat(suggHelper.getIcon(), instanceOf(BitmapDrawable.class));
+        assertThat(suggHelper.getIcon(), instanceOf(VectorDrawable.class));
     }
 
     @Test
@@ -169,7 +170,7 @@ public class EntitySuggestionProcessorUnitTest {
         SuggestionTestHelper suggHelper = createSuggestion("", "", "#fedcba", SEARCH_URL);
         processSuggestion(suggHelper);
 
-        assertThat(suggHelper.getIcon(), instanceOf(BitmapDrawable.class));
+        assertThat(suggHelper.getIcon(), instanceOf(VectorDrawable.class));
     }
 
     @Test
@@ -189,15 +190,15 @@ public class EntitySuggestionProcessorUnitTest {
         // Note, fallback is the bitmap drawable representing a search loupe.
         SuggestionTestHelper suggHelper = createSuggestion("", "", "", SEARCH_URL);
         processSuggestion(suggHelper);
-        assertThat(suggHelper.getIcon(), instanceOf(BitmapDrawable.class));
+        assertThat(suggHelper.getIcon(), instanceOf(VectorDrawable.class));
 
         suggHelper = createSuggestion("", "", "#", SEARCH_URL);
         processSuggestion(suggHelper);
-        assertThat(suggHelper.getIcon(), instanceOf(BitmapDrawable.class));
+        assertThat(suggHelper.getIcon(), instanceOf(VectorDrawable.class));
 
         suggHelper = createSuggestion("", "", "invalid", SEARCH_URL);
         processSuggestion(suggHelper);
-        assertThat(suggHelper.getIcon(), instanceOf(BitmapDrawable.class));
+        assertThat(suggHelper.getIcon(), instanceOf(VectorDrawable.class));
     }
 
     @Test
@@ -223,11 +224,11 @@ public class EntitySuggestionProcessorUnitTest {
                         ContextUtils.getApplicationContext(),
                         mSuggestionHost,
                         mTextProvider,
-                        /* imageSupplier= */ Optional.empty(),
+                        /* imageSupplier= */ null,
                         mBookmarkState,
                         mTabSupplier,
                         mShareDelegateSupplier,
-                        () -> ControlsPosition.TOP);
+                        new ObservableSupplierImpl<>(ControlsPosition.TOP));
         mProcessor = new EntitySuggestionProcessor(uiContext);
         SuggestionTestHelper suggHelper = createSuggestion("", "", "red", WEB_URL);
         processSuggestion(suggHelper);

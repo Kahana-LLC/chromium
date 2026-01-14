@@ -8,9 +8,12 @@
 #include <memory>
 #include <set>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include "base/command_line.h"
 #include "base/files/file_util.h"
+#include "base/functional/callback.h"
 #include "base/functional/callback_helpers.h"
 #include "base/strings/string_split.h"
 #include "base/strings/stringprintf.h"
@@ -52,6 +55,7 @@
 #include "extensions/browser/test_extension_registry_observer.h"
 #include "extensions/browser/updater/extension_update_data.h"
 #include "extensions/browser/updater/manifest_fetch_data.h"
+#include "extensions/buildflags/buildflags.h"
 #include "extensions/common/extension_features.h"
 #include "extensions/common/extension_urls.h"
 #include "extensions/common/file_util.h"
@@ -65,6 +69,8 @@
 #if BUILDFLAG(ENABLE_EXTENSIONS)
 #include "chrome/test/base/ui_test_utils.h"
 #endif
+
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
 
 using extensions::mojom::ManifestLocation;
 
@@ -82,7 +88,13 @@ constexpr char kStoragePermissionExtensionCrx[] =
 
 class MockUpdateService : public UpdateService {
  public:
-  MockUpdateService() : UpdateService(nullptr, nullptr) {}
+  MockUpdateService()
+      : UpdateService(nullptr,
+                      nullptr,
+                      base::BindRepeating([](const std::vector<std::string>&,
+                                             base::OnceClosure callback) {
+                        std::move(callback).Run();
+                      })) {}
   MOCK_CONST_METHOD0(IsBusy, bool());
   MOCK_METHOD3(SendUninstallPing,
                void(const std::string& id,
@@ -267,7 +279,7 @@ class ContentVerifierTest : public ExtensionBrowserTest {
     auto signing_key = crypto::keypair::PrivateKey::FromPrivateKeyInfo(
         base::as_byte_span(private_key_bytes));
     std::vector<uint8_t> public_key = signing_key->ToSubjectPublicKeyInfo();
-    return crx_file::id_util::GenerateId(base::as_string_view(public_key));
+    return crx_file::id_util::GenerateId(public_key);
   }
 
   // Creates a random signing key and sets |extension_id| according to it.
@@ -275,8 +287,7 @@ class ContentVerifierTest : public ExtensionBrowserTest {
       std::string& extension_id) {
     auto signing_key = crypto::keypair::PrivateKey::GenerateRsa2048();
     std::vector<uint8_t> public_key = signing_key.ToSubjectPublicKeyInfo();
-    extension_id =
-        crx_file::id_util::GenerateId(base::as_string_view(public_key));
+    extension_id = crx_file::id_util::GenerateId(public_key);
     return signing_key;
   }
 
@@ -630,7 +641,7 @@ IN_PROC_BROWSER_TEST_F(ContentVerifierTest, TestServiceWorker_AcrossSession) {
     std::string file_contents;
     ASSERT_TRUE(base::ReadFileToString(
         extension->path().AppendASCII("background.js"), &file_contents));
-    EXPECT_TRUE(base::Contains(file_contents, "self.didModifyScript = true;"));
+    EXPECT_TRUE(file_contents.contains("self.didModifyScript = true;"));
   }
 
   // Now for the fun part. Start up the extension by opening a new tab,

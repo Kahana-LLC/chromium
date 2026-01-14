@@ -6,16 +6,22 @@ package org.chromium.chrome.browser.searchwidget;
 
 import static org.junit.Assert.assertTrue;
 import static org.mockito.Mockito.any;
+import static org.mockito.Mockito.anyBoolean;
+import static org.mockito.Mockito.anyInt;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
+
+import static org.chromium.chrome.browser.url_constants.UrlConstantResolver.getOriginalNonNativeNtpUrl;
 
 import android.app.Activity;
 import android.app.Instrumentation;
 import android.app.Instrumentation.ActivityMonitor;
 import android.app.PendingIntent;
+import android.os.Build;
 import android.view.KeyEvent;
 
 import androidx.core.content.ContextCompat;
@@ -43,7 +49,7 @@ import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.Criteria;
 import org.chromium.base.test.util.CriteriaHelper;
-import org.chromium.base.test.util.DisabledTest;
+import org.chromium.base.test.util.DisableIf;
 import org.chromium.base.test.util.DoNotBatch;
 import org.chromium.base.test.util.Features;
 import org.chromium.base.test.util.Restriction;
@@ -76,8 +82,6 @@ import org.chromium.chrome.test.transit.ChromeTransitTestRules;
 import org.chromium.chrome.test.transit.FreshCtaTransitTestRule;
 import org.chromium.chrome.test.util.ActivityTestUtils;
 import org.chromium.chrome.test.util.OmniboxTestUtils;
-import org.chromium.components.browser_ui.edge_to_edge.EdgeToEdgeSystemBarColorHelper;
-import org.chromium.components.embedder_support.util.UrlConstants;
 import org.chromium.components.metrics.OmniboxEventProtos.OmniboxEventProto.PageClassification;
 import org.chromium.components.omnibox.AutocompleteInput;
 import org.chromium.components.omnibox.AutocompleteMatch;
@@ -86,6 +90,7 @@ import org.chromium.components.omnibox.AutocompleteResult;
 import org.chromium.components.omnibox.OmniboxSuggestionType;
 import org.chromium.components.search_engines.TemplateUrl;
 import org.chromium.content_public.common.ContentUrlConstants;
+import org.chromium.ui.edge_to_edge.EdgeToEdgeSystemBarColorHelper;
 import org.chromium.ui.test.util.DeviceRestriction;
 import org.chromium.url.GURL;
 
@@ -111,6 +116,7 @@ import java.util.concurrent.Callable;
     ChromeFeatureList.GRID_TAB_SWITCHER_SURFACE_COLOR_UPDATE,
     ChromeFeatureList.GRID_TAB_SWITCHER_UPDATE
 })
+@DisableIf.Build(sdk_equals = Build.VERSION_CODES.UPSIDE_DOWN_CAKE, message = "crbug.com/350393662")
 @DoNotBatch(reason = "Test start up behaviors.")
 public class SearchActivityTest {
     private static class TestDelegate extends SearchActivityDelegate {
@@ -419,7 +425,6 @@ public class SearchActivityTest {
 
     @Test
     @SmallTest
-    @DisabledTest(message = "crbug.com/346528506")
     public void testTypeBeforeDeferredInitialization() throws Exception {
         // Start the Activity.  It should pause and assume that a promo dialog has appeared.
         mTestDelegate.shouldDelayDeferredInitialization = true;
@@ -433,11 +438,10 @@ public class SearchActivityTest {
 
         // Set some text in the search box, then continue startup.
         mOmnibox.requestFocus();
-        // Confirm specifically:
-        // - no prefetch,
-        // - no zero suggestions fetches,
-        // - no typed suggestions fetches.
-        verifyNoMoreInteractions(mAutocompleteController);
+
+        verify(mAutocompleteController, never()).start(any(), anyInt(), anyBoolean());
+        verify(mAutocompleteController, never()).startPrefetch(any(), any());
+        verify(mAutocompleteController, never()).startZeroSuggest(any());
 
         ThreadUtils.runOnUiThreadBlocking(mTestDelegate.onSearchEngineFinalizedCallback.bind(true));
 
@@ -495,7 +499,7 @@ public class SearchActivityTest {
                                             mActivityTestRule.getActivity(), IntentOrigin.HUB);
                             client.requestOmniboxForResult(
                                     client.newIntentBuilder()
-                                            .setPageUrl(new GURL(UrlConstants.NTP_NON_NATIVE_URL))
+                                            .setPageUrl(new GURL(getOriginalNonNativeNtpUrl()))
                                             .setIncognito(true)
                                             .setResolutionType(ResolutionType.SEND_TO_CALLER)
                                             .build());
@@ -537,7 +541,7 @@ public class SearchActivityTest {
                                             mActivityTestRule.getActivity(), IntentOrigin.HUB);
                             client.requestOmniboxForResult(
                                     client.newIntentBuilder()
-                                            .setPageUrl(new GURL(UrlConstants.NTP_NON_NATIVE_URL))
+                                            .setPageUrl(new GURL(getOriginalNonNativeNtpUrl()))
                                             .setIncognito(true)
                                             .setResolutionType(ResolutionType.SEND_TO_CALLER)
                                             .build());

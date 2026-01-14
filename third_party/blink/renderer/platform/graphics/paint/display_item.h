@@ -134,6 +134,9 @@ class PLATFORM_EXPORT DisplayItem {
     // Used for paint chunks that contain region capture data.
     kRegionCapture,
 
+    // Used for paint chunks that contain tracking highlight data.
+    kTrackedElement,
+
     // Used both for specifying the paint-order scroll location, and for non-
     // composited scroll hit testing (see: hit_test_data.h).
     kScrollHitTest,
@@ -347,10 +350,6 @@ class PLATFORM_EXPORT DisplayItem {
 inline bool operator==(const DisplayItem::Id& a, const DisplayItem::Id& b) {
   return a.client_id == b.client_id && a.type == b.type &&
          a.fragment == b.fragment;
-}
-
-inline bool operator!=(const DisplayItem::Id& a, const DisplayItem::Id& b) {
-  return !(a == b);
 }
 
 PLATFORM_EXPORT std::ostream& operator<<(std::ostream&, DisplayItem::Type);

@@ -11,13 +11,15 @@
 #include "base/functional/bind.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
+#include "build/build_config.h"
+#include "chrome/browser/actor/actor_keyed_service.h"
+#include "chrome/browser/actor/actor_keyed_service_factory.h"
 #include "chrome/browser/background/glic/glic_launcher_configuration.h"
 #include "chrome/browser/browser_process.h"
-#include "chrome/browser/glic/glic_enabling.h"
 #include "chrome/browser/glic/glic_pref_names.h"
+#include "chrome/browser/glic/public/glic_enabling.h"
 #include "chrome/browser/glic/public/glic_keyed_service.h"
 #include "chrome/browser/glic/public/glic_keyed_service_factory.h"
-#include "chrome/browser/glic/widget/local_hotkey_manager.h"
 #include "chrome/browser/user_education/user_education_service.h"
 #include "chrome/common/chrome_features.h"
 #include "components/prefs/pref_service.h"
@@ -25,6 +27,10 @@
 #include "content/public/browser/web_ui.h"
 #include "ui/base/accelerators/accelerator.h"
 #include "ui/base/accelerators/global_accelerator_listener/global_accelerator_listener.h"
+
+#if !BUILDFLAG(IS_ANDROID)
+#include "chrome/browser/glic/widget/local_hotkey_manager.h"
+#endif
 
 namespace settings {
 
@@ -74,10 +80,19 @@ void GlicHandler::OnJavascriptAllowed() {
                 &GlicHandler::FireOnGlicDisallowedByAdminChanged,
                 base::Unretained(this))));
   }
+
+  if (auto* actor_service =
+          actor::ActorKeyedServiceFactory::GetActorKeyedService(profile)) {
+    web_actuation_subscription_ =
+        actor_service->AddActOnWebCapabilityChangedCallback(
+            base::BindRepeating(&GlicHandler::OnWebActuationCapabilityChanged,
+                                base::Unretained(this)));
+  }
 }
 
 void GlicHandler::OnJavascriptDisallowed() {
   glic_enabling_subscription_.reset();
+  web_actuation_subscription_ = {};
 }
 
 void GlicHandler::SetWebUIForTesting(content::WebUI* web_ui) {
@@ -102,6 +117,7 @@ void GlicHandler::HandleGetGlicShortcut(const base::Value::List& args) {
 }
 
 void GlicHandler::HandleSetGlicShortcut(const base::Value::List& args) {
+#if !BUILDFLAG(IS_ANDROID)  // NEEDS_ANDROID_IMPL: Revisit android support.
   CHECK_EQ(2U, args.size());
   const base::Value& callback_id = args[0];
   const std::string accelerator_string = args[1].GetString();
@@ -114,10 +130,12 @@ void GlicHandler::HandleSetGlicShortcut(const base::Value::List& args) {
 
   AllowJavascript();
   ResolveJavascriptCallback(callback_id, base::Value());
+#endif
 }
 
 void GlicHandler::HandleGetGlicFocusToggleShortcut(
     const base::Value::List& args) {
+#if !BUILDFLAG(IS_ANDROID)  // NEEDS_ANDROID_IMPL: Revisit android support.
   CHECK_EQ(1U, args.size());
   const base::Value& callback_id = args[0];
 
@@ -127,10 +145,12 @@ void GlicHandler::HandleGetGlicFocusToggleShortcut(
       base::UTF16ToUTF8(glic::LocalHotkeyManager::GetConfigurableAccelerator(
                             glic::LocalHotkeyManager::Hotkey::kFocusToggle)
                             .GetShortcutText()));
+#endif
 }
 
 void GlicHandler::HandleSetGlicFocusToggleShortcut(
     const base::Value::List& args) {
+#if !BUILDFLAG(IS_ANDROID)  // TODO(b/470059315): Revisit android support.
   CHECK_EQ(2U, args.size());
   const base::Value& callback_id = args[0];
   const std::string accelerator_string = args[1].GetString();
@@ -139,6 +159,7 @@ void GlicHandler::HandleSetGlicFocusToggleShortcut(
 
   AllowJavascript();
   ResolveJavascriptCallback(callback_id, base::Value());
+#endif
 }
 
 void GlicHandler::HandleSetShortcutSuspensionState(
@@ -172,6 +193,11 @@ void GlicHandler::FireOnGlicDisallowedByAdminChanged() {
       glic::GlicEnabling::EnablementForProfile(profile).DisallowedByAdmin();
   FireWebUIListener("glic-disallowed-by-admin-changed",
                     base::Value(disallowed));
+}
+
+void GlicHandler::OnWebActuationCapabilityChanged(bool can_act_on_web) {
+  FireWebUIListener("glic-web-actuation-capability-changed",
+                    base::Value(can_act_on_web));
 }
 
 }  // namespace settings

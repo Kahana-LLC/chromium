@@ -4,6 +4,8 @@
 
 #include "chrome/browser/actor/tools/attempt_login_tool_request.h"
 
+#include <optional>
+
 #include "chrome/browser/actor/tools/attempt_login_tool.h"
 #include "chrome/browser/actor/tools/tool.h"
 #include "chrome/browser/actor/tools/tool_request_visitor_functor.h"
@@ -23,6 +25,7 @@ ToolRequest::CreateToolResult AttemptLoginToolRequest::CreateTool(
   tabs::TabInterface* tab = GetTabHandle().Get();
   if (!tab) {
     return {/*tool=*/nullptr, MakeResult(mojom::ActionResultCode::kTabWentAway,
+                                         /*requires_page_stabilization=*/false,
                                          "The tab is no longer present.")};
   }
 
@@ -34,8 +37,8 @@ void AttemptLoginToolRequest::Apply(ToolRequestVisitorFunctor& f) const {
   f.Apply(*this);
 }
 
-std::string AttemptLoginToolRequest::JournalEvent() const {
-  return "AttemptLogin";
+std::string_view AttemptLoginToolRequest::Name() const {
+  return kName;
 }
 
 }  // namespace actor

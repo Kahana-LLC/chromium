@@ -26,6 +26,7 @@ import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.DisabledTest;
 import org.chromium.base.test.util.Feature;
 import org.chromium.base.test.util.Features;
+import org.chromium.base.test.util.Features.DisableFeatures;
 import org.chromium.base.test.util.Features.EnableFeatures;
 import org.chromium.base.test.util.Restriction;
 import org.chromium.chrome.browser.ChromeTabbedActivity;
@@ -48,6 +49,7 @@ import org.chromium.chrome.test.transit.testhtmls.NavigatePageStations;
 import org.chromium.chrome.test.util.ActivityTestUtils;
 import org.chromium.chrome.test.util.ChromeRenderTestRule;
 import org.chromium.components.omnibox.OmniboxFeatureList;
+import org.chromium.components.omnibox.OmniboxFeatures;
 import org.chromium.components.tab_groups.TabGroupColorId;
 import org.chromium.net.test.EmbeddedTestServer;
 import org.chromium.ui.base.DeviceFormFactor;
@@ -70,7 +72,8 @@ import java.util.concurrent.ExecutionException;
     ChromeFeatureList.GRID_TAB_SWITCHER_SURFACE_COLOR_UPDATE,
     ChromeFeatureList.GRID_TAB_SWITCHER_UPDATE,
     ChromeFeatureList.ANDROID_THEME_MODULE,
-    ChromeFeatureList.HISTORY_PANE_ANDROID
+    ChromeFeatureList.HISTORY_PANE_ANDROID,
+    OmniboxFeatureList.ANDROID_HUB_SEARCH_TAB_GROUPS
 })
 public class TabSwitcherSearchRenderTest {
     private static final int SERVER_PORT = 13245;
@@ -82,7 +85,7 @@ public class TabSwitcherSearchRenderTest {
     @Rule
     public ChromeRenderTestRule mRenderTestRule =
             ChromeRenderTestRule.Builder.withPublicCorpus()
-                    .setRevision(11)
+                    .setRevision(14)
                     .setBugComponent(Component.UI_BROWSER_MOBILE_TAB_SWITCHER)
                     .build();
 
@@ -122,10 +125,13 @@ public class TabSwitcherSearchRenderTest {
     @MediumTest
     @Feature({"RenderTest"})
     @Restriction(PHONE)
+    @EnableFeatures({OmniboxFeatureList.ANDROID_HUB_SEARCH_TAB_GROUPS})
     public void testHubSearchBox_Phone() throws IOException {
+        OmniboxFeatures.sAndroidHubSearchEnableTabGroupStrings.setForTesting(true);
+
         RegularTabSwitcherStation tabSwitcher = mInitialPage.openRegularTabSwitcher();
 
-        mRenderTestRule.render(tabSwitcher.viewHolderElement.get(), "hub_searchbox_phone");
+        mRenderTestRule.render(tabSwitcher.viewHolderElement.value(), "hub_searchbox_phone");
     }
 
     @Test
@@ -141,20 +147,21 @@ public class TabSwitcherSearchRenderTest {
                         .openIncognitoTabSwitcher();
 
         mRenderTestRule.render(
-                tabSwitcher.viewHolderElement.get(), "hub_searchbox_phone_incognito");
+                tabSwitcher.viewHolderElement.value(), "hub_searchbox_phone_incognito");
     }
 
     @Test
     @MediumTest
     @Feature({"RenderTest"})
     @Restriction(PHONE)
+    @EnableFeatures({OmniboxFeatureList.ANDROID_HUB_SEARCH_TAB_GROUPS})
     public void testHubSearchBox_PhoneLandscape() throws IOException {
         ChromeTabbedActivity cta = mCtaTestRule.getActivity();
         ActivityTestUtils.rotateActivityToOrientation(cta, ORIENTATION_LANDSCAPE);
         RegularTabSwitcherStation tabSwitcher = mInitialPage.openRegularTabSwitcher();
 
         mRenderTestRule.render(
-                tabSwitcher.viewHolderElement.get(), "hub_searchbox_phone_landscape");
+                tabSwitcher.viewHolderElement.value(), "hub_searchbox_phone_landscape");
         ActivityTestUtils.clearActivityOrientation(cta);
     }
 
@@ -166,13 +173,15 @@ public class TabSwitcherSearchRenderTest {
     public void testHubSearchLoupe_Tablet(boolean nightModeEnabled) throws IOException {
         RegularTabSwitcherStation tabSwitcher = mInitialPage.openRegularTabSwitcher();
 
-        mRenderTestRule.render(tabSwitcher.viewHolderElement.get(), "hub_searchloupe_tablet");
+        mRenderTestRule.render(tabSwitcher.viewHolderElement.value(), "hub_searchloupe_tablet");
     }
 
     @Test
     @MediumTest
     @Feature({"RenderTest"})
     @Restriction(DeviceFormFactor.TABLET_OR_DESKTOP)
+    // TODO(crbug.com/439491767): Fix broken tests caused by desktop-like incognito window.
+    @DisableFeatures(ChromeFeatureList.ANDROID_OPEN_INCOGNITO_AS_WINDOW)
     public void testHubSearchLoupe_Tablet_Incognito() throws IOException {
         List<String> urlsToOpen = Arrays.asList("/chrome/test/data/android/navigate/one.html");
         IncognitoTabSwitcherStation tabSwitcher =
@@ -181,15 +190,18 @@ public class TabSwitcherSearchRenderTest {
                         .openIncognitoTabSwitcher();
 
         mRenderTestRule.render(
-                tabSwitcher.viewHolderElement.get(), "hub_searchloupe_tablet_incognito");
+                tabSwitcher.viewHolderElement.value(), "hub_searchloupe_tablet_incognito");
     }
 
     @Test
     @MediumTest
     @Feature({"RenderTest"})
+    @EnableFeatures({OmniboxFeatureList.ANDROID_HUB_SEARCH_TAB_GROUPS})
     @ParameterAnnotations.UseMethodParameter(NightModeTestUtils.NightModeParams.class)
     public void testZeroPrefixSuggestions_ShownInRegular(boolean nightModeEnabled)
             throws IOException {
+        OmniboxFeatures.sAndroidHubSearchEnableTabGroupStrings.setForTesting(true);
+
         List<String> urlsToOpen = Arrays.asList("/chrome/test/data/android/test.html");
         TabSwitcherSearchStation searchStation =
                 Journeys.prepareRegularTabsWithWebPages(
@@ -261,14 +273,14 @@ public class TabSwitcherSearchRenderTest {
     @EnableFeatures({OmniboxFeatureList.ANDROID_HUB_SEARCH_TAB_GROUPS})
     @ParameterAnnotations.UseMethodParameter(NightModeTestUtils.NightModeParams.class)
     public void testRenderTypedTabGroupSuggestions(boolean nightModeEnabled) throws IOException {
-        Tab firstTab = mInitialPage.loadedTabElement.get();
+        Tab firstTab = mInitialPage.loadedTabElement.value();
         int firstTabId = firstTab.getId();
         mCtaTestRule.loadUrlInTab(
                 mCtaTestRule.getTestServer().getURL(NavigatePageStations.PATH_ONE),
                 PageTransition.TYPED | PageTransition.FROM_ADDRESS_BAR,
                 firstTab);
         RegularNewTabPageStation secondPage = mInitialPage.openNewTabFast();
-        Tab secondTab = secondPage.loadedTabElement.get();
+        Tab secondTab = secondPage.loadedTabElement.value();
         int secondTabId = secondTab.getId();
         mCtaTestRule.loadUrlInTab(
                 mCtaTestRule.getTestServer().getURL(NavigatePageStations.PATH_ONE),
@@ -287,8 +299,9 @@ public class TabSwitcherSearchRenderTest {
 
         TabSwitcherSearchStation searchStation = tabSwitcher.openTabSwitcherSearch();
         searchStation.typeInOmnibox("foo");
+        searchStation.findSectionHeaderByIndexAndText(0, "Tabs and tab groups");
         searchStation.findSuggestion(
-                /* index= */ 0,
+                /* index= */ 1,
                 /* title= */ "   Foobar",
                 /* text= */ "127.0.0.1:13245/chrome/test/data/android/navigate/one.html,"
                         + " 127.0.0.1:13245/chrome/test/data/android/navigate/one.html");
@@ -305,14 +318,14 @@ public class TabSwitcherSearchRenderTest {
     @ParameterAnnotations.UseMethodParameter(NightModeTestUtils.NightModeParams.class)
     public void testRenderTypedTabGroupSuggestions_URLMatch(boolean nightModeEnabled)
             throws IOException {
-        Tab firstTab = mInitialPage.loadedTabElement.get();
+        Tab firstTab = mInitialPage.loadedTabElement.value();
         int firstTabId = firstTab.getId();
         mCtaTestRule.loadUrlInTab(
                 mCtaTestRule.getTestServer().getURL(NavigatePageStations.PATH_ONE),
                 PageTransition.TYPED | PageTransition.FROM_ADDRESS_BAR,
                 firstTab);
         RegularNewTabPageStation secondPage = mInitialPage.openNewTabFast();
-        Tab secondTab = secondPage.loadedTabElement.get();
+        Tab secondTab = secondPage.loadedTabElement.value();
         int secondTabId = secondTab.getId();
         mCtaTestRule.loadUrlInTab(
                 mCtaTestRule.getTestServer().getURL(NavigatePageStations.PATH_ONE),
@@ -331,8 +344,9 @@ public class TabSwitcherSearchRenderTest {
 
         TabSwitcherSearchStation searchStation = tabSwitcher.openTabSwitcherSearch();
         searchStation.typeInOmnibox("data");
+        searchStation.findSectionHeaderByIndexAndText(0, "Tabs and tab groups");
         searchStation.findSuggestion(
-                /* index= */ 1,
+                /* index= */ 2,
                 /* title= */ "   Test",
                 /* text= */ "127.0.0.1:13245/chrome/test/data/android/navigate/one.html,"
                         + " 127.0.0.1:13245/chrome/test/data/android/navigate/one.html");
@@ -349,9 +363,9 @@ public class TabSwitcherSearchRenderTest {
     @ParameterAnnotations.UseMethodParameter(NightModeTestUtils.NightModeParams.class)
     public void testRenderTypedTabGroupSuggestions_ChromePrefixedTabsOmmitted(
             boolean nightModeEnabled) throws IOException {
-        int firstTabId = mInitialPage.loadedTabElement.get().getId();
+        int firstTabId = mInitialPage.loadedTabElement.value().getId();
         RegularNewTabPageStation secondPage = mInitialPage.openNewTabFast();
-        int secondTabId = secondPage.loadedTabElement.get().getId();
+        int secondTabId = secondPage.loadedTabElement.value().getId();
         RegularTabSwitcherStation tabSwitcher = secondPage.openRegularTabSwitcher();
         TabSwitcherListEditorFacility<RegularTabSwitcherStation> editor =
                 tabSwitcher.openAppMenu().clickSelectTabs();
@@ -365,7 +379,8 @@ public class TabSwitcherSearchRenderTest {
 
         TabSwitcherSearchStation searchStation = tabSwitcher.openTabSwitcherSearch();
         searchStation.typeInOmnibox("test");
-        searchStation.findSuggestion(/* index= */ 0, /* title= */ "   Test", /* text= */ null);
+        searchStation.findSectionHeaderByIndexAndText(0, "Tabs and tab groups");
+        searchStation.findSuggestion(/* index= */ 1, /* title= */ "   Test", /* text= */ null);
 
         mRenderTestRule.render(
                 searchStation.getActivity().findViewById(android.R.id.content),

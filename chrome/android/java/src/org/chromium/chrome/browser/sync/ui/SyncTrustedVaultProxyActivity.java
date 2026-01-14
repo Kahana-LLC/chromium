@@ -4,6 +4,8 @@
 
 package org.chromium.chrome.browser.sync.ui;
 
+import static org.chromium.build.NullUtil.assumeNonNull;
+
 import android.app.PendingIntent;
 import android.content.Intent;
 import android.content.IntentSender;
@@ -18,7 +20,7 @@ import org.chromium.chrome.browser.init.AsyncInitializationActivity;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.profiles.ProfileProvider;
 import org.chromium.chrome.browser.sync.TrustedVaultClient;
-import org.chromium.components.sync.TrustedVaultUserActionTriggerForUMA;
+import org.chromium.components.trusted_vault.TrustedVaultUserActionTriggerForUMA;
 
 /**
  * {@link SyncTrustedVaultProxyActivity} has no own UI and just acts as a proxy to launch an
@@ -135,19 +137,14 @@ public class SyncTrustedVaultProxyActivity extends AsyncInitializationActivity {
 
                     @Override
                     public Profile getOriginalProfile() {
-                        throw new IllegalStateException(
-                                "Unexpected access of the original profile.");
+                        assert false;
+                        return assumeNonNull(null);
                     }
 
                     @Override
                     public @Nullable Profile getOffTheRecordProfile(boolean createIfNeeded) {
-                        throw new IllegalStateException(
-                                "Unexpected access of the incognito profile.");
-                    }
-
-                    @Override
-                    public boolean hasOffTheRecordProfile() {
-                        return false;
+                        assert !createIfNeeded;
+                        return null;
                     }
                 };
         supplier.set(profileProvider);
@@ -184,7 +181,8 @@ public class SyncTrustedVaultProxyActivity extends AsyncInitializationActivity {
     }
 
     @Override
-    public boolean onActivityResultWithNative(int requestCode, int resultCode, Intent intent) {
+    public boolean onActivityResultWithNative(
+            int requestCode, int resultCode, @Nullable Intent intent) {
         boolean result = super.onActivityResultWithNative(requestCode, resultCode, intent);
 
         switch (requestCode) {
@@ -192,7 +190,7 @@ public class SyncTrustedVaultProxyActivity extends AsyncInitializationActivity {
                 // Upon key retrieval completion, the keys in TrustedVaultClient could have changed.
                 // This is done even if the user cancelled the flow (i.e. resultCode != RESULT_OK)
                 // because it's harmless to issue a redundant notifyKeysChanged().
-                TrustedVaultClient.get().notifyKeysChanged();
+                TrustedVaultClient.get().notifyKeysChanged(mUserActionTrigger);
                 break;
 
             case REQUEST_CODE_TRUSTED_VAULT_RECOVERABILITY_DEGRADED:

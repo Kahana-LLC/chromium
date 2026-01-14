@@ -20,11 +20,13 @@
 #include "services/webnn/public/cpp/webnn_types.h"
 #include "services/webnn/public/mojom/features.mojom-features.h"
 #include "services/webnn/public/mojom/webnn_tensor.mojom.h"
+#include "services/webnn/scoped_gpu_sequence.h"
 #include "services/webnn/webnn_constant_operand.h"
 #include "services/webnn/webnn_context_impl.h"
 #include "services/webnn/webnn_context_provider_impl.h"
 #include "services/webnn/webnn_graph_impl.h"
 #include "services/webnn/webnn_tensor_impl.h"
+#include "services/webnn/webnn_test_environment.h"
 #include "services/webnn/webnn_test_utils.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/common/tokens/tokens.h"
@@ -75,22 +77,28 @@ class FakeWebNNGraphImpl final : public WebNNGraphImpl {
 class FakeWebNNContextImpl final : public WebNNContextImpl {
  public:
   FakeWebNNContextImpl(
-      mojo::PendingAssociatedReceiver<mojom::WebNNContext> receiver,
-      WebNNContextProviderImpl* context_provider,
-      gpu::CommandBufferId command_buffer_id,
-      gpu::SequenceId sequence_id,
-      scoped_refptr<gpu::SchedulerTaskRunner> task_runner)
+      mojo::PendingReceiver<mojom::WebNNContext> receiver,
+      base::WeakPtr<WebNNContextProviderImpl> context_provider,
+      std::unique_ptr<ScopedGpuSequence> gpu_sequence,
+      scoped_refptr<gpu::MemoryTracker> memory_tracker,
+      scoped_refptr<base::SingleThreadTaskRunner> owning_task_runner,
+      gpu::SharedImageManager* shared_image_manager,
+      scoped_refptr<base::SingleThreadTaskRunner> main_task_runner)
       : WebNNContextImpl(std::move(receiver),
-                         context_provider,
+                         std::move(context_provider),
                          GetContextPropertiesForTesting(),
                          mojom::CreateContextOptions::New(),
-                         command_buffer_id,
-                         sequence_id,
-                         std::move(task_runner)) {}
+                         mojo::ScopedDataPipeConsumerHandle(),
+                         mojo::ScopedDataPipeProducerHandle(),
+                         std::move(gpu_sequence),
+                         std::move(memory_tracker),
+                         std::move(owning_task_runner),
+                         shared_image_manager,
+                         std::move(main_task_runner)) {}
 
   // WebNNContextImpl:
   base::WeakPtr<WebNNContextImpl> AsWeakPtr() override {
-    DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+    DCHECK_CALLED_ON_VALID_SEQUENCE(gpu_sequence_checker_);
     return weak_factory_.GetWeakPtr();
   }
 
@@ -125,19 +133,20 @@ class FakeWebNNContextImpl final : public WebNNContextImpl {
             std::move(callback)));
   }
 
-  void CreateTensorImpl(
-      mojo::PendingAssociatedReceiver<mojom::WebNNTensor> receiver,
-      mojom::TensorInfoPtr tensor_info,
-      CreateTensorImplCallback callback) override {
-    NOTIMPLEMENTED();
+  base::expected<scoped_refptr<WebNNTensorImpl>, mojom::ErrorPtr>
+  CreateTensorImpl(mojo::PendingAssociatedReceiver<mojom::WebNNTensor> receiver,
+                   mojom::TensorInfoPtr tensor_info) override {
+    return base::unexpected(mojom::Error::New(
+        mojom::Error::Code::kNotSupportedError, "Not implemented"));
   }
 
-  void CreateTensorFromMailboxImpl(
+  base::expected<scoped_refptr<WebNNTensorImpl>, mojom::ErrorPtr>
+  CreateTensorFromSharedImageImpl(
       mojo::PendingAssociatedReceiver<mojom::WebNNTensor> receiver,
       mojom::TensorInfoPtr tensor_info,
-      gpu::Mailbox mailbox,
-      CreateTensorImplCallback callback) override {
-    NOTIMPLEMENTED();
+      WebNNTensorImpl::RepresentationPtr representation) override {
+    return base::unexpected(mojom::Error::New(
+        mojom::Error::Code::kNotSupportedError, "Not implemented"));
   }
 
   base::WeakPtrFactory<FakeWebNNContextImpl> weak_factory_{this};
@@ -147,23 +156,31 @@ class FakeWebNNContextImpl final : public WebNNContextImpl {
 // the graph validation steps and computation resources.
 class FakeWebNNBackend : public WebNNContextProviderImpl::BackendForTesting {
  public:
-  scoped_refptr<WebNNContextImpl> CreateWebNNContext(
-      WebNNContextProviderImpl* context_provider_impl,
+  std::unique_ptr<WebNNContextImpl, OnTaskRunnerDeleter> CreateWebNNContext(
+      base::WeakPtr<WebNNContextProviderImpl> context_provider_impl,
       mojom::CreateContextOptionsPtr options,
-      gpu::CommandBufferId command_buffer_id,
-      gpu::SequenceId sequence_id,
-      scoped_refptr<gpu::SchedulerTaskRunner> task_runner,
+      std::unique_ptr<ScopedGpuSequence> gpu_sequence,
+      scoped_refptr<gpu::MemoryTracker> memory_tracker,
+      scoped_refptr<base::SingleThreadTaskRunner> owning_task_runner,
+      gpu::SharedImageManager* shared_image_manager,
+      scoped_refptr<base::SingleThreadTaskRunner> main_task_runner,
       mojom::WebNNContextProvider::CreateWebNNContextCallback callback)
       override {
-    mojo::PendingAssociatedRemote<mojom::WebNNContext> remote;
-    auto context_impl = base::MakeRefCounted<FakeWebNNContextImpl>(
-        remote.InitWithNewEndpointAndPassReceiver(), context_provider_impl,
-        command_buffer_id, sequence_id, std::move(task_runner));
+    mojo::PendingRemote<mojom::WebNNContext> remote;
+    auto task_runner = owning_task_runner;
+    std::unique_ptr<WebNNContextImpl, OnTaskRunnerDeleter> context_impl(
+        new FakeWebNNContextImpl(
+            remote.InitWithNewPipeAndPassReceiver(),
+            std::move(context_provider_impl), std::move(gpu_sequence),
+            std::move(memory_tracker), std::move(owning_task_runner),
+            shared_image_manager, std::move(main_task_runner)),
+        OnTaskRunnerDeleter(std::move(task_runner)));
     ContextProperties context_properties = context_impl->properties();
     // The receiver bound to FakeWebNNContext.
     auto success = mojom::CreateContextSuccess::New(
         std::move(remote), std::move(context_properties),
-        context_impl->handle());
+        context_impl->handle(), mojo::ScopedDataPipeProducerHandle(),
+        mojo::ScopedDataPipeConsumerHandle());
     std::move(callback).Run(
         mojom::CreateContextResult::NewSuccess(std::move(success)));
     return context_impl;
@@ -181,7 +198,7 @@ class WebNNGraphBuilderImplTest : public testing::Test {
   void SetUp() override {
     WebNNContextProviderImpl::SetBackendForTesting(&backend_for_testing_);
 
-    WebNNContextProviderImpl::CreateForTesting(
+    webnn_test_environment_.BindWebNNContextProvider(
         provider_remote_.BindNewPipeAndPassReceiver());
 
     base::test::TestFuture<mojom::CreateContextResultPtr> create_context_future;
@@ -199,7 +216,9 @@ class WebNNGraphBuilderImplTest : public testing::Test {
     WebNNContextProviderImpl::SetBackendForTesting(nullptr);
   }
 
-  base::test::TaskEnvironment& task_environment() { return task_environment_; }
+  test::WebNNTestEnvironment& test_environment() {
+    return webnn_test_environment_;
+  }
 
   mojo::AssociatedRemote<mojom::WebNNGraphBuilder>& graph_builder_remote() {
     return graph_builder_remote_;
@@ -213,12 +232,12 @@ class WebNNGraphBuilderImplTest : public testing::Test {
 
  private:
   base::test::ScopedFeatureList scoped_feature_list_;
-  base::test::TaskEnvironment task_environment_;
 
   FakeWebNNBackend backend_for_testing_;
 
+  test::WebNNTestEnvironment webnn_test_environment_;
   mojo::Remote<mojom::WebNNContextProvider> provider_remote_;
-  mojo::AssociatedRemote<mojom::WebNNContext> webnn_context_;
+  mojo::Remote<mojom::WebNNContext> webnn_context_;
   mojo::AssociatedRemote<mojom::WebNNGraphBuilder> graph_builder_remote_;
 };
 
@@ -238,7 +257,7 @@ TEST_F(WebNNGraphBuilderImplTest, CreateGraph) {
   // The remote should disconnect shortly after the future resolves since the
   // `WebNNGraphBuilder` is destroyed shortly after firing its `CreateGraph()`
   // callback.
-  task_environment().RunUntilIdle();
+  test_environment().RunUntilIdle();
   EXPECT_FALSE(graph_builder_remote().is_connected());
 }
 

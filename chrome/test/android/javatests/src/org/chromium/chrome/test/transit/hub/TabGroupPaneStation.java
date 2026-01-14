@@ -17,7 +17,6 @@ import org.hamcrest.Matcher;
 
 import org.chromium.base.test.transit.ViewElement;
 import org.chromium.base.test.transit.ViewSpec;
-import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.hub.HubUtils;
 import org.chromium.chrome.browser.hub.PaneId;
 import org.chromium.chrome.test.R;
@@ -44,12 +43,11 @@ public class TabGroupPaneStation extends HubBaseStation {
                         paneHostElement.descendant(
                                 RecyclerView.class, withId(R.id.tab_group_list_recycler_view)));
 
-        if (ChromeFeatureList.sTabGroupEntryPointsAndroid.isEnabled()) {
-            newTabGroupButtonElement =
-                    declareView(toolbarElement.descendant(withId(R.id.toolbar_action_button)));
-        }
+        newTabGroupButtonElement =
+                declareView(toolbarElement.descendant(withId(R.id.toolbar_action_button)));
 
-        if (OmniboxFeatures.sAndroidHubSearchTabGroups.isEnabled()) {
+        if (OmniboxFeatures.sAndroidHubSearchTabGroups.isEnabled()
+                && OmniboxFeatures.sAndroidHubSearchEnableOnTabGroupsPane.getValue()) {
             declareElementFactory(
                     mActivityElement,
                     delayedElements -> {
@@ -88,7 +86,7 @@ public class TabGroupPaneStation extends HubBaseStation {
 
     private boolean shouldHubSearchBoxBeVisible() {
         return HubUtils.isScreenWidthTablet(
-                mActivityElement.get().getResources().getConfiguration().screenWidthDp);
+                mActivityElement.value().getResources().getConfiguration().screenWidthDp);
     }
 
     // TODO(crbug.com/413652567): Implement actions.

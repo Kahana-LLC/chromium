@@ -10,8 +10,6 @@ blink_modules_sources("webaudio") {
     "analyser_handler.h",
     "analyser_node.cc",
     "analyser_node.h",
-    "async_audio_decoder.cc",
-    "async_audio_decoder.h",
     "audio_buffer.cc",
     "audio_buffer.h",
     "audio_buffer_source_handler.cc",
@@ -185,7 +183,7 @@ blink_modules_sources("webaudio") {
     sources += [ "cpu/x86/oscillator_kernel_sse2.cc" ]
   }
 
-  if (current_cpu == "arm64" || (current_cpu == "arm" && arm_use_neon)) {
+  if (current_cpu == "arm64" || current_cpu == "arm") {
     sources += [ "cpu/arm/oscillator_kernel_neon.cc" ]
   }
   deps = [
