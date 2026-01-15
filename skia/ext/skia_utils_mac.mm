@@ -81,6 +81,11 @@ SkBitmap NSImageOrNSImageRepToSkBitmap(NSImage* image,
             (SK_A32_SHIFT == (a) && SK_R32_SHIFT == (r) \
              && SK_G32_SHIFT == (g) && SK_B32_SHIFT == (b))
 #if defined(SK_CPU_LENDIAN) && HAS_ARGB_SHIFTS(24, 16, 8, 0)
+  // kCGImageByteOrder32Host was deprecated/removed in newer SDKs
+  // On ARM64 (little-endian), use kCGImageByteOrder32Little instead
+  #ifndef kCGImageByteOrder32Host
+    #define kCGImageByteOrder32Host kCGImageByteOrder32Little
+  #endif
   base::apple::ScopedCFTypeRef<CGContextRef> context(CGBitmapContextCreate(
       data, size.width, size.height, 8, size.width * 4, cg_color_space.get(),
       static_cast<CGBitmapInfo>(kCGImageAlphaPremultipliedFirst) |

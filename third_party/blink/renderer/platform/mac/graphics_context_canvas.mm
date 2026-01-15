@@ -61,6 +61,11 @@ CGContextRef GraphicsContextCanvas::CgContext() {
   }
   offscreen_.eraseColor(0);
   int display_height = offscreen_.height();
+  // kCGImageByteOrder32Host was deprecated/removed in newer SDKs
+  // On ARM64 (little-endian), use kCGImageByteOrder32Little instead
+  #ifndef kCGImageByteOrder32Host
+    #define kCGImageByteOrder32Host kCGImageByteOrder32Little
+  #endif
   cg_context_.reset(CGBitmapContextCreate(
       offscreen_.getPixels(), offscreen_.width(), offscreen_.height(), 8,
       offscreen_.rowBytes(), color_space.get(),
