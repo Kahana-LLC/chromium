@@ -9,6 +9,7 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.never;
@@ -404,6 +405,25 @@ public class TransitiveObservableSupplierTest {
 
         // Ensure destroy() causes get() to return null.
         transitive.destroy();
+        assertNull(transitive.get());
+    }
+
+    @Test
+    public void testDestroyUnregisters() {
+        SettableNullableObservableSupplier<String> nullableSupplier1 =
+                ObservableSuppliers.createNullable();
+        SettableNullableObservableSupplier<String> nullableSupplier2 =
+                ObservableSuppliers.createNullable();
+
+        SettableNullableObservableSupplier<String> transitive =
+                nullableSupplier1.createTransitiveNullable(unused -> nullableSupplier2);
+        transitive.addSyncObserverAndCallIfNonNull(mOnChangeCallback);
+        transitive.destroy();
+
+        // Set a value.
+        nullableSupplier2.set("A");
+        nullableSupplier1.set("B");
+        verify(mOnChangeCallback, never()).onResult(any());
         assertNull(transitive.get());
     }
 }

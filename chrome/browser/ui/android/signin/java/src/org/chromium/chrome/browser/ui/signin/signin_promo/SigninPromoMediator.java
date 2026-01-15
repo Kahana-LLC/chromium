@@ -39,11 +39,12 @@ final class SigninPromoMediator
 
     /** Strings used for promo event count histograms. */
     // LINT.IfChange(Event)
-    @StringDef({Event.CONTINUED, Event.DISMISSED, Event.SHOWN})
+    @StringDef({Event.CONTINUED, Event.DISMISSED, Event.SIGNIN_UNDONE, Event.SHOWN})
     @Retention(RetentionPolicy.SOURCE)
     @interface Event {
         String CONTINUED = "Continued";
         String DISMISSED = "Dismissed";
+        String SIGNIN_UNDONE = "SigninUndone";
         String SHOWN = "Shown";
     }
 
@@ -159,6 +160,14 @@ final class SigninPromoMediator
         return !mMaxImpressionReached && mPromoDelegate.canShowPromo();
     }
 
+    void onSigninUndone() {
+        recordEventHistogram(Event.SIGNIN_UNDONE);
+        if (mPromoDelegate.canBeDismissedPermanently()) {
+            mPromoDelegate.permanentlyDismissPromo();
+            refreshPromoContent(/* wasVisibleAccountUpdated= */ false);
+        }
+    }
+
     /** Implements {@link IdentityManager.Observer} */
     @Override
     public void onPrimaryAccountChanged(PrimaryAccountChangeEvent eventDetails) {
@@ -214,8 +223,9 @@ final class SigninPromoMediator
     }
 
     private void onDismissButtonClicked() {
+        assert mPromoDelegate.canBeDismissedPermanently();
         recordEventHistogram(Event.DISMISSED);
-        mPromoDelegate.onDismissButtonClicked();
+        mPromoDelegate.permanentlyDismissPromo();
         refreshPromoContent(/* wasVisibleAccountUpdated= */ false);
     }
 
@@ -261,7 +271,7 @@ final class SigninPromoMediator
                 mPromoDelegate.getTextForSecondaryButton());
         mModel.set(
                 SigninPromoProperties.SHOULD_HIDE_DISMISS_BUTTON,
-                mPromoDelegate.shouldHideDismissButton());
+                !mPromoDelegate.canBeDismissedPermanently());
         mModel.set(
                 SigninPromoProperties.SHOULD_SHOW_ACCOUNT_PICKER,
                 profileData != null && !mPromoDelegate.shouldDisplaySignedInLayout());

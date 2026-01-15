@@ -54,11 +54,15 @@ external/wpt/infrastructure/reftest/reftest_timeout.html [ Timeout ]
 wpt_internal/infrastructure/fail-before-timeout.html [ Timeout ]
 
 # Short-lived expectations for --enable-blink-features=AIPageContentBuildOnLoadForTesting
-# Will be removed in follow-up CL with the fixes.
-# DCHECK failed: !GetDocument().InvalidationDisallowed().
-virtual/content-extraction/fast/dom/HTMLObjectElement/update-data.html [ Crash Timeout ]
-# DCHECK failed: object.GetDocument().Lifecycle().GetState() >= DocumentLifecycle::kLayoutClean. ComputeVisibleBoundingBox only works when layout is complete
-virtual/content-extraction/compositing/iframes/content-visibility-hidden-frame.html [ Crash Timeout ]
+# Subpixel rendering issue on Mac only caused by activating display locks.
+crbug.com/475504307 [ Mac ] html/details_summary/details-replace-text.html [ Pass Failure ]
+# APC auto‑build forces lifecycle updates during DOMContentLoaded; this exposes a pending/error
+# mask-image timing bug where invalid masks are treated as transparent instead of ignored, causing
+# the masked element to disappear.
+crbug.com/475537047 external/wpt/css/css-masking/mask-image/bad-mask-image-svg-3.html [ Pass Failure ]
+# APC auto-build hits a CHECK when view-transition root offsets push geometry
+# above the viewport during DOMContentLoaded.
+crbug.com/474330989 wpt_internal/view-transition/browser-controls-root-offset-new.html [ Pass Crash ]
 
 # Reftest failure related to off-main-thread interaction (imperceptible AA differences)
 crbug.com/395909730 virtual/off-main-thread-css-paint/http/tests/csspaint/paint2d-zoom.html [ Failure ]  # Reftest image failure
@@ -2687,7 +2691,7 @@ crbug.com/334063352 [ Webview ] external/wpt/picture-in-picture/idlharness.windo
 crbug.com/421921 [ Webview ] external/wpt/push-api/idlharness.https.any.serviceworker.html [ Failure ]
 
 # Other failing/timeout tests
-[ Android ] external/wpt/visual-viewport/resize-event-order.html [ Failure ]
+[ Android ] external/wpt/visual-viewport/resize-event-order.html [ Timeout ]
 [ Android ] external/wpt/visual-viewport/viewport-resize-event-on-load-overflowing-page.html [ Failure ]
 [ Webview ] external/wpt/compat/idlharness.window.html [ Failure ]
 [ Webview ] external/wpt/html-media-capture/idlharness.window.html [ Failure ]
@@ -2974,16 +2978,6 @@ crbug.com/475335843 [ Win ] external/wpt/html/semantics/the-button-element/comma
 crbug.com/474480404 [ Win ] external/wpt/bluetooth/bidi/characteristic/getDescriptors/gen-descriptor-get-same-object.https.window.html [ Failure Pass Timeout ]
 crbug.com/474955261 [ Win ] external/wpt/geolocation/enabled-by-permission-policy-attribute-redirect-on-load.https.sub.html [ Pass Timeout ]
 crbug.com/475249997 [ Win ] external/wpt/orientation-sensor/RelativeOrientationSensor-iframe-access.https.html [ Failure Pass Timeout ]
-crbug.com/474955260 external/wpt/css/css-grid/grid-lanes/tentative/intrinsic-sizing/grid-lanes-intrinsic-sizing-cols-006.html [ Failure ]
-crbug.com/474955260 external/wpt/css/css-grid/grid-lanes/tentative/item-placement/flow-tolerance/column-flow-tolerance-infinite.html [ Failure ]
-crbug.com/474955260 external/wpt/css/css-grid/grid-lanes/tentative/item-placement/flow-tolerance/flow-tolerance-column-004.html [ Failure ]
-crbug.com/474955260 external/wpt/css/css-grid/grid-lanes/tentative/item-placement/flow-tolerance/flow-tolerance-row-004.html [ Failure ]
-crbug.com/474955260 external/wpt/css/css-grid/grid-lanes/tentative/item-placement/flow-tolerance/row-flow-tolerance-infinite.html [ Failure ]
-crbug.com/474955260 external/wpt/css/css-grid/grid-lanes/tentative/item-placement/grid-lanes-item-placement-006.html [ Failure ]
-crbug.com/474955260 external/wpt/css/css-grid/grid-lanes/tentative/track-sizing/column-track-sizing-001.html [ Failure ]
-crbug.com/474955260 external/wpt/css/css-grid/grid-lanes/tentative/track-sizing/column-track-sizing-005.html [ Failure ]
-crbug.com/474955260 external/wpt/css/css-grid/grid-lanes/tentative/track-sizing/row-track-sizing-001.html [ Failure ]
-crbug.com/474955260 external/wpt/css/css-grid/grid-lanes/tentative/track-sizing/row-track-sizing-005.html [ Failure ]
 crbug.com/475000031 [ Android ] external/wpt/webdriver/tests/bidi/emulation/set_geolocation_override/user_contexts.py [ Failure ]
 crbug.com/475000031 external/wpt/webdriver/tests/bidi/emulation/set_screen_orientation_override/user_contexts.py [ Failure ]
 crbug.com/473917868 external/wpt/webdriver/tests/classic/new_session/invalid_capabilities.py [ Failure ]

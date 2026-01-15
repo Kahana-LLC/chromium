@@ -173,11 +173,6 @@ BASE_FEATURE(kAutofillAiFillingSurvey, base::FEATURE_DISABLED_BY_DEFAULT);
 BASE_FEATURE(kAutofillAiIdentityAndTravelPrefs,
              base::FEATURE_ENABLED_BY_DEFAULT);
 
-// If enabled, no account-level capabilities are checked to determine whether
-// a user is eligible for AutofillAI.
-BASE_FEATURE(kAutofillAiIgnoreCapabilityCheck,
-             base::FEATURE_ENABLED_BY_DEFAULT);
-
 // If enabled, no GeoIp requirements are imposed for AutofillAi.
 // Note that this feature can be modified as follows (all assuming that
 // `kAutofillAiIgnoreGeoIp` is enabled):
@@ -407,12 +402,6 @@ BASE_FEATURE(kAutofillBetterLocalHeuristicPlaceholderSupport,
 // Same as `kAutofillAddressUserPerceptionSurvey` but for credit card forms.
 BASE_FEATURE(kAutofillCreditCardUserPerceptionSurvey,
              base::FEATURE_DISABLED_BY_DEFAULT);
-
-// Feature flag controlling the deduplication of GAS addresses. When disabled
-// GAS addresses will never be deleted as part of the deduplication flow.
-// TODO(crbug.com/357074792): Remove when launched.
-BASE_FEATURE(kAutofillDeduplicateAccountAddresses,
-             base::FEATURE_ENABLED_BY_DEFAULT);
 
 #if BUILDFLAG(IS_ANDROID)
 // If enabled, other apps can open the Autofill Options in Chrome.
@@ -707,24 +696,6 @@ BASE_FEATURE(kAutofillImproveAddressFieldSwapping,
 // relevant.
 // TODO(crbug.com/380273791): Cleanup when launched.
 BASE_FEATURE(kAutofillImprovedLabels, base::FEATURE_DISABLED_BY_DEFAULT);
-
-// Controls whether main text should also be improved or not.
-// TODO(crbug.com/380273791): Clean up when launched.
-BASE_FEATURE_PARAM(bool,
-                   kAutofillImprovedLabelsParamWithoutMainTextChangesParam,
-                   &kAutofillImprovedLabels,
-                   "autofill_improved_labels_without_main_text_changes",
-                   false);
-
-// Controls whether differentiating labels should be shown before or after the
-// improved labels.
-// TODO(crbug.com/380273791): Clean up when launched.
-BASE_FEATURE_PARAM(
-    bool,
-    kAutofillImprovedLabelsParamWithDifferentiatingLabelsInFrontParam,
-    &kAutofillImprovedLabels,
-    "autofill_improved_labels_with_differentiating_labels_in_front",
-    false);
 
 // TODO(crbug.com/346507576): Remove once the experiment is over.
 // When enabled, makes autocomplete label sensitive.

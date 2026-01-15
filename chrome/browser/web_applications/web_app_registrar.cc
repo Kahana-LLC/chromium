@@ -948,10 +948,11 @@ const WebApp* WebAppRegistrar::LookUpAppByInstallSourceInstallUrl(
   return nullptr;
 }
 
-bool WebAppRegistrar::IsInRegistrar(const webapps::AppId& app_id) const {
+std::optional<proto::InstallState> WebAppRegistrar::GetInstallState(
+    const webapps::AppId& app_id) const {
   const WebApp* web_app = GetAppById(app_id);
   if (!web_app || web_app->is_uninstalling()) {
-    return false;
+    return std::nullopt;
   }
 
   // `is_from_sync_and_pending_installation()` should be treated as 'not
@@ -961,18 +962,8 @@ bool WebAppRegistrar::IsInRegistrar(const webapps::AppId& app_id) const {
   sources_except_sync.Remove(WebAppManagement::kSync);
   if (web_app->is_from_sync_and_pending_installation() &&
       sources_except_sync.empty()) {
-    return false;
-  }
-  return true;
-}
-
-std::optional<proto::InstallState> WebAppRegistrar::GetInstallState(
-    const webapps::AppId& app_id) const {
-  if (!IsInRegistrar(app_id)) {
     return std::nullopt;
   }
-  const WebApp* web_app = GetAppById(app_id);
-  CHECK(web_app);
   return web_app->install_state();
 }
 
@@ -999,6 +990,10 @@ bool WebAppRegistrar::AppMatches(const webapps::AppId& app_id,
   std::optional<proto::InstallState> install_state = GetInstallState(app_id);
   if (install_state == std::nullopt) {
     return false;
+  }
+
+  if (filter.is_app_surfaceable_to_user_) {
+    return install_state != proto::SUGGESTED_FROM_MIGRATION;
   }
 
   if (install_state == proto::SUGGESTED_FROM_MIGRATION) {

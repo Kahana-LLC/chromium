@@ -39,7 +39,8 @@ enum class GlicPinTrigger {
   kCandidatesToggle,
   kAtMention,
   kActuation,
-  kWebClientUnknown
+  kWebClientUnknown,
+  kMaxValue = kWebClientUnknown
 };
 
 enum class GlicUnpinTrigger {
@@ -52,7 +53,8 @@ enum class GlicUnpinTrigger {
   kCandidatesToggle,
   kChip,
   kActuation,
-  kWebClientUnknown
+  kWebClientUnknown,
+  kMaxValue = kWebClientUnknown
 };
 
 struct GlicPinEvent {

@@ -3997,7 +3997,7 @@ if (!is_android) {
       sources += [
         "../browser/contextual_cueing/zero_state_suggestions_browsertest.cc",
         "../browser/ui/views/side_panel/glic/glic_side_panel_coordinator_browsertest.cc",
-        "../browser/ui/views/tabs/glic_button_browsertest.cc",
+        "../browser/ui/views/tabs/glic/glic_button_browsertest.cc",
         "../browser/ui/webui/settings/glic_handler_browsertest.cc",
       ]
 
@@ -4009,6 +4009,7 @@ if (!is_android) {
         "//chrome/browser/glic/fre",
         "//chrome/browser/glic/test_support",
         "//chrome/browser/ui/omnibox",
+        "//chrome/browser/ui/views/tabs/glic",
         "//chrome/renderer/actor:browser_tests",
         "//chrome/renderer/webui_browser:browser_tests",
       ]
@@ -4795,6 +4796,7 @@ if (!is_android) {
         "../browser/extensions/extension_websocket_apitest.cc",
         "../browser/extensions/extension_webui_apitest.cc",
         "../browser/extensions/extensions_disabled_browsertest.cc",
+        "../browser/extensions/external_extension_install_browsertest.cc",
         "../browser/extensions/external_install_error_browsertest.cc",
         "../browser/extensions/feature_provider_browsertest.cc",
         "../browser/extensions/fetch_apitest.cc",
@@ -7508,7 +7510,15 @@ test("unit_tests") {
   }
 
   if (enable_glic || enable_glic_android) {
-    deps += [ "//chrome/browser/glic" ]
+    deps += [
+      "//chrome/browser/background/glic:unit_tests",
+      "//chrome/browser/glic",
+      "//chrome/browser/glic:unit_tests",
+      "//chrome/browser/glic/test_support",
+    ]
+    if (!is_android) {
+      deps += [ "//chrome/browser/ui/views/tabs/glic" ]
+    }
   }
 
   if (chrome_root_store_cert_management_ui) {
@@ -7534,14 +7544,6 @@ test("unit_tests") {
       "//components/compose/core/browser",
       "//components/optimization_guide/core",
       "//components/optimization_guide/proto:optimization_guide_proto",
-    ]
-  }
-
-  if (enable_glic || enable_glic_android) {
-    deps += [
-      "//chrome/browser/background/glic:unit_tests",
-      "//chrome/browser/glic:unit_tests",
-      "//chrome/browser/glic/test_support",
     ]
   }
 
@@ -8541,6 +8543,9 @@ test("unit_tests") {
         "../browser/ui/webui/password_manager/promo_cards/move_passwords_promo_unittest.cc",
       ]
     }
+    if (!is_chromeos && is_chrome_branded) {
+      sources += [ "../browser/ui/webui/settings/on_device_ai_settings_handler_unittest.cc" ]
+    }
 
     if (is_mac) {
       sources +=
@@ -8727,12 +8732,14 @@ test("unit_tests") {
       "//chrome/browser/ui/signin",
       "//chrome/browser/ui/tab_contents:unit_tests",
       "//chrome/browser/ui/tabs/alert:unit_tests",
+      "//chrome/browser/ui/tabs/back_to_opener:unit_tests",
       "//chrome/browser/ui/tabs/saved_tab_groups:test_support",
       "//chrome/browser/ui/toasts",
       "//chrome/browser/ui/toasts:unit_tests",
       "//chrome/browser/ui/toasts/api:unit_tests",
       "//chrome/browser/ui/views/bubble",
       "//chrome/browser/ui/views/download",
+      "//chrome/browser/ui/views/tabs/projects:unit_tests",
       "//chrome/browser/ui/webui/cr_components/theme_color_picker",
       "//chrome/browser/ui/webui/discards:mojo_bindings",
       "//chrome/browser/ui/webui/downloads:mojo_bindings",
@@ -8856,6 +8863,7 @@ test("unit_tests") {
 
   if (!is_android) {
     deps += [
+      "//chrome/browser/accessibility_annotator:unit_tests",
       "//chrome/browser/ui/contextual_search:unit_tests",
       "//chrome/browser/ui/search",
       "//chrome/browser/ui/views/location_bar",
@@ -10715,7 +10723,6 @@ test("unit_tests") {
         "../browser/ui/views/desktop_capture/audio_capture_permission_checker_mac_unittest.mm",
         "../browser/ui/views/desktop_capture/desktop_media_permission_pane_view_mac_unittest.mm",
         "../browser/ui/views/desktop_capture/screen_capture_permission_checker_mac_unittest.mm",
-        "../browser/ui/views/frame/browser_frame_view_mac_unittest.mm",
       ]
       deps += [
         "//chrome/browser/ui/webui/unexportable_keys_internals:unit_tests",
@@ -12343,6 +12350,7 @@ if (!is_android && !is_chromeos_device) {
         "//chrome/browser/glic:interactive_ui_tests",
         "//chrome/browser/glic/test_support",
         "//chrome/browser/ui/tabs:glic",
+        "//chrome/browser/ui/views/tabs/glic",
       ]
       if (enterprise_cloud_content_analysis) {
         deps += [

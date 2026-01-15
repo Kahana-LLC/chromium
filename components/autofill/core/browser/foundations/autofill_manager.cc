@@ -115,8 +115,9 @@ bool NeedsReparse(const FormData& live_form, const FormStructure& cached_form) {
              });
 }
 
-bool IsCreditCardFormForSignaturePurposes(const FormStructure& form_structure) {
-  return form_structure.GetFormTypes() ==
+bool IsCreditCardFormForSignaturePurposes(const FormStructure& form_structure,
+                                          bool suppress_if_ac_unrecognized) {
+  return form_structure.GetFormTypes(suppress_if_ac_unrecognized) ==
          DenseSet<FormType>{FormType::kCreditCardForm};
 }
 
@@ -870,23 +871,53 @@ void AutofillManager::OnLoadedServerPredictions(
       response->queried_form_signatures, log_manager(),
       /*ignore_small_forms=*/!client().IsTabInActorMode());
 
-  OnLoadedServerPredictionsImpl(queried_forms);
-  if (base::FeatureList::IsEnabled(features::debug::kShowDomNodeIDs)) {
-    driver().ExposeDomNodeIdsInAllFrames();
-  }
-
   for (const raw_ref<FormStructure>& form : queried_forms) {
     form->RationalizeAndAssignSections(client().GetVariationConfigCountryCode(),
                                        GetCurrentPageLanguage(), log_manager());
-
-    autofill_metrics::LogQualityMetricsBasedOnAutocomplete(
-        *form, client().GetFormInteractionsUkmLogger(),
-        driver().GetPageUkmSourceId());
     LogCurrentFieldTypes(&*form);
-
     NotifyObservers(&Observer::OnFieldTypesDetermined, form->global_id(),
                     Observer::FieldTypeSource::kAutofillServer);
   }
+
+  LogServerQueryResponseMetrics(queried_forms);
+  if (base::FeatureList::IsEnabled(features::debug::kShowDomNodeIDs)) {
+    driver().ExposeDomNodeIdsInAllFrames();
+  }
+  OnLoadedServerPredictionsImpl(queried_forms);
+}
+
+void AutofillManager::LogServerQueryResponseMetrics(
+    const std::vector<raw_ref<FormStructure>>& forms) {
+  bool heuristics_detected_fillable_field = false;
+  bool query_response_overrode_heuristics = false;
+  for (raw_ref<FormStructure> form : forms) {
+    for (const std::unique_ptr<AutofillField>& field : form->fields()) {
+      FieldType heuristic_type = field->heuristic_type();
+      if (heuristic_type != UNKNOWN_TYPE) {
+        heuristics_detected_fillable_field = true;
+      }
+      if (!field->Type().GetTypes().contains(heuristic_type)) {
+        query_response_overrode_heuristics = true;
+      }
+    }
+    AutofillMetrics::LogServerResponseHasDataForForm(std::ranges::any_of(
+        form->fields(), [](FieldType t) { return t != NO_SERVER_DATA; },
+        &AutofillField::server_type));
+    autofill_metrics::LogQualityMetricsBasedOnAutocomplete(
+        *form, client().GetFormInteractionsUkmLogger(),
+        driver().GetPageUkmSourceId());
+  }
+
+  AutofillMetrics::ServerQueryMetric metric;
+  if (query_response_overrode_heuristics &&
+      heuristics_detected_fillable_field) {
+    metric = AutofillMetrics::QUERY_RESPONSE_OVERRODE_LOCAL_HEURISTICS;
+  } else if (query_response_overrode_heuristics) {
+    metric = AutofillMetrics::QUERY_RESPONSE_WITH_NO_LOCAL_HEURISTICS;
+  } else {
+    metric = AutofillMetrics::QUERY_RESPONSE_MATCHED_LOCAL_HEURISTICS;
+  }
+  AutofillMetrics::LogServerQueryMetric(metric);
 }
 
 void AutofillManager::UpdateFormCache(
@@ -962,7 +993,9 @@ void AutofillManager::UpdateFormCache(
         apply_predictions(*cached_form_structure, *context, i);
       }
       if (preserve_signatures ||
-          IsCreditCardFormForSignaturePurposes(*cached_form_structure)) {
+          IsCreditCardFormForSignaturePurposes(
+              *cached_form_structure,
+              /*suppress_if_ac_unrecognized=*/!client().IsTabInActorMode())) {
         // Not updating signatures of credit card forms is legacy behaviour. We
         // believe that the signatures are kept stable for voting purposes.
         // Credit card forms are those which contain only credit card fields.
@@ -980,7 +1013,9 @@ void AutofillManager::UpdateFormCache(
       }
 
       if (!preserve_signatures &&
-          !IsCreditCardFormForSignaturePurposes(*cached_form_structure)) {
+          !IsCreditCardFormForSignaturePurposes(
+              *cached_form_structure,
+              /*suppress_if_ac_unrecognized=*/!client().IsTabInActorMode())) {
         // Not updating signatures of credit card forms is legacy behaviour. We
         // believe that the signatures are kept stable for voting purposes.
         // Credit card forms are those which contain only credit card fields.

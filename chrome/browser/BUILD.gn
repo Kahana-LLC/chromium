@@ -2606,6 +2606,7 @@ static_library("browser") {
 
   if (!is_android) {
     deps += [
+      "//chrome/browser/accessibility_annotator",
       "//chrome/browser/contextual_tasks:ui_impl",
       "//chrome/browser/legion",
       "//chrome/browser/startup",
@@ -4265,6 +4266,7 @@ static_library("browser") {
       "//chrome/browser/accessibility/tree_fixing:prefs",
       "//chrome/browser/accessibility/tree_fixing:service",
       "//chrome/browser/actor/ui",
+      "//chrome/browser/actor/ui:actor_overlay",
       "//chrome/browser/actor/ui:window_controller_impl",
       "//chrome/browser/actor/ui/task_list_bubble:controller",
       "//chrome/browser/actor/ui/task_list_bubble:controller_impl",
@@ -6282,6 +6284,12 @@ static_library("browser") {
     }
   }
 
+  if (enable_glic) {
+    if (is_win || is_mac || is_linux || is_chromeos) {
+      deps += [ "//chrome/browser/skills" ]
+    }
+  }
+
   if (enable_background_mode) {
     deps += [
       "//chrome/browser/background/extensions",
@@ -8235,8 +8243,10 @@ static_library("browser") {
     ]
 
     # TODO(crbug.com/427204855): Remove this circular include once
-    # "chrome/browser/sessions/tab_restore_service_factory.h" is
-    # fully componentized.
+    # "chrome/browser/sessions/tab_restore_service_factory.h",
+    # "chrome/browser/sessions/session_service_factory.h", and
+    # "chrome/browser/sessions/session_service_base.h"
+    # are fully componentized.
     allow_circular_includes_from +=
         [ "//chrome/browser/ui/webui/tab_strip_internals:impl" ]
   }

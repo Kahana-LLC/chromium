@@ -390,7 +390,7 @@ const CGFloat kSnackbarBottomMargin = 10;
   [_omniboxCoordinator acceptInput];
 }
 
-- (void)didFailToAttachDueToAttachmentLimit:
+- (void)didFailToAttachDueToIneligibleAttachments:
     (ComposeboxInputPlateViewController*)composeboxViewController {
   CHECK_EQ(_viewController, composeboxViewController);
   switch (_modeHolder.mode) {
@@ -463,6 +463,10 @@ const CGFloat kSnackbarBottomMargin = 10;
 
 - (void)reloadAutocompleteSuggestionsRestarting:(BOOL)restart {
   [_omniboxCoordinator clearSuggestionsWithRestartAutocomplete:restart];
+}
+
+- (void)refineWithText:(NSString*)text {
+  [_omniboxCoordinator refineWithText:text];
 }
 
 - (void)showAttachmentLimitError {

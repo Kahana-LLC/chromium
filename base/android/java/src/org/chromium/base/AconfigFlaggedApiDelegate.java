@@ -16,7 +16,6 @@ import android.os.Bundle;
 import android.util.Pair;
 import android.util.SparseArray;
 import android.view.Display;
-import android.view.View;
 import android.view.ViewConfiguration;
 import android.view.Window;
 import android.view.accessibility.AccessibilityEvent;
@@ -29,6 +28,7 @@ import androidx.core.view.accessibility.AccessibilityNodeInfoCompat;
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
 
+import java.util.List;
 import java.util.concurrent.Executor;
 
 /** Interface to call unreleased Android APIs that are guarded by aconfig flags. */
@@ -209,32 +209,6 @@ public interface AconfigFlaggedApiDelegate {
     }
 
     /**
-     * Calls {@link android.view.View#requestRectangleOnScreen(Rect, boolean, int)} if supported,
-     * with focus type of {@link android.view.View#RECTANGLE_ON_SCREEN_REQUEST_SOURCE_INPUT_FOCUS}.
-     *
-     * @param view view on which the method should be called
-     * @param boundsInView the rect to request on screen, in coordinates relative to {@code view}
-     * @return whether the Android API was invoked
-     */
-    default boolean requestInputFocusOnScreen(View view, Rect boundsInView) {
-        // TODO(crbug.com/450540343) inline internal delegate into callsites when API 36.1 releases.
-        return false;
-    }
-
-    /**
-     * Calls {@link View#requestRectangleOnScreen(Rect, boolean, int)} if supported, with focus type
-     * of {@link View#RECTANGLE_ON_SCREEN_REQUEST_SOURCE_TEXT_CURSOR}.
-     *
-     * @param view view on which the method should be called
-     * @param boundsInView the rect to request on screen, in coordinates relative to {@code view}
-     * @return whether the Android API was invoked
-     */
-    default boolean requestTextCursorOnScreen(View view, Rect boundsInView) {
-        // TODO(crbug.com/450540343) inline internal delegate into callsites when API 36.1 releases.
-        return false;
-    }
-
-    /**
      * Checks if the Selection Action Menu Client is available, based on the API level and Aconfig
      * flags. If the client is available, this method returns it wrapped in a {@code
      * SelectionActionMenuClientWrapper}. This does not check if the client has been overridden and
@@ -380,5 +354,28 @@ public interface AconfigFlaggedApiDelegate {
      */
     default Promise<Boolean> isInstalled(String title) {
         return Promise.fulfilled(false);
+    }
+
+    static class FrameRateVelocityPoint {
+        private final float mFramePerSecond;
+        private final float mDpPerSecond;
+
+        public FrameRateVelocityPoint(float framePerSecond, float dpPerSecond) {
+            mFramePerSecond = framePerSecond;
+            mDpPerSecond = dpPerSecond;
+        }
+
+        public float getFramePerSecond() {
+            return mFramePerSecond;
+        }
+
+        public float getDpPerSecond() {
+            return mDpPerSecond;
+        }
+    }
+
+    /** Calls Display.getFrameRateVelocityMapping if supported; returns null otherwise. */
+    default @Nullable List<FrameRateVelocityPoint> getFrameRateVelocityMapping(Display display) {
+        return null;
     }
 }

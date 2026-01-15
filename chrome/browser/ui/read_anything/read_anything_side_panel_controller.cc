@@ -45,6 +45,7 @@
 #include "components/language/core/browser/language_model_manager.h"
 #include "components/language/core/common/locale_util.h"
 #include "content/public/browser/render_frame_host.h"
+#include "content/public/common/url_constants.h"
 #include "read_anything_entry_point_controller.h"
 #include "read_anything_side_panel_controller.h"
 #include "services/metrics/public/cpp/ukm_builders.h"
@@ -392,6 +393,15 @@ void ReadAnythingSidePanelController::DidStopLoading() {
 
 void ReadAnythingSidePanelController::CheckIfGoodCandidateForReadingMode() {
   if (!features::IsReadAnythingOmniboxChipEnabled() || !tab_->IsActivated()) {
+    return;
+  }
+
+  // Don't show the omnibox entrypoint for non-HTTP(S) URLs. These URLs are not
+  // supported by Readability, which is used to check whether the current page is a
+  // good candidate for distillation.
+  const GURL& url = tab_->GetContents()->GetLastCommittedURL();
+  if (!url.SchemeIsHTTPOrHTTPS()) {
+    UpdateOmniboxEntryPoint(false);
     return;
   }
 

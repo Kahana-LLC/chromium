@@ -8,8 +8,8 @@
 #include "base/memory/raw_ptr.h"
 #include "chrome/browser/ui/browser_command_controller.h"
 #include "chrome/browser/ui/views/toolbar/webui_reload_control.h"
+#include "chrome/browser/ui/webui/webui_toolbar/webui_toolbar_page_handler.h"
 #include "content/public/browser/web_contents_delegate.h"
-#include "content/public/browser/web_contents_observer.h"
 #include "ui/base/metadata/metadata_header_macros.h"
 #include "ui/views/view.h"
 
@@ -21,9 +21,10 @@ class WebView;
 }  // namespace views
 
 // A view that displays the toolbar as a WebView.
-class WebUIToolbarWebView : public views::View,
-                            public content::WebContentsDelegate,
-                            public content::WebContentsObserver {
+class WebUIToolbarWebView
+    : public views::View,
+      public content::WebContentsObserver,
+      public WebUIToolbarPageHandler::WebUIToolbarDelegate {
   METADATA_HEADER(WebUIToolbarWebView, views::View)
 
  public:
@@ -35,16 +36,16 @@ class WebUIToolbarWebView : public views::View,
 
   ReloadControl* GetReloadControl();
 
+  // WebUIToolbarPageHandler::WebUIToolbarDelegate:
+  void HandleContextMenu(webui_toolbar::mojom::ContextMenuType menu_type,
+                         gfx::Point viewport_coordinate_css_pixels,
+                         ui::mojom::MenuSourceType source) override;
+  void OnPageInitialized() override;
+
   // views::View:
   void AddedToWidget() override;
 
-  // content::WebContentsDelegate:
-  bool HandleContextMenu(content::RenderFrameHost& render_frame_host,
-                         const content::ContextMenuParams& params) override;
-
   // content::WebContentsObserver:
-  void DidFinishLoad(content::RenderFrameHost* render_frame_host,
-                     const GURL& validated_url) override;
   void DidFirstVisuallyNonEmptyPaint() override;
 
   void SetDidFirstNonEmptyPaintCallbackForTesting(base::OnceClosure callback);

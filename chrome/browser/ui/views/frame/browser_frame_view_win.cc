@@ -236,36 +236,6 @@ bool BrowserFrameViewWin::CaptionButtonsOnLeadingEdge() const {
          base::i18n::IsRTL();
 }
 
-gfx::Rect BrowserFrameViewWin::GetBoundsForTabStripRegion(
-    const gfx::Size& tabstrip_minimum_size) const {
-  const int x = CaptionButtonsOnLeadingEdge() ? CaptionButtonsRegionWidth() : 0;
-  int end_x = width();
-  if (!CaptionButtonsOnLeadingEdge()) {
-    end_x = std::min(width() - CaptionButtonsRegionWidth(), end_x);
-  }
-  return gfx::Rect(x, TopAreaHeight(false), std::max(0, end_x - x),
-                   tabstrip_minimum_size.height());
-}
-
-gfx::Rect BrowserFrameViewWin::GetBoundsForWebAppFrameToolbar(
-    const gfx::Size& toolbar_preferred_size) const {
-  int x = display::win::GetScreenWin()->GetSystemMetricsInDIP(SM_CXSIZEFRAME);
-  if (IsMaximized()) {
-    x += kMaximizedLeftMargin;
-  }
-  if (GetBrowserView()->IsWindowControlsOverlayEnabled()) {
-    x = 0;
-  } else if (window_icon_) {
-    // Add extra padding to the left of the toolbar to account for the window
-    // icon.
-    x += window_icon_->size().width() + kIconTitleSpacing;
-  }
-
-  int trailing_x = width() - CaptionButtonsRegionWidth();
-  return gfx::Rect(x, WindowTopY(), std::max(0, trailing_x - x),
-                   caption_button_container_->size().height());
-}
-
 int BrowserFrameViewWin::GetTopInset(bool restored) const {
   if (GetBrowserView()->GetTabStripVisible() || IsWebUITabStrip()) {
     return TopAreaHeight(restored);
@@ -687,11 +657,9 @@ int BrowserFrameViewWin::TitlebarHeight(bool restored) const {
 }
 
 int BrowserFrameViewWin::GetFrameHeight() const {
-  if (GetBrowserView()->GetTabStripVisible()) {
-    // TODO(crbug.com/437915973): Account for the vertical tab region when using
-    // GetMinimumSize().
-    return GetBrowserView()->tab_strip_view()->GetMinimumSize().height() -
-           WindowTopY() -
+  const auto info = GetClientFrameElementInfo();
+  if (info.tabstrip_preferred_height) {
+    return info.tabstrip_preferred_height - WindowTopY() -
            GetLayoutConstant(LayoutConstant::kTabstripToolbarOverlap);
   }
   return IsMaximized() ? TitlebarMaximizedVisualHeight()
@@ -823,14 +791,10 @@ void BrowserFrameViewWin::PaintTitlebar(gfx::Canvas* canvas) const {
       titlebar_color));
   canvas->DrawRect(gfx::RectF(0, 0, width() * scale, y), flags);
 
-  // TODO(crbug.com/437915973): Account for the vertical tab region when using
-  // GetMinimumSize().
+  const auto info = GetClientFrameElementInfo();
   const int titlebar_height =
-      GetBrowserView()->GetTabStripVisible()
-          ? GetBoundsForTabStripRegion(
-                GetBrowserView()->tab_strip_view()->GetMinimumSize())
-                .bottom()
-          : TitlebarHeight(false);
+      std::max(TitlebarHeight(false),
+               TopAreaHeight(false) + info.tabstrip_preferred_height);
   const gfx::Rect titlebar_rect = gfx::ToEnclosingRect(
       gfx::RectF(0, y, width() * scale, titlebar_height * scale - y));
   // Paint the titlebar first so we have a background if an area isn't covered

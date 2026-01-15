@@ -142,14 +142,10 @@ class TabGroupsApiBrowserTest : public ExtensionBrowserTest {
 
   content::WebContents* web_contents(int index) { return web_contents_[index]; }
 
+  // Returns whether tab groups are supported by the test's main window.
+  // Used as a utility function to reduce line wrapping.
   bool SupportsTabGroups() {
-#if BUILDFLAG(IS_ANDROID)
-    // Android doesn't support things like platform apps that have tab strips
-    // that don't support tab groups, so tab groups are always supported.
-    return true;
-#else
-    return browser()->tab_strip_model()->SupportsTabGroups();
-#endif
+    return ExtensionTabUtil::SupportsTabGroups(browser_window_interface());
   }
 
   // Creates a tab group out of existing tabs at `tab_indices`. CHECKs that the
@@ -834,13 +830,14 @@ IN_PROC_BROWSER_TEST_F(TabGroupsApiBrowserTest,
 
   tab_strip_model->CloseAllTabs();
 }
+#endif  // BUILDFLAG(ENABLE_EXTENSIONS)
 
 IN_PROC_BROWSER_TEST_F(TabGroupsApiBrowserTest, TabGroupsOnCreated) {
-  ASSERT_TRUE(browser()->tab_strip_model()->SupportsTabGroups());
+  ASSERT_TRUE(SupportsTabGroups());
 
   TestEventRouterObserver event_observer(EventRouter::Get(profile()));
 
-  browser()->tab_strip_model()->AddToNewGroup({1, 2, 3});
+  CreateTabGroup({1, 2, 3});
 
   EXPECT_EQ(2u, event_observer.events().size());
   EXPECT_TRUE(
@@ -849,6 +846,8 @@ IN_PROC_BROWSER_TEST_F(TabGroupsApiBrowserTest, TabGroupsOnCreated) {
       event_observer.events().contains(api::tab_groups::OnUpdated::kEventName));
 }
 
+// TODO(crbug.com/405219902): Port to desktop Android.
+#if BUILDFLAG(ENABLE_EXTENSIONS)
 IN_PROC_BROWSER_TEST_F(TabGroupsApiBrowserTest, TabGroupsOnUpdated) {
   ASSERT_TRUE(browser()->tab_strip_model()->SupportsTabGroups());
 

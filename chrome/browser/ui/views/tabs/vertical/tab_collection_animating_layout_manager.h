@@ -25,6 +25,7 @@ class TabCollectionAnimatingLayoutManager : public views::LayoutManagerBase,
   class Delegate {
    public:
     virtual bool IsViewDragging(const views::View& child_view) const = 0;
+    virtual void OnAnimationEnded() {}
 
    protected:
     virtual ~Delegate() = default;
@@ -60,11 +61,10 @@ class TabCollectionAnimatingLayoutManager : public views::LayoutManagerBase,
   // asynchronously.
   void AnimateAndDestroyChildView(views::View* child_view);
 
-  // Handles removing `child_view` from the `host_view()` for reparenting views
-  // to other TabCollectionNode views. Records relevant metadata used for
-  // animating move operations.
-  std::unique_ptr<views::View> RemoveChildViewForReparenting(
-      views::View* child_view);
+  // Animates and reparents `view_to_reparent` from `previous_bounds_in_screen`
+  // to target bounds in `host_view()`.
+  void AnimateAndReparentView(std::unique_ptr<views::View> view_to_reparent,
+                              const gfx::Rect& previous_bounds_in_screen);
 
   const views::ProposedLayout& target_layout() const { return target_layout_; }
 

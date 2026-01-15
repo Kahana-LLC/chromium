@@ -10,57 +10,22 @@
 #include "base/test/scoped_feature_list.h"
 #include "base/test/test_future.h"
 #include "chrome/browser/legion/private_ai_service_factory.h"
+#include "chrome/browser/legion/test_private_ai_service.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_test_util.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
 #include "chrome/browser/signin/identity_test_environment_profile_adaptor.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "components/legion/features.h"
-#include "components/legion/phosphor/mock_blind_sign_auth.h"
 #include "components/legion/phosphor/token_manager.h"
 #include "components/signin/public/identity_manager/identity_test_environment.h"
 #include "content/public/test/browser_test.h"
+#include "content/public/test/test_utils.h"
 #include "net/third_party/quiche/src/quiche/blind_sign_auth/proto/spend_token_data.pb.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "third_party/abseil-cpp/absl/time/time.h"
 
 namespace legion {
-
-namespace {
-
-class TestPrivateAiService : public legion::PrivateAiService {
- public:
-  TestPrivateAiService(signin::IdentityManager* identity_manager,
-                       PrefService* pref_service,
-                       Profile* profile)
-      : legion::PrivateAiService(identity_manager, pref_service, profile) {}
-
-  ~TestPrivateAiService() override = default;
-
-  // KeyedService override:
-  void Shutdown() override {
-    // Clear the raw pointer BEFORE calling the base Shutdown.
-    // Base Shutdown destroys TokenManager -> TokenFetcher -> MockBlindSignAuth.
-    bsa_ = nullptr;
-    legion::PrivateAiService::Shutdown();
-  }
-
-  // phosphor::TokenFetcherImpl::Delegate override:
-  std::unique_ptr<quiche::BlindSignAuthInterface> CreateBlindSignAuth(
-      std::unique_ptr<network::PendingSharedURLLoaderFactory>
-          pending_url_loader_factory) override {
-    auto bsa = std::make_unique<legion::phosphor::MockBlindSignAuth>();
-    bsa_ = bsa.get();
-    return bsa;
-  }
-
-  legion::phosphor::MockBlindSignAuth* bsa() { return bsa_; }
-
- private:
-  raw_ptr<legion::phosphor::MockBlindSignAuth> bsa_ = nullptr;
-};
-
-}  // namespace
 
 class PrivateAiServiceBrowserTest : public InProcessBrowserTest {
  public:
@@ -77,9 +42,12 @@ class PrivateAiServiceBrowserTest : public InProcessBrowserTest {
         context, base::BindRepeating([](content::BrowserContext* context)
                                          -> std::unique_ptr<KeyedService> {
           Profile* profile = Profile::FromBrowserContext(context);
+          auto test_bsa_factory = std::make_unique<TestBlindSignAuthFactory>();
+          auto* test_bsa_factory_ptr = test_bsa_factory.get();
           return std::make_unique<TestPrivateAiService>(
               IdentityManagerFactory::GetForProfile(profile),
-              profile->GetPrefs(), profile);
+              profile->GetPrefs(), profile, test_bsa_factory_ptr,
+              std::move(test_bsa_factory));
         }));
   }
 
@@ -92,7 +60,7 @@ class PrivateAiServiceBrowserTest : public InProcessBrowserTest {
   }
 
   void TearDownOnMainThread() override {
-    PrivateAiServiceFactory::GetForProfile(profile())->Shutdown();
+    PrivateAiServiceFactory::GetInstance()->SetTestingFactory(profile(), {});
 
     identity_test_env_adaptor_.reset();
     InProcessBrowserTest::TearDownOnMainThread();
@@ -114,8 +82,7 @@ class PrivateAiServiceBrowserTest : public InProcessBrowserTest {
 
 IN_PROC_BROWSER_TEST_F(PrivateAiServiceBrowserTest,
                        IsTokenFetchEnabledAfterAccountChanges) {
-  legion::PrivateAiService* host =
-      PrivateAiServiceFactory::GetForProfile(profile());
+  PrivateAiService* host = PrivateAiServiceFactory::GetForProfile(profile());
   ASSERT_TRUE(host);
 
   // No account, so token fetch should be disabled.
@@ -140,12 +107,13 @@ IN_PROC_BROWSER_TEST_F(PrivateAiServiceBrowserTest,
 }
 
 IN_PROC_BROWSER_TEST_F(PrivateAiServiceBrowserTest, GetAuthToken) {
-  TestPrivateAiService* host = static_cast<TestPrivateAiService*>(
-      PrivateAiServiceFactory::GetForProfile(profile()));
-  ASSERT_TRUE(host);
+  TestPrivateAiService* test_private_ai_service =
+      static_cast<TestPrivateAiService*>(
+          PrivateAiServiceFactory::GetForProfile(profile()));
+  ASSERT_TRUE(test_private_ai_service);
 
-  auto* token_manager = host->GetTokenManager();
-  ASSERT_TRUE(host->bsa());
+  auto* token_manager = test_private_ai_service->GetTokenManager();
+  ASSERT_TRUE(test_private_ai_service->mock_bsa());
 
   identity_test_env()->MakePrimaryAccountAvailable("test@example.com",
                                                    signin::ConsentLevel::kSync);
@@ -161,12 +129,13 @@ IN_PROC_BROWSER_TEST_F(PrivateAiServiceBrowserTest, GetAuthToken) {
   bsa_token.expiration =
       absl::FromTimeT((base::Time::Now() + base::Hours(1)).ToTimeT());
   tokens.push_back(std::move(bsa_token));
-  host->bsa()->set_tokens(std::move(tokens));
+  test_private_ai_service->mock_bsa()->set_tokens(std::move(tokens));
 
   base::RunLoop run_loop;
   // This quit closure is thread-safe and will signal the main loop to wake up
   // after the background thread has processed the mock call.
-  host->bsa()->set_on_get_tokens_callback(run_loop.QuitClosure());
+  test_private_ai_service->mock_bsa()->set_on_get_tokens_callback(
+      run_loop.QuitClosure());
 
   // First call returns null and starts the fetch.
   std::optional<legion::phosphor::BlindSignedAuthToken> token =

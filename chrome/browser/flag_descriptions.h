@@ -440,6 +440,17 @@ inline constexpr char kDbdRevampDesktopDescription[] =
     "UI changes and removal of the bulk password deletion option from the "
     "dialog.";
 
+inline constexpr char kDefaultBrowserChangedOsNotificationDescription[] =
+    "Enables the framework to show OS Notification when Chrome is no longer "
+    "the default browser.";
+inline constexpr char kDefaultBrowserChangedOsNotificationName[] =
+    "Default Browser Changed OS Notification";
+
+inline constexpr char kDefaultBrowserFrameworkDescription[] =
+    "Enables the default browser framework.";
+inline constexpr char kDefaultBrowserFrameworkName[] =
+    "Default Browser Framework";
+
 inline constexpr char kDefaultSearchEnginePrewarmName[] =
     "Default search engine prewarm";
 inline constexpr char kDefaultSearchEnginePrewarmDescription[] =
@@ -1966,10 +1977,6 @@ inline constexpr char kEnableWebAppPredictableAppUpdatingDescription[] =
     "Enables PWA updates to be more predictable by considering changes in icon "
     "urls specified in the manifest";
 
-inline constexpr char kEnableZeroCopyTabCaptureName[] = "Zero-copy tab capture";
-inline constexpr char kEnableZeroCopyTabCaptureDescription[] =
-    "Enable zero-copy content tab for getDisplayMedia() APIs.";
-
 inline constexpr char kExcludePipFromScreenCaptureName[] =
     "Exclude Picture-in-Picture windows from screen capture";
 inline constexpr char kExcludePipFromScreenCaptureDescription[] =
@@ -2242,12 +2249,6 @@ inline constexpr char
     kInitializePoliciesForSignedInUserInNewEntryPointsDescription[] =
         "Enables policy initialization for signed in users in new entry "
         "points.";
-
-inline constexpr char kGlobalMediaControlsUpdatedUIName[] =
-    "Global Media Controls updated UI";
-inline constexpr char kGlobalMediaControlsUpdatedUIDescription[] =
-    "Show updated UI for Global Media Controls in all the non-CrOS desktop "
-    "platforms.";
 
 inline constexpr char kGoogleOneOfferFilesBannerName[] =
     "Google One offer Files banner";
@@ -4787,12 +4788,6 @@ inline constexpr char kAndroidAudioDeviceListenerDescription[] =
     "Enables listening to audio device list change events, allowing web apps "
     "to react to audio devices being connected and disconnected.";
 
-inline constexpr char kAndroidAutofillUpdateContextForWebContentsName[] =
-    "Android Autofill updates context for WebContents";
-inline constexpr char kAndroidAutofillUpdateContextForWebContentsDescription[] =
-    "When enabled, the Autofill provider is updated whenever the context of "
-    "the WebContents changes.";
-
 inline constexpr char kAndroidAutoMintedTWAName[] = "Auto-minted TWA";
 inline constexpr char kAndroidAutoMintedTWADescription[] =
     "Installs Web apps locally as an auto-minted Trusted Web Activity-based "
@@ -5401,10 +5396,6 @@ inline constexpr char kHomeModulePrefRefactorDescription[] =
     "Use UserPrefs for home module customization settings (for the "
     "NTP).";
 
-inline constexpr char kHubBackButtonName[] = "Hub back button";
-inline constexpr char kHubBackButtonDescription[] =
-    "Enables a back button on the hub for large screen devices.";
-
 inline constexpr char kMagicStackAndroidName[] = "Magic Stack Android";
 inline constexpr char kMagicStackAndroidDescription[] =
     "Show a magic stack which contains a list of modules on Start surface and "
@@ -5537,11 +5528,6 @@ inline constexpr char kProtectedTabsAndroidDescription[] =
 inline constexpr char kReadAloudName[] = "Read Aloud";
 inline constexpr char kReadAloudDescription[] =
     "Controls the Read Aloud feature";
-
-inline constexpr char kReadAloudInCCTName[] = "Read Aloud entrypoint in CCT";
-inline constexpr char kReadAloudInCCTDescription[] =
-    "Controls the Read Aloud entrypoint in the overflow menu for CCT";
-
 inline constexpr char kReaderModeDistillInAppName[] =
     "Reader Mode distillation in app";
 inline constexpr char kReaderModeDistillInAppDescription[] =
@@ -7214,12 +7200,6 @@ inline constexpr char kAccessibilityManifestV3GoogleTtsName[] =
     "Changes accessibility extension Google TTS manifest v2 to v3.";
 inline constexpr char kAccessibilityManifestV3GoogleTtsDescription[] =
     "Experimental migration of Google TTS from extension manifest v2 to v3.";
-
-inline constexpr char kAccessibilityManifestV3SelectToSpeakName[] =
-    "Changes accessibility extension Select to Speak manifest v2 to v3.";
-inline constexpr char kAccessibilityManifestV3SelectToSpeakDescription[] =
-    "Experimental migration of Select to Speak from extension manifest "
-    "v2 to v3.";
 
 inline constexpr char kAccessibilityManifestV3SwitchAccessName[] =
     "Changes accessibility extension Switch Access manifest v2 to v3.";

@@ -14,8 +14,11 @@ import android.os.Handler;
 import android.text.Editable;
 import android.text.TextUtils;
 import android.text.TextWatcher;
+import android.transition.AutoTransition;
+import android.transition.TransitionManager;
 import android.view.Gravity;
 import android.view.LayoutInflater;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.EditText;
@@ -250,18 +253,20 @@ public class SettingsSearchCoordinator implements MultiColumnSettings.Observer {
                 () -> {
                     searchBox.setVisibility(isShowingMainSettings() ? View.VISIBLE : View.GONE);
                 });
+
+        // Controls search UI visibility in single-column mode.
         mMultiColumnSettings
                 .getSlidingPaneLayout()
                 .addPanelSlideListener(
                         new SlidingPaneLayout.SimplePanelSlideListener() {
                             @Override
                             public void onPanelOpened(View panel) {
-                                searchBox.setVisibility(View.GONE);
+                                showUiInSingleColumn(searchBox, /* show= */ false);
                             }
 
                             @Override
                             public void onPanelClosed(View panel) {
-                                searchBox.setVisibility(View.VISIBLE);
+                                showUiInSingleColumn(searchBox, /* show= */ true);
                             }
                         });
 
@@ -276,6 +281,14 @@ public class SettingsSearchCoordinator implements MultiColumnSettings.Observer {
                             }
                         },
                         false);
+    }
+
+    private void showUiInSingleColumn(View searchBox, boolean show) {
+        if (mUseMultiColumn) return;
+
+        TransitionManager.beginDelayedTransition(
+                (ViewGroup) searchBox.getParent(), new AutoTransition());
+        searchBox.setVisibility(show ? View.VISIBLE : View.GONE);
     }
 
     private boolean isShowingMainSettings() {
@@ -594,6 +607,8 @@ public class SettingsSearchCoordinator implements MultiColumnSettings.Observer {
 
     /** Show/hide search bar UI. */
     public void showSearchBar(boolean show) {
+        if (!mUseMultiColumn) return;
+
         View searchBox = mActivity.findViewById(R.id.search_box);
         searchBox.setVisibility(show ? View.VISIBLE : View.GONE);
     }
@@ -923,6 +938,8 @@ public class SettingsSearchCoordinator implements MultiColumnSettings.Observer {
 
     private void scrollAndHighlightDynamicPref(PreferenceFragmentCompat fragment, String key) {
         RecyclerView listView = fragment.getListView();
+        if (listView == null) return;
+
         var listAdapter = (PreferencePositionCallback) listView.getAdapter();
         int pos = assumeNonNull(listAdapter).getPreferenceAdapterPosition(key);
         var viewHolder = listView.findViewHolderForAdapterPosition(pos);
@@ -961,6 +978,18 @@ public class SettingsSearchCoordinator implements MultiColumnSettings.Observer {
                         }
                     }
                 });
+        listView.addOnItemTouchListener(
+                new RecyclerView.SimpleOnItemTouchListener() {
+                    @Override
+                    public boolean onInterceptTouchEvent(RecyclerView recyclerView, MotionEvent e) {
+                        if (mTurnOffHighlight != null) {
+                            mTurnOffHighlight.run();
+                            mTurnOffHighlight = null;
+                            listView.removeOnItemTouchListener(this);
+                        }
+                        return false;
+                    }
+                });
     }
 
     private HighlightParams getHighlightParams(PreferenceFragmentCompat fragment, int pos) {
@@ -982,5 +1011,6 @@ public class SettingsSearchCoordinator implements MultiColumnSettings.Observer {
         if (mIndexData != null) {
             SettingsIndexData.reset();
         }
+        mHandler.removeCallbacksAndMessages(null);
     }
 }

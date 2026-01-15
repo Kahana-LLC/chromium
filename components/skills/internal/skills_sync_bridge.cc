@@ -17,6 +17,7 @@
 #include "components/sync/model/metadata_batch.h"
 #include "components/sync/model/metadata_change_list.h"
 #include "components/sync/model/model_error.h"
+#include "components/sync/model/mutable_data_batch.h"
 #include "components/sync/protocol/entity_data.h"
 #include "components/sync/protocol/entity_specifics.pb.h"
 #include "components/sync/protocol/skill_specifics.pb.h"
@@ -101,14 +102,33 @@ std::optional<syncer::ModelError> SkillsSyncBridge::ApplyIncrementalSyncChanges(
 std::unique_ptr<syncer::DataBatch> SkillsSyncBridge::GetDataForCommit(
     StorageKeyList storage_keys) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  NOTIMPLEMENTED();
-  return nullptr;
+  auto batch = std::make_unique<syncer::MutableDataBatch>();
+
+  for (const std::string& storage_key : storage_keys) {
+    const Skill* skill = skills_service_->GetSkillById(storage_key);
+    if (!skill) {
+      // Skill was deleted locally.
+      continue;
+    }
+
+    batch->Put(storage_key,
+               std::make_unique<syncer::EntityData>(
+                   SpecificsToEntityData(SkillToSpecifics(*skill))));
+  }
+
+  return batch;
 }
 
 std::unique_ptr<syncer::DataBatch> SkillsSyncBridge::GetAllDataForDebugging() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  NOTIMPLEMENTED();
-  return nullptr;
+  auto batch = std::make_unique<syncer::MutableDataBatch>();
+
+  for (const std::unique_ptr<Skill>& skill : skills_service_->GetSkills()) {
+    batch->Put(skill->id, std::make_unique<syncer::EntityData>(
+                              SpecificsToEntityData(SkillToSpecifics(*skill))));
+  }
+
+  return batch;
 }
 
 std::string SkillsSyncBridge::GetClientTag(
@@ -133,8 +153,31 @@ sync_pb::EntitySpecifics
 SkillsSyncBridge::TrimAllSupportedFieldsFromRemoteSpecifics(
     const sync_pb::EntitySpecifics& entity_specifics) const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  NOTIMPLEMENTED();
-  return {};
+
+  // LINT.IfChange(TrimAllSupportedFieldsFromRemoteSpecifics)
+  sync_pb::SkillSpecifics trimmed_specifics = entity_specifics.skill();
+  trimmed_specifics.clear_guid();
+  trimmed_specifics.clear_name();
+  trimmed_specifics.clear_icon();
+  trimmed_specifics.clear_creation_time_windows_epoch_micros();
+  trimmed_specifics.clear_last_update_time_windows_epoch_micros();
+  trimmed_specifics.clear_schema_version();
+
+  if (trimmed_specifics.has_simple_skill()) {
+    trimmed_specifics.mutable_simple_skill()->clear_prompt();
+
+    if (trimmed_specifics.simple_skill().ByteSizeLong() == 0) {
+      trimmed_specifics.clear_simple_skill();
+    }
+  }
+  // LINT.ThenChange(//components/sync/protocol/skill_specifics.proto:SkillSpecifics)
+
+  sync_pb::EntitySpecifics trimmed_entity_specifics;
+  if (trimmed_specifics.ByteSizeLong() > 0) {
+    *trimmed_entity_specifics.mutable_skill() = std::move(trimmed_specifics);
+  }
+
+  return trimmed_entity_specifics;
 }
 
 bool SkillsSyncBridge::IsEntityDataValid(

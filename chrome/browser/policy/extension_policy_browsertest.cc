@@ -648,7 +648,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionPolicyTest, ExtensionInstallAllowlist) {
   EXPECT_FALSE(InstallExtension(kSimpleWithIconCrxName));
   EXPECT_FALSE(registry->GetExtensionById(
       kSimpleWithIconCrxId, extensions::ExtensionRegistry::EVERYTHING));
-  // "good.crx" has a allowlist exception.
+  // "good.crx" has an allowlist exception.
   const extensions::Extension* good = InstallExtension(kGoodCrxName);
   ASSERT_TRUE(good);
   EXPECT_EQ(kGoodCrxId, good->id());
@@ -1880,11 +1880,10 @@ IN_PROC_BROWSER_TEST_F(ExtensionPolicyTest,
   // should be no crash.
 }
 
+// Verifies that extensions that are recommended-installed by policies are
+// installed, can be disabled but not uninstalled.
 IN_PROC_BROWSER_TEST_F(ExtensionPolicyTest,
                        ExtensionRecommendedInstallationMode) {
-  // Verifies that extensions that are recommended-installed by policies are
-  // installed, can be disabled but not uninstalled.
-
   // Recommended-installed extensions should auto-enable on install without a
   // user prompt.
   extensions::FeatureSwitch::ScopedOverride external_prompt_override(
@@ -1961,7 +1960,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionPolicyTest, ExtensionAllowedTypes) {
   EXPECT_FALSE(registry->GetExtensionById(
       kGoodCrxId, extensions::ExtensionRegistry::EVERYTHING));
 
-  // "hosted_app.crx" is of a allowlisted type.
+  // "hosted_app.crx" is of an allowlisted type.
   const extensions::Extension* hosted_app = InstallExtension(kHostedAppCrxName);
   ASSERT_TRUE(hosted_app);
   EXPECT_EQ(kHostedAppCrxId, hosted_app->id());
