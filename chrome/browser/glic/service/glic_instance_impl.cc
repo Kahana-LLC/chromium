@@ -18,6 +18,7 @@
 #include "chrome/browser/contextual_cueing/contextual_cueing_service_factory.h"
 #include "chrome/browser/glic/common/future_browser_features.h"
 #include "chrome/browser/glic/fre/glic_fre_controller.h"
+#include "chrome/browser/glic/glic_metrics.h"
 #include "chrome/browser/glic/glic_pref_names.h"
 #include "chrome/browser/glic/glic_zero_state_suggestions_manager.h"
 #include "chrome/browser/glic/host/context/glic_active_pinned_focused_tab_manager.h"
@@ -219,12 +220,7 @@ GlicInstanceImpl::GlicInstanceImpl(
       id_(instance_id),
       host_(profile_, this, this, this),
       pinned_tab_manager_(
-#if !BUILDFLAG(IS_ANDROID)
-          std::make_unique<GlicPinnedTabManagerImpl>(profile, this, metrics)
-#else
-          std::make_unique<GlicEmptyPinnedTabManager>()
-#endif
-              ),
+          std::make_unique<GlicPinnedTabManagerImpl>(profile, this, metrics)),
 #if !BUILDFLAG(IS_ANDROID)
       detached_mode_sharing_manager_(
           std::make_unique<GlicPinAwareDetachedFocusedTabManager>(
@@ -255,12 +251,9 @@ GlicInstanceImpl::GlicInstanceImpl(
       instance_metrics_(&sharing_manager_),
       zero_state_suggestions_manager_(
           std::make_unique<GlicZeroStateSuggestionsManager>(
-#if !BUILDFLAG(IS_ANDROID)
               &sharing_manager_,
               this,
-              contextual_cueing_service
-#endif
-              )),
+              contextual_cueing_service)),
       actor_task_manager_(std::make_unique<GlicActorTaskManager>(profile)),
       last_activation_timestamp_(base::Time::Now()),
       last_deactivation_timestamp_(base::TimeTicks::Now()) {
@@ -394,6 +387,9 @@ void GlicInstanceImpl::Close(EmbedderKey key, const CloseOptions& options) {
   if (!embedder) {
     return;
   }
+  if (base::FeatureList::IsEnabled(features::kGlicTrustFirstOnboarding)) {
+    service_->metrics()->OnTrustFirstOnboardingDismissed();
+  }
   instance_metrics_.OnClose();
   embedder->Close(options);
 }
@@ -402,6 +398,11 @@ bool GlicInstanceImpl::Toggle(ShowOptions&& options,
                               bool prevent_close,
                               glic::mojom::InvocationSource source,
                               std::optional<std::string> prompt_suggestion) {
+  if (base::FeatureList::IsEnabled(features::kGlicTrustFirstOnboarding) &&
+      !service_->enabling().HasConsentedForProfile(profile_)) {
+    service_->metrics()->OnTrustFirstOnboardingShown();
+  }
+
   instance_metrics_.OnToggle(source, options, IsShowing());
   EmbedderKey key = GetEmbedderKey(options);
   // Close instance on toggle when it has an active embedder.

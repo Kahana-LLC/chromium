@@ -41,6 +41,7 @@
 #include "content/public/browser/render_widget_host_view.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/url_constants.h"
+#include "third_party/omnibox_proto/searchbox_config.pb.h"
 #include "ui/base/webui/web_ui_util.h"
 #include "ui/base/window_open_disposition.h"
 #include "ui/base/window_open_disposition_utils.h"
@@ -177,11 +178,17 @@ void ContextualSearchboxHandler::GetRecentTabs(GetRecentTabsCallback callback) {
     };
     std::vector<TabTime> tab_times;
     for (tabs::TabInterface* tab : *tab_strip_model) {
-      tab_times.push_back({
-          .tab = tab,
-          .time = std::max(tab->GetContents()->GetLastActiveTimeTicks(),
-                           tab->GetContents()->GetLastInteractionTimeTicks()),
-      });
+      content::WebContents* web_contents = tab->GetContents();
+      const GURL& url = web_contents->GetLastCommittedURL();
+      // Skip tabs that are still loading, and skip webui (internal pages).
+      if (url.is_valid() && !url.SchemeIs(content::kChromeUIScheme) &&
+          !url.SchemeIs(content::kChromeUIUntrustedScheme)) {
+        tab_times.push_back({
+            .tab = tab,
+            .time = std::max(web_contents->GetLastActiveTimeTicks(),
+                             web_contents->GetLastInteractionTimeTicks()),
+        });
+      }
     }
 
     // Sort the tabs by last active time, and truncate to the maximum number of
@@ -199,16 +206,7 @@ void ContextualSearchboxHandler::GetRecentTabs(GetRecentTabsCallback callback) {
     std::vector<searchbox::mojom::TabInfoPtr> tabs;
     for (const TabTime& tab_time : tab_times) {
       content::WebContents* web_contents = tab_time.tab->GetContents();
-      const auto& last_committed_url = web_contents->GetLastCommittedURL();
-      // Skip tabs that are still loading, and skip webui.
-      const bool is_invalid_url = !last_committed_url.is_valid();
-      const bool is_internal_page =
-          last_committed_url.SchemeIs(content::kChromeUIScheme) ||
-          last_committed_url.SchemeIs(content::kChromeUIUntrustedScheme);
-
-      if (is_invalid_url || is_internal_page) {
-        continue;
-      }
+      const GURL& last_committed_url = web_contents->GetLastCommittedURL();
 
       auto tab_data = searchbox::mojom::TabInfo::New();
       tab_data->tab_id = tab_time.tab->GetHandle().raw_value();
@@ -309,7 +307,13 @@ ContextualSearchboxHandler::ContextualSearchboxHandler(
                        std::move(controller)),
       get_session_callback_(std::move(get_session_callback)) {
   // This implicitly also initializes the file upload status observer.
-  GetContextualSessionHandle();
+  if (auto* session_handle = GetContextualSessionHandle()) {
+    // TODO(crbug.com/476105004): Get `SearchboxConfig` from
+    // `AIMEligibilityService`
+    //   and pass it through here.
+    input_state_model_ = std::make_unique<contextual_search::InputStateModel>(
+        *session_handle, omnibox::SearchboxConfig());
+  }
 
   auto* browser_window_interface =
       webui::GetBrowserWindowInterface(web_contents_);
@@ -648,18 +652,6 @@ void ContextualSearchboxHandler::OnFileUploadStatusChanged(
             ? std::make_optional(contextual_search::ToMojom(error_type.value()))
             : std::nullopt);
   }
-}
-
-std::string ContextualSearchboxHandler::AutocompleteIconToResourceName(
-    const gfx::VectorIcon& icon) const {
-  // The default icon for contextual suggestions is the subdirectory arrow right
-  // icon. For the Lens composebox and realbox, we want to stay consistent with
-  // the search loupe instead.
-  if (icon.name == omnibox::kSubdirectoryArrowRightIcon.name) {
-    return searchbox_internal::kSearchIconResourceName;
-  }
-
-  return SearchboxHandler::AutocompleteIconToResourceName(icon);
 }
 
 void ContextualSearchboxHandler::ComputeAndOpenQueryUrl(

@@ -65,12 +65,22 @@ class TransitiveObservableSupplier<
     public void removeObserver(Callback<ChildT> obs) {
         super.removeObserver(obs);
         if (!super.hasObservers()) {
-            mParentSupplier.removeObserver(mOnParentSupplierChangeCallback);
-            if (mCurrentTargetSupplier != null) {
-                mCurrentTargetSupplier.removeObserver(mOnTargetSupplierChangeCallback);
-                mCurrentTargetSupplier = null;
-            }
+            deactivate();
         }
+    }
+
+    private void deactivate() {
+        mParentSupplier.removeObserver(mOnParentSupplierChangeCallback);
+        if (mCurrentTargetSupplier != null) {
+            mCurrentTargetSupplier.removeObserver(mOnTargetSupplierChangeCallback);
+            mCurrentTargetSupplier = null;
+        }
+    }
+
+    @Override
+    public void destroy() {
+        super.destroy();
+        deactivate();
     }
 
     @NullUnmarked // Needs to work where ChildT is non-null or nullable.

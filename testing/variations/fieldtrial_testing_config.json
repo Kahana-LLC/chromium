@@ -787,6 +787,21 @@
             ]
         }
     ],
+    "AndroidCaptureKeyEvents": [
+        {
+            "platforms": [
+                "android"
+            ],
+            "experiments": [
+                {
+                    "name": "Enabled",
+                    "enable_features": [
+                        "AndroidCaptureKeyEvents"
+                    ]
+                }
+            ]
+        }
+    ],
     "AndroidCaretBrowsing": [
         {
             "platforms": [
@@ -7123,6 +7138,21 @@
             ]
         }
     ],
+    "ConsistentLogoDoodleHeight": [
+        {
+            "platforms": [
+                "ios"
+            ],
+            "experiments": [
+                {
+                    "name": "Enabled",
+                    "enable_features": [
+                        "ConsistentLogoDoodleHeight"
+                    ]
+                }
+            ]
+        }
+    ],
     "ContentVerifyJobUseJobVersionForHashing": [
         {
             "platforms": [
@@ -8936,7 +8966,8 @@
                 {
                     "name": "Enabled",
                     "enable_features": [
-                        "DevToolsAiPromptApi"
+                        "DevToolsAiPromptApi",
+                        "DevToolsConsoleInsightsTeasers"
                     ]
                 }
             ]
@@ -10210,24 +10241,6 @@
             ]
         }
     ],
-    "EnableSinglePageAppDataProtection": [
-        {
-            "platforms": [
-                "chromeos",
-                "linux",
-                "mac",
-                "windows"
-            ],
-            "experiments": [
-                {
-                    "name": "Enabled",
-                    "enable_features": [
-                        "EnableSinglePageAppDataProtection"
-                    ]
-                }
-            ]
-        }
-    ],
     "EnableTLS13EarlyData": [
         {
             "platforms": [
@@ -11429,6 +11442,23 @@
                     "name": "Enabled_Dogfood",
                     "enable_features": [
                         "GlicActOnWebCapabilityForManagedTrials"
+                    ]
+                }
+            ]
+        }
+    ],
+    "GlicActorObservationDelayExcludeAdFrameLoading": [
+        {
+            "platforms": [
+                "linux",
+                "mac",
+                "windows"
+            ],
+            "experiments": [
+                {
+                    "name": "Enabled",
+                    "enable_features": [
+                        "GlicActorObservationDelayExcludeAdFrameLoading"
                     ]
                 }
             ]
@@ -13345,6 +13375,21 @@
             ]
         }
     ],
+    "IOSCloseOtherTabs": [
+        {
+            "platforms": [
+                "ios"
+            ],
+            "experiments": [
+                {
+                    "name": "Enabled",
+                    "enable_features": [
+                        "CloseOtherTabs"
+                    ]
+                }
+            ]
+        }
+    ],
     "IOSConfirmationButtonSwapOrder": [
         {
             "platforms": [
@@ -13355,6 +13400,21 @@
                     "name": "Enabled",
                     "enable_features": [
                         "ConfirmationButtonSwapOrder"
+                    ]
+                }
+            ]
+        }
+    ],
+    "IOSCustomFileUploadMenu": [
+        {
+            "platforms": [
+                "ios"
+            ],
+            "experiments": [
+                {
+                    "name": "Enabled",
+                    "enable_features": [
+                        "IOSCustomFileUploadMenu"
                     ]
                 }
             ]
@@ -16096,16 +16156,19 @@
             ],
             "experiments": [
                 {
-                    "name": "Enabled",
-                    "enable_features": [
-                        "MediaIndicatorsAndroid"
-                    ]
-                },
-                {
                     "name": "EnabledWithEnhancedAudioResponsiveness",
                     "enable_features": [
                         "EnableAudioMonitoringOnAndroid",
                         "MediaIndicatorsAndroid"
+                    ]
+                },
+                {
+                    "name": "Enabled",
+                    "enable_features": [
+                        "MediaIndicatorsAndroid"
+                    ],
+                    "disable_features": [
+                        "EnableAudioMonitoringOnAndroid"
                     ]
                 }
             ]
@@ -16877,6 +16940,24 @@
                     "name": "Enabled",
                     "enable_features": [
                         "NoPreReadMainDllStartup"
+                    ]
+                }
+            ]
+        }
+    ],
+    "NoSynchronizedScrolling": [
+        {
+            "platforms": [
+                "chromeos",
+                "linux",
+                "mac",
+                "windows"
+            ],
+            "experiments": [
+                {
+                    "name": "Disabled",
+                    "disable_features": [
+                        "SynchronizedScrolling"
                     ]
                 }
             ]
@@ -24890,7 +24971,7 @@
             ]
         }
     ],
-    "StickyActivationTest": [
+    "StickyActivationTest2": [
         {
             "platforms": [
                 "android",
@@ -25328,9 +25409,16 @@
             ],
             "experiments": [
                 {
-                    "name": "Enabled",
+                    "name": "Enabled_TrustAnchorIDs",
                     "enable_features": [
                         "TLSTrustAnchorIDs"
+                    ]
+                },
+                {
+                    "name": "Enabled_VerifyMTCs",
+                    "enable_features": [
+                        "TLSTrustAnchorIDs",
+                        "VerifyMTCs"
                     ]
                 }
             ]
@@ -28505,6 +28593,21 @@
             ]
         }
     ],
+    "WebViewEnableApiCallUserActions": [
+        {
+            "platforms": [
+                "android_webview"
+            ],
+            "experiments": [
+                {
+                    "name": "Enabled",
+                    "enable_features": [
+                        "WebViewEnableApiCallUserActions"
+                    ]
+                }
+            ]
+        }
+    ],
     "WebViewFileSystemAccessDirectoryIterationBlocklistCheckReenable": [
         {
             "platforms": [
@@ -28560,6 +28663,21 @@
                     "name": "Enabled",
                     "enable_features": [
                         "WebViewMoveWorkToProviderInit"
+                    ]
+                }
+            ]
+        }
+    ],
+    "WebViewNewInvalidateHeuristicForTV": [
+        {
+            "platforms": [
+                "android_webview"
+            ],
+            "experiments": [
+                {
+                    "name": "Enabled",
+                    "enable_features": [
+                        "WebViewNewInvalidateHeuristicForTV"
                     ]
                 }
             ]
@@ -29087,21 +29205,6 @@
             ]
         }
     ],
-    "WinSboxStrictHandleChecks": [
-        {
-            "platforms": [
-                "windows"
-            ],
-            "experiments": [
-                {
-                    "name": "Enabled",
-                    "enable_features": [
-                        "WinSboxStrictHandleChecks"
-                    ]
-                }
-            ]
-        }
-    ],
     "WindowsSystemTracing": [
         {
             "platforms": [
@@ -29251,36 +29354,6 @@
                     "disable_features": [
                         "ZeroSuggestPrefetchDebouncing",
                         "ZeroSuggestPrefetchingOnWeb"
-                    ]
-                }
-            ]
-        }
-    ],
-    "ZeroCopyTabCaptureStudyMac": [
-        {
-            "platforms": [
-                "mac"
-            ],
-            "experiments": [
-                {
-                    "name": "Enabled_20220901",
-                    "enable_features": [
-                        "ZeroCopyTabCapture"
-                    ]
-                }
-            ]
-        }
-    ],
-    "ZeroCopyTabCaptureStudyWin": [
-        {
-            "platforms": [
-                "windows"
-            ],
-            "experiments": [
-                {
-                    "name": "Enabled_20230222",
-                    "enable_features": [
-                        "ZeroCopyTabCapture"
                     ]
                 }
             ]

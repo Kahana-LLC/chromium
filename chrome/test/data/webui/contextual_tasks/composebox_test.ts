@@ -11,6 +11,7 @@ import type {ComposeboxElement} from 'chrome://resources/cr_components/composebo
 import {PageCallbackRouter as ComposeboxPageCallbackRouter, PageHandlerRemote as ComposeboxPageHandlerRemote} from 'chrome://resources/cr_components/composebox/composebox.mojom-webui.js';
 import {ComposeboxProxyImpl} from 'chrome://resources/cr_components/composebox/composebox_proxy.js';
 import {FileUploadStatus} from 'chrome://resources/cr_components/composebox/composebox_query.mojom-webui.js';
+import type {ComposeboxFileCarouselElement} from 'chrome://resources/cr_components/composebox/file_carousel.js';
 import {WindowProxy} from 'chrome://resources/cr_components/composebox/window_proxy.js';
 import {GlowAnimationState} from 'chrome://resources/cr_components/search/constants.js';
 import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
@@ -42,6 +43,52 @@ function pressEnter(element: HTMLElement) {
     bubbles: true,
     composed: true,
   }));
+}
+
+async function dispatchDragAndDropEvent(dropZone: Element, files: File[]) {
+  if (!dropZone) {
+    throw new Error(
+        'dispatchDragAndDropEvent: #composebox drop zone not rendered.');
+  }
+
+  const enterEvent = createDragEvent('dragenter', files);
+  dropZone.dispatchEvent(enterEvent);
+  await microtasksFinished();
+
+  const overEvent = createDragEvent('dragover', files);
+  dropZone.dispatchEvent(overEvent);
+  await microtasksFinished();
+
+  const dropEvent = createDragEvent('drop', files);
+  dropZone.dispatchEvent(dropEvent);
+  await microtasksFinished();
+}
+
+// Creates drag event that is compatible across all OS's + w/bots
+function createDragEvent(type: string, files: File[]): DragEvent {
+  const event = new DragEvent(type, {
+    bubbles: true,
+    cancelable: true,
+    composed: true,
+  });
+
+  const mockDataTransfer = {
+    files: files,
+    types: ['Files', 'text/plain'],
+    items: files.map(f => ({
+                       kind: 'file',
+                       type: f.type,
+                       getAsFile: () => f,
+                     })),
+    effectAllowed: 'all',
+    dropEffect: 'copy',
+    getData: () => '',
+  };
+
+  Object.defineProperty(event, 'dataTransfer', {
+    value: mockDataTransfer,
+  });
+  return event;
 }
 
 function createAutocompleteMatch(modifiers: Partial<AutocompleteMatch> = {}):
@@ -820,21 +867,21 @@ suite('ContextualTasksComposeboxTest', () => {
 
   test('FocusUpdatesProperty', () => {
     mockTimer.install();
-    const composeboxElement = contextualTasksApp.$.composebox;
-    const innerComposebox = composeboxElement.$.composebox;
+    const composebox = contextualTasksApp.$.composebox;
+    const innerComposebox = composebox.$.composebox;
 
     innerComposebox.dispatchEvent(new CustomEvent('composebox-focus-in'));
     mockTimer.tick(0);  // Attribute reflection is async
-    assertTrue(composeboxElement.isComposeboxFocusedForTesting);
+    assertTrue(composebox.isComposeboxFocusedForTesting);
 
     innerComposebox.dispatchEvent(new CustomEvent('composebox-focus-out'));
-    assertTrue(!composeboxElement.isComposeboxFocusedForTesting);
+    assertTrue(!composebox.isComposeboxFocusedForTesting);
   });
 
   test('ResizeUpdatesHeight', () => {
     mockTimer.install();
-    const composeboxElement = contextualTasksApp.$.composebox;
-    const innerComposebox = composeboxElement.$.composebox;
+    const composebox = contextualTasksApp.$.composebox;
+    const innerComposebox = composebox.$.composebox;
 
 
     innerComposebox.style.display = 'block';
@@ -850,7 +897,7 @@ suite('ContextualTasksComposeboxTest', () => {
     MockResizeObserver.instances.forEach(obs => obs.trigger());
     mockTimer.tick(100);
 
-    const height1 = composeboxElement.composeboxHeightForTesting;
+    const height1 = composebox.composeboxHeightForTesting;
     assertTrue(typeof height1 === 'number');
     assertTrue(height1 > 0, `height1 should be > 0, but is ${height1}`);
 
@@ -866,7 +913,7 @@ suite('ContextualTasksComposeboxTest', () => {
     MockResizeObserver.instances.forEach(obs => obs.trigger());
     mockTimer.tick(100);
 
-    const height2 = composeboxElement.composeboxHeightForTesting;
+    const height2 = composebox.composeboxHeightForTesting;
     assertTrue(typeof height2 === 'number');
     assertTrue(
         height1 !== height2, `Height should change: ${height1} vs ${height2}`);
@@ -923,8 +970,8 @@ suite('ContextualTasksComposeboxTest', () => {
       isOnboardingTooltipDismissCountBelowCap: true,
       composeboxShowOnboardingTooltipSessionImpressionCap: 10,
     });
-    (composeboxElement as any).numberOfTimesTooltipShown_ = 0;
-    (composeboxElement as any).userDismissedTooltip_ = false;
+    composeboxElement.numberOfTimesTooltipShownForTesting = 0;
+    composeboxElement.userDismissedTooltipForTesting = false;
 
     // Simulate active tab chip token presence
     const innerComposebox = composeboxElement.$.composebox;
@@ -932,7 +979,7 @@ suite('ContextualTasksComposeboxTest', () => {
     innerComposebox.getAutomaticActiveTabChipElement = () =>
         document.createElement('div');
 
-    (composeboxElement as any).updateTooltipVisibility_();
+    composeboxElement.updateTooltipVisibilityForTesting();
     assertTrue(tooltip.shouldShow);
 
     // Resize event
@@ -946,6 +993,176 @@ suite('ContextualTasksComposeboxTest', () => {
     // Tooltip should still be shown and position updated (implicitly via resize
     // observer or logic)
     assertTrue(tooltip.shouldShow);
+  });
+
+  test('TooltipImpressionIncrementsAfterDelay', () => {
+    mockTimer.install();
+    const composeboxElement = contextualTasksApp.$.composebox;
+    const tooltip = composeboxElement.$.onboardingTooltip;
+
+    // Force show tooltip with delay.
+    loadTimeData.overrideValues({
+      showOnboardingTooltip: true,
+      isOnboardingTooltipDismissCountBelowCap: true,
+      composeboxShowOnboardingTooltipSessionImpressionCap: 10,
+      composeboxShowOnboardingTooltipImpressionDelay: 3000,
+    });
+    composeboxElement.numberOfTimesTooltipShownForTesting = 0;
+    composeboxElement.userDismissedTooltipForTesting = false;
+
+    const innerComposebox = composeboxElement.$.composebox;
+    innerComposebox.getHasAutomaticActiveTabChipToken = () => true;
+    innerComposebox.getAutomaticActiveTabChipElement = () =>
+        document.createElement('div');
+
+    // Trigger update.
+    composeboxElement.updateTooltipVisibilityForTesting();
+    assertTrue(tooltip.shouldShow);
+
+    // Should not have incremented yet.
+    assertEquals(0, composeboxElement.numberOfTimesTooltipShownForTesting);
+
+    // Tick almost to the end.
+    mockTimer.tick(2999);
+    assertEquals(0, composeboxElement.numberOfTimesTooltipShownForTesting);
+
+    // Tick past the delay.
+    mockTimer.tick(1);
+    assertEquals(1, composeboxElement.numberOfTimesTooltipShownForTesting);
+  });
+
+  test('TooltipImpressionTimerResetsOnHide', () => {
+    mockTimer.install();
+    const composeboxElement = contextualTasksApp.$.composebox;
+    const tooltip = composeboxElement.$.onboardingTooltip;
+
+    loadTimeData.overrideValues({
+      showOnboardingTooltip: true,
+      isOnboardingTooltipDismissCountBelowCap: true,
+      composeboxShowOnboardingTooltipSessionImpressionCap: 10,
+      composeboxShowOnboardingTooltipImpressionDelay: 3000,
+    });
+    composeboxElement.numberOfTimesTooltipShownForTesting = 0;
+    composeboxElement.userDismissedTooltipForTesting = false;
+
+    const innerComposebox = composeboxElement.$.composebox;
+    // Mock existence of chip.
+    innerComposebox.getHasAutomaticActiveTabChipToken = () => true;
+    innerComposebox.getAutomaticActiveTabChipElement = () =>
+        document.createElement('div');
+
+    // Show tooltip.
+    composeboxElement.updateTooltipVisibilityForTesting();
+    assertTrue(tooltip.shouldShow);
+
+    // Advance time partially.
+    mockTimer.tick(1000);
+    assertEquals(0, composeboxElement.numberOfTimesTooltipShownForTesting);
+
+    // Hide tooltip (e.g. chip disappears).
+    innerComposebox.getHasAutomaticActiveTabChipToken = () => false;
+    composeboxElement.updateTooltipVisibilityForTesting();
+    assertFalse(tooltip.shouldShow);
+
+    // Advance past original deadline.
+    mockTimer.tick(5000);
+    // Should NOT have incremented because timer was cleared.
+    assertEquals(0, composeboxElement.numberOfTimesTooltipShownForTesting);
+  });
+
+  test('sets is-dragging-file attribute on dragenter', async () => {
+    // Get composebox div in cr-composebox
+    const dropZone = composebox.$.composebox;
+
+    assertFalse(composebox.hasAttribute('is-dragging-file'));
+
+    dropZone.dispatchEvent(new DragEvent('dragenter', {
+      bubbles: true,
+      composed: true,
+    }));
+    await microtasksFinished();
+
+    assertTrue(composebox.hasAttribute('is-dragging-file'));
+    assertEquals(GlowAnimationState.DRAGGING, composebox.animationState);
+  });
+
+  test('removes is-dragging-file attribute on dragleave', async () => {
+    const dropZone = composebox.$.composebox;
+
+    composebox.animationState = GlowAnimationState.DRAGGING;
+    dropZone.dispatchEvent(new DragEvent('dragenter', {
+      bubbles: true,
+      composed: true,
+    }));
+    dropZone.dispatchEvent(new DragEvent('dragleave', {
+      bubbles: true,
+      composed: true,
+    }));
+    await microtasksFinished();
+
+    assertFalse(composebox.hasAttribute('is-dragging-file'));
+    assertEquals(GlowAnimationState.NONE, composebox.animationState);
+  });
+
+  test('accepts a dropped file and adds it to the carousel', async () => {
+    const dropZone = composebox.$.composebox;
+    // Same token for auto inject (mac) and manual (linux/windows)
+    const sharedToken = '12345678-1234-1234-1234-123456789abc';
+    mockSearchboxPageHandler.setResultFor(
+        ADD_FILE_CONTEXT_FN, Promise.resolve({token: sharedToken}));
+
+    const file = new File(['content'], 'foo.pdf', {type: 'application/pdf'});
+    // Automatically add file (Mac)
+    await dispatchDragAndDropEvent(dropZone, [file]);
+
+    await mockSearchboxPageHandler.whenCalled(ADD_FILE_CONTEXT_FN);
+    assertEquals(1, mockSearchboxPageHandler.getCallCount(ADD_FILE_CONTEXT_FN));
+    assertFalse(composebox.hasAttribute('is-dragging-file'));
+
+    const context = composebox.$.context;
+    // Mock backend response: manually add file to frontend to render it in the
+    // frontend
+    const mockAddedFile: ComposeboxFile = {
+      uuid: sharedToken,
+      name: 'foo.pdf',
+      status: 0,
+      type: 'application/pdf',
+      isDeletable: true,
+      objectUrl: null,
+      dataUrl: null,
+      url: null,
+      tabId: null,
+    };
+    context.onFileContextAdded(mockAddedFile);
+    await microtasksFinished();
+    await context.updateComplete;
+    await microtasksFinished();
+
+    const carousel: ComposeboxFileCarouselElement|null =
+        context.shadowRoot.querySelector('cr-composebox-file-carousel');
+
+    assertTrue(!!carousel, 'Carousel should render');
+
+    const carouselFiles = carousel.files;
+    assertEquals(1, carouselFiles.length);
+    assertEquals('foo.pdf', carouselFiles[0]!.name);
+  });
+
+  test('does not accept wrong file type', async () => {
+    const dropZone = composebox.$.composebox;
+    const testFile =
+        new File(['foo'], 'malware.exe', {type: 'application/x-msdownload'});
+    await dispatchDragAndDropEvent(dropZone, [testFile]);
+
+    assertEquals(0, mockSearchboxPageHandler.getCallCount(ADD_FILE_CONTEXT_FN));
+  });
+
+  test('accepts images', async () => {
+    const dropZone = composebox.$.composebox;
+    const file = new File(['content'], 'foo.png', {type: 'image/png'});
+    await dispatchDragAndDropEvent(dropZone, [file]);
+    await mockSearchboxPageHandler.whenCalled(ADD_FILE_CONTEXT_FN);
+    assertEquals(1, mockSearchboxPageHandler.getCallCount(ADD_FILE_CONTEXT_FN));
   });
 
   test('ExpandAnimationState', function() {

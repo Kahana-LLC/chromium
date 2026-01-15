@@ -323,6 +323,9 @@ using segmentation_platform::TipIdentifier;
   ChromeAccountManagerService* accountManagerService =
       ChromeAccountManagerServiceFactory::GetForProfile(profile);
 
+  feature_engagement::Tracker* engagementTracker =
+      feature_engagement::TrackerFactory::GetForProfile(profile);
+
   NSMutableArray* moduleMediators = [NSMutableArray array];
 
   _mostVisitedTilesMediator = [[MostVisitedTilesMediator alloc]
@@ -331,7 +334,9 @@ using segmentation_platform::TipIdentifier;
              largeIconService:largeIconService
                largeIconCache:cache
        URLLoadingBrowserAgent:UrlLoadingBrowserAgent::FromBrowser(self.browser)
-        accountManagerService:accountManagerService];
+        accountManagerService:accountManagerService
+            engagementTracker:engagementTracker
+            layoutGuideCenter:LayoutGuideCenterForBrowser(self.browser)];
   _mostVisitedTilesMediator.contentSuggestionsDelegate = self.delegate;
   _mostVisitedTilesMediator.contentSuggestionsMetricsRecorder =
       self.contentSuggestionsMetricsRecorder;
@@ -1244,10 +1249,10 @@ using segmentation_platform::TipIdentifier;
     case SetUpListItemType::kAllSet:
       NOTREACHED();
     case SetUpListItemType::kSafariImport:
+      [self.delegate openSafariDataImport];
+      break;
     case SetUpListItemType::kBackgroundCustomization:
-      // TODO(crbug.com/462437008): Show UI for Safari import and background
-      // customization.
-      NOTREACHED();
+      [self.delegate openMainCustomizationMenu];
   }
 }
 

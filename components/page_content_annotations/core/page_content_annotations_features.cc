@@ -4,7 +4,8 @@
 
 #include "components/page_content_annotations/core/page_content_annotations_features.h"
 
-#include "base/containers/contains.h"
+#include <algorithm>
+
 #include "base/metrics/field_trial.h"
 #include "base/metrics/field_trial_params.h"
 #include "base/strings/string_split.h"
@@ -68,8 +69,8 @@ bool IsSupportedLocale(const std::string& locale,
 
   // Otherwise, the locale or the primary language subtag must match an element
   // of the allowlist.
-  return base::Contains(supported, locale) ||
-         base::Contains(supported, l10n_util::GetLanguage(locale));
+  return std::ranges::contains(supported, locale) ||
+         std::ranges::contains(supported, l10n_util::GetLanguage(locale));
 }
 
 bool IsSupportedCountry(const std::string& country_code,
@@ -129,7 +130,7 @@ const base::FeatureParam<int> kPageContentCacheMaxTabs{
     &kPageContentCache, "max_cache_tabs_count", 50};
 
 const base::FeatureParam<bool> kPageContentCacheEnableScreenshot{
-    &kPageContentCache, "enable_screenshot", true};
+    &kPageContentCache, "enable_screenshot", false};
 
 base::TimeDelta PCAServiceWaitForTitleDelayDuration() {
   return base::Milliseconds(GetFieldTrialParamByFeatureAsInt(

@@ -2240,15 +2240,15 @@ CSSValue* ComputedStyleUtils::ValueForGridPosition(
   return list;
 }
 
-CSSValue* ComputedStyleUtils::ValueForItemTolerance(
-    const ItemTolerance& item_tolerance,
+CSSValue* ComputedStyleUtils::ValueForFlowTolerance(
+    const FlowTolerance& flow_tolerance,
     const ComputedStyle& style) {
-  if (item_tolerance.IsNormal()) {
+  if (flow_tolerance.IsNormal()) {
     return CSSIdentifierValue::Create(CSSValueID::kNormal);
-  } else if (item_tolerance.IsInfinite()) {
+  } else if (flow_tolerance.IsInfinite()) {
     return CSSIdentifierValue::Create(CSSValueID::kInfinite);
   }
-  return ZoomAdjustedPixelValueForLength(item_tolerance.GetLength(), style);
+  return ZoomAdjustedPixelValueForLength(flow_tolerance.GetLength(), style);
 }
 
 CSSValue* ComputedStyleUtils::ValueForGridLanesDirection(
@@ -3718,7 +3718,7 @@ void PopulateRepeaterGapData(CSSValueList* list,
         CSSPrimitiveValue::UnitType::kNumber);
   }
 
-  CSSValueList* repeated_values = CSSValueList::CreateSpaceSeparated();
+  CSSValueList* repeated_values = CSSValueList::CreateCommaSeparated();
 
   for (const auto& value : gap_data.GetValueRepeater()->RepeatedValues()) {
     const CSSValue* css_value =
@@ -3747,7 +3747,7 @@ const CSSValue* ValueForGapDecorationPropertyDataList(
                                          value_phase);
   }
 
-  CSSValueList* list = CSSValueList::CreateSpaceSeparated();
+  CSSValueList* list = CSSValueList::CreateCommaSeparated();
 
   for (const auto& gap_data : gap_color_list.GetGapDataList()) {
     if (gap_data.IsRepeaterData()) {

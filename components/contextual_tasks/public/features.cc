@@ -56,17 +56,14 @@ BASE_FEATURE(kContextualTasksForceCountryCodeUS,
 BASE_FEATURE(kContextualTasksRemoveTasksWithoutThreadsOrTabAssociations,
              base::FEATURE_ENABLED_BY_DEFAULT);
 
-const base::FeatureParam<double> kMinEmbeddingSimilarityScore{
-    &kContextualTasksContext, "ContextualTasksContextEmbeddingSimilarityScore",
-    0.8};
-
 const base::FeatureParam<bool> kOnlyUseTitlesForSimilarity(
     &kContextualTasksContext,
     "ContextualTasksContextOnlyUseTitles",
     false);
 
-const base::FeatureParam<double> kMinMultiSignalScore{
-    &kContextualTasksContext, "ContextualTasksContextMinMultiSignalScore", 0.8};
+const base::FeatureParam<double> kTabSelectionScoreThreshold{
+    &kContextualTasksContext,
+    "ContextualTasksContextTabSelectionScoreThreshold", 0.8};
 
 const base::FeatureParam<double> kContentVisibilityThreshold{
     &kContextualTasksContext,
@@ -164,6 +161,11 @@ const base::FeatureParam<int> kContextualTasksOnboardingTooltipDismissedCap(
     "ContextualTasksOnboardingTooltipDismissedCap",
     1);
 
+const base::FeatureParam<int> kContextualTasksOnboardingTooltipImpressionDelay(
+    &kContextualTasksShowOnboardingTooltip,
+    "ContextualTasksOnboardingTooltipImpressionDelay",
+    3000);
+
 const base::FeatureParam<bool> kEnableContextualTasksSmartCompose(
     &kContextualTasks,
     "EnableContextualTasksSmartCompose",
@@ -181,6 +183,10 @@ int GetContextualTasksOnboardingTooltipDismissedCap() {
     return 0;
   }
   return kContextualTasksOnboardingTooltipDismissedCap.Get();
+}
+
+int GetContextualTasksOnboardingTooltipImpressionDelay() {
+  return kContextualTasksOnboardingTooltipImpressionDelay.Get();
 }
 
 bool GetIsExpandedComposeboxVoiceSearchEnabled() {
@@ -248,7 +254,7 @@ const base::FeatureParam<int> kContextualTasksNextboxMaxFileSize{
     20 * 1024 * 1024};
 
 const base::FeatureParam<int> kContextualTasksNextboxMaxFileCount{
-    &kContextualTasksContextMenu, "ContextualTasksNextboxMaxFileCount", 4};
+    &kContextualTasksContextMenu, "ContextualTasksNextboxMaxFileCount", 10};
 
 bool GetIsContextualTasksSuggestionsEnabled() {
   return base::FeatureList::IsEnabled(kContextualTasksSuggestionsEnabled);

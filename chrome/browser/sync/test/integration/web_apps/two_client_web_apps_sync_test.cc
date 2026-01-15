@@ -183,6 +183,10 @@ IN_PROC_BROWSER_TEST_P(TwoClientWebAppsSyncTest, MigratingAppsDoNotSync) {
   info->scope = GURL("http://www.chromium.org/");
   info->user_display_mode = mojom::UserDisplayMode::kStandalone;
 
+  web_app::proto::WebAppMigrationSource source;
+  source.set_manifest_id("http://migration.chromium.org/start.html");
+  info->migration_sources.push_back(std::move(source));
+
   // Install app on first profile, mark it suggested for migration.
   base::test::TestFuture<const webapps::AppId&, webapps::InstallResultCode>
       install_future;
@@ -203,7 +207,9 @@ IN_PROC_BROWSER_TEST_P(TwoClientWebAppsSyncTest, MigratingAppsDoNotSync) {
   // Wait for any syncing to complete, verify app is not synced.
   ASSERT_TRUE(apps_helper::AwaitWebAppQuiescence(GetAllProfiles()));
   EXPECT_FALSE(AllProfilesHaveSameWebAppIds());
-  EXPECT_FALSE(GetRegistrar(GetProfile(/*index=*/1)).IsInRegistrar(app_id));
+  EXPECT_FALSE(GetRegistrar(GetProfile(/*index=*/1))
+                   .GetInstallState(app_id)
+                   .has_value());
 }
 
 IN_PROC_BROWSER_TEST_P(TwoClientWebAppsSyncTest, Minimal) {

@@ -3192,6 +3192,11 @@
       status: "stable",
     },
     {
+      name: "LayoutReinsertOnInFlowStateChange",
+      depends_on: ["LayoutMergeAnonymousFix", "DisableDocumentBeingDestroyed"],
+      status: "stable",
+    },
+    {
       name: "LayoutTableCellAlignmentSafe",
       status: "stable",
     },
@@ -6290,10 +6295,5 @@
       // crbug.com/435623334.
       name: "XSLTSpecialTrial",
     },
-    {
-      // If enabled, the `getDisplayMedia()` family of APIs will ask for NV12
-      // frames, which should trigger a zero-copy path in the tab capture code.
-      name: "ZeroCopyTabCapture",
-    }
   ],
 }
