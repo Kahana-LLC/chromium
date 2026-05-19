@@ -71,6 +71,7 @@ class PinnedToolbarActionsController;
 class ProfileMenuCoordinator;
 class ProjectsPanelStateController;
 class ReadingListSidePanelCoordinator;
+class OasisSidePanelCoordinator;
 class RecentActivityBubbleCoordinator;
 class BrowserSelectFileDialogController;
 class ScrimViewController;
@@ -274,6 +275,10 @@ class BrowserWindowFeatures {
 
   CommentsSidePanelCoordinator* comments_side_panel_coordinator() {
     return comments_side_panel_coordinator_.get();
+  }
+
+  OasisSidePanelCoordinator* oasis_side_panel_coordinator() {
+    return oasis_side_panel_coordinator_.get();
   }
 
   ExtensionInstalledWatcher* extension_installed_watcher() {
@@ -589,6 +594,9 @@ class BrowserWindowFeatures {
 
   std::unique_ptr<CommentsSidePanelCoordinator>
       comments_side_panel_coordinator_;
+
+  std::unique_ptr<OasisSidePanelCoordinator>
+      oasis_side_panel_coordinator_;
 
   std::unique_ptr<PinnedToolbarActionsController>
       pinned_toolbar_actions_controller_;

@@ -1,0 +1,21 @@
+# Copyright 2024 The Chromium Authors
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+assert(!is_android)
+
+source_set("oasis") {
+  sources = [
+    "oasis_ui.cc",
+    "oasis_ui.h",
+  ]
+  deps = [
+    "//chrome/browser/profiles:profile",
+    "//chrome/browser/resources/side_panel/oasis:resources",
+    "//chrome/browser/ui/webui/top_chrome",
+    "//chrome/common",
+    "//content/public/browser",
+    "//content/public/common",
+    "//ui/webui",
+  ]
+}

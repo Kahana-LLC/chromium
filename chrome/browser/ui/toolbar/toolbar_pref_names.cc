@@ -31,6 +31,12 @@ void RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry) {
     }
   }
 
+  const std::optional<std::string>& oasis_action =
+      actions::ActionIdMap::ActionIdToString(kActionSidePanelShowOasisAI);
+  if (oasis_action.has_value()) {
+    default_pinned_actions.Append(oasis_action.value());
+  }
+
   registry->RegisterListPref(prefs::kPinnedActions,
                              std::move(default_pinned_actions),
                              user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
@@ -45,6 +51,9 @@ void RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry) {
       user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
   registry->RegisterBooleanPref(
       prefs::kTabSearchMigrationComplete, false,
+      user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
+  registry->RegisterBooleanPref(
+      prefs::kPinnedOasisAIMigrationComplete, false,
       user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
 }
 

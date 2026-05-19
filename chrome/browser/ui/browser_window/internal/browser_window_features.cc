@@ -111,6 +111,7 @@
 #include "chrome/browser/ui/views/side_panel/reading_list/reading_list_side_panel_coordinator.h"
 #include "chrome/browser/ui/views/side_panel/side_panel_coordinator.h"
 #include "chrome/browser/ui/views/side_panel/side_panel_registry.h"
+#include "chrome/browser/ui/views/side_panel/oasis/oasis_side_panel_coordinator.h"
 #include "chrome/browser/ui/views/tabs/recent_activity_bubble_dialog_view.h"
 #include "chrome/browser/ui/views/tabs/tab_strip_action_container.h"
 #include "chrome/browser/ui/views/toolbar/chrome_labs/chrome_labs_coordinator.h"
@@ -372,6 +373,8 @@ void BrowserWindowFeatures::Init(BrowserWindowInterface* browser) {
 
   bookmarks_side_panel_coordinator_ =
       std::make_unique<BookmarksSidePanelCoordinator>();
+
+  oasis_side_panel_coordinator_ = std::make_unique<OasisSidePanelCoordinator>();
 
   signin_view_controller_ = std::make_unique<SigninViewController>(
       browser, profile, tab_strip_model_);

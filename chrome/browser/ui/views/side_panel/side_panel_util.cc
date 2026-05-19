@@ -22,6 +22,7 @@
 #include "chrome/browser/ui/views/side_panel/history/history_side_panel_coordinator.h"
 #include "chrome/browser/ui/views/side_panel/history_clusters/history_clusters_side_panel_coordinator.h"
 #include "chrome/browser/ui/views/side_panel/reading_list/reading_list_side_panel_coordinator.h"
+#include "chrome/browser/ui/views/side_panel/oasis/oasis_side_panel_coordinator.h"
 #include "chrome/browser/ui/views/side_panel/side_panel_content_proxy.h"
 #include "chrome/browser/ui/views/side_panel/side_panel_coordinator.h"
 #include "chrome/browser/ui/views/side_panel/side_panel_registry.h"
@@ -80,6 +81,11 @@ void SidePanelUtil::PopulateGlobalEntries(Browser* browser,
   // Add bookmarks.
   browser->browser_window_features()
       ->bookmarks_side_panel_coordinator()
+      ->CreateAndRegisterEntry(window_registry);
+
+  // Add Oasis AI.
+  browser->browser_window_features()
+      ->oasis_side_panel_coordinator()
       ->CreateAndRegisterEntry(window_registry);
 
   if (webui_browser::IsWebUIBrowserEnabled()) {

@@ -210,6 +210,8 @@ inline constexpr char kChromeUIUntrustedNtpMicrosoftAuthHost[] =
 inline constexpr char kChromeUIUntrustedNtpMicrosoftAuthURL[] =
     "chrome-untrusted://ntp-microsoft-auth/";
 inline constexpr char kChromeUINTPTilesInternalsHost[] = "ntp-tiles-internals";
+inline constexpr char kChromeUIOasisAIHost[] = "oasis-ai";
+inline constexpr char kChromeUIOasisAIURL[] = "chrome://oasis-ai/";
 inline constexpr char kChromeUIOmniboxHost[] = "omnibox";
 inline constexpr char kChromeUIOmniboxPopupHost[] = "omnibox-popup.top-chrome";
 inline constexpr char kChromeUIOmniboxPopupURL[] =

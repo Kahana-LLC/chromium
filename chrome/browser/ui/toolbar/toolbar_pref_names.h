@@ -33,6 +33,10 @@ inline constexpr char kPinnedCastMigrationComplete[] =
 inline constexpr char kTabSearchMigrationComplete[] =
     "toolbar.tab_search_migration_complete";
 
+// Indicates whether the Oasis AI pin state has been set in the toolbar.
+inline constexpr char kPinnedOasisAIMigrationComplete[] =
+    "toolbar.pinned_oasis_ai_migration_complete";
+
 }  // namespace prefs
 
 namespace toolbar {

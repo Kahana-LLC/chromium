@@ -260,6 +260,10 @@ void PinnedToolbarActionsModel::MaybeMigrateExistingPinnedStates() {
     UpdatePinnedState(kActionRouteMedia, previously_pinned);
     pref_service_->SetBoolean(prefs::kPinnedCastMigrationComplete, true);
   }
+  if (!pref_service_->GetBoolean(prefs::kPinnedOasisAIMigrationComplete)) {
+    UpdatePinnedState(kActionSidePanelShowOasisAI, true);
+    pref_service_->SetBoolean(prefs::kPinnedOasisAIMigrationComplete, true);
+  }
 }
 
 const std::vector<actions::ActionId>&

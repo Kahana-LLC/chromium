@@ -258,7 +258,12 @@ void BrowserActions::InitializeBrowserActions() {
                               IDS_MERCHANT_TRUST_SIDE_PANEL_TITLE,
                               IDS_MERCHANT_TRUST_SIDE_PANEL_TITLE,
                               vector_icons::kStorefrontIcon,
-                              kActionSidePanelShowMerchantTrust, bwi, false))
+                              kActionSidePanelShowMerchantTrust, bwi, false),
+              SidePanelAction(SidePanelEntryId::kOasisAI,
+                              IDS_OASIS_AI_TITLE,
+                              IDS_OASIS_AI_TITLE,
+                              vector_icons::kChatIcon,
+                              kActionSidePanelShowOasisAI, bwi, true))
           .Build());
 
   if (side_panel::history_clusters::

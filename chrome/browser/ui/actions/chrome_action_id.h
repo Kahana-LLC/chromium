@@ -567,7 +567,8 @@
   E(kActionSidePanelShowShoppingInsights) \
   E(kActionSidePanelShowSideSearch) \
   E(kActionSidePanelShowUserNote) \
-  E(kActionSidePanelShowMerchantTrust)
+  E(kActionSidePanelShowMerchantTrust) \
+  E(kActionSidePanelShowOasisAI)
 
 #define TOOLBAR_PINNABLE_ACTION_IDS \
   E(kActionHome, IDC_HOME) \

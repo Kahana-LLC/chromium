@@ -436,6 +436,7 @@ enum {
   kPinContextualTaskButton = 100369,
   kAccessibilityReadAnythingOmniboxChipIgnoredCount = 100370,
   kAccessibilityReadAnythingLineFocus = 100371,
+  kPinnedOasisAIMigrationComplete = 100372,
   // See components/sync_preferences/README.md about adding new entries here.
   // vvvvv IMPORTANT! vvvvv
   // Note to the reviewer: IT IS YOUR RESPONSIBILITY to ensure that new syncable
@@ -630,6 +631,10 @@ constexpr auto kChromeSyncablePrefsAllowlist = base::MakeFixedFlatMap<
       sync_preferences::MergeBehavior::kNone}},
     {prefs::kTabSearchMigrationComplete,
      {syncable_prefs_ids::kTabSearchMigrationComplete, syncer::PREFERENCES,
+      sync_preferences::PrefSensitivity::kNone,
+      sync_preferences::MergeBehavior::kNone}},
+    {prefs::kPinnedOasisAIMigrationComplete,
+     {syncable_prefs_ids::kPinnedOasisAIMigrationComplete, syncer::PREFERENCES,
       sync_preferences::PrefSensitivity::kNone,
       sync_preferences::MergeBehavior::kNone}},
     {prefs::kVerticalTabsEnabled,

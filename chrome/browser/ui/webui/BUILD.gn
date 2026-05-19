@@ -66,6 +66,7 @@ source_set("configs") {
     deps += [
       "//chrome/browser/actor/ui",
       "//chrome/browser/actor/ui:actor_overlay",
+      "//chrome/browser/ui/webui/oasis",
       "//chrome/browser/contextual_tasks:ui",
       "//chrome/browser/ui/webui/access_code_cast",
       "//chrome/browser/ui/webui/actor_internals",

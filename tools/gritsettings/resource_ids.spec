@@ -653,6 +653,10 @@
     "META": {"sizes": {"includes": [5],}},
     "includes": [4860],
   },
+  "<(SHARED_INTERMEDIATE_DIR)/chrome/browser/resources/side_panel/oasis/resources.grd": {
+    "META": {"sizes": {"includes": [10],}},
+    "includes": [4870],
+  },
   "<(SHARED_INTERMEDIATE_DIR)/chrome/browser/resources/side_panel/read_anything/resources.grd": {
     "META": {"sizes": {"includes": [80],}},
     "includes": [4880],
