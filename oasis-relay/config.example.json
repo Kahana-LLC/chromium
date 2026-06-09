@@ -1,0 +1,35 @@
+{
+  "listen": {
+    "host": "0.0.0.0",
+    "port": 8443,
+    "tls": {
+      "certPath": "/etc/oasis-relay/fullchain.pem",
+      "keyPath": "/etc/oasis-relay/privkey.pem"
+    }
+  },
+  "adminKey": "CHANGE-ME-admin-key-for-revocation-endpoint",
+  "tokenStorePath": "./tokens.json",
+  "sinks": [
+    {
+      "type": "datadog",
+      "site": "datadoghq.com",
+      "apiKey": "DD_API_KEY_LIVES_ONLY_ON_THE_RELAY",
+      "service": "oasis-browser",
+      "ddsource": "oasis"
+    },
+    {
+      "type": "splunk_hec",
+      "url": "https://splunk.example.com:8088/services/collector/event",
+      "token": "SPLUNK_HEC_TOKEN",
+      "sourcetype": "oasis:llm_paste"
+    },
+    {
+      "type": "webhook",
+      "url": "https://siem.example.com/ingest/oasis",
+      "headers": { "X-Api-Key": "WEBHOOK_KEY" }
+    },
+    {
+      "type": "stdout"
+    }
+  ]
+}

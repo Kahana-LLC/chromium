@@ -1,0 +1,4 @@
+caption: Oasis LLM paste telemetry
+desc: |-
+  Controls Oasis browser-native telemetry and enforcement for pastes into
+  generative AI (LLM) sites.

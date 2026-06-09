@@ -1,0 +1,34 @@
+caption: Per-domain Oasis paste enforcement overrides
+desc: |-
+  Per-domain overrides for
+  <ph name="OASIS_PASTE_ENFORCEMENT_MODE_POLICY_NAME">OasisPasteEnforcementMode</ph>.
+
+  Keys are monitored host patterns (built-in registry patterns or entries
+  from <ph name="OASIS_TELEMETRY_MONITORED_DOMAINS_POLICY_NAME">OasisTelemetryMonitoredDomains</ph>);
+  values are "audit", "warn" or "block". For example, block pastes into
+  chatgpt.com while only auditing an approved internal LLM.
+
+  User- or group-based targeting is expressed by the management server
+  assigning different values of these policies to different users or
+  groups; the browser applies the resolved per-profile policy.
+example_value:
+  chatgpt.com: block
+  llm.internal.example.com: audit
+features:
+  dynamic_refresh: true
+  per_profile: true
+owners:
+- file://chrome/browser/oasis/OWNERS
+schema:
+  additionalProperties:
+    enum:
+    - audit
+    - warn
+    - block
+    type: string
+  type: object
+supported_on:
+- chrome.*:146-
+tags:
+- admin-sharing
+type: dict

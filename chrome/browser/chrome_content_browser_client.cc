@@ -699,6 +699,10 @@
 #include "chrome/browser/enterprise/data_protection/data_protection_clipboard_utils.h"
 #endif  // BUILDFLAG(ENTERPRISE_DATA_CONTROLS)
 
+#if !BUILDFLAG(IS_ANDROID)
+#include "chrome/browser/oasis/oasis_paste_interceptor.h"
+#endif  // !BUILDFLAG(IS_ANDROID)
+
 #if BUILDFLAG(OS_LEVEL_GEOLOCATION_PERMISSION_SUPPORTED)
 #include "services/device/public/cpp/geolocation/geolocation_system_permission_manager.h"
 #endif  // BUILDFLAG(OS_LEVEL_GEOLOCATION_PERMISSION_SUPPORTED)
@@ -7595,12 +7599,16 @@ bool ChromeContentBrowserClient::IsClipboardPasteAllowed(
   return false;
 }
 
-void ChromeContentBrowserClient::IsClipboardPasteAllowedByPolicy(
+namespace {
+
+// Pre-existing enterprise paste policy flow, run after (and unless denied
+// by) the Oasis paste interceptor.
+void ResumeClipboardPasteAllowedByPolicy(
     const content::ClipboardEndpoint& source,
     const content::ClipboardEndpoint& destination,
     const ui::ClipboardMetadata& metadata,
-    ClipboardPasteData clipboard_paste_data,
-    IsClipboardPasteAllowedCallback callback) {
+    content::ClipboardPasteData clipboard_paste_data,
+    content::ContentBrowserClient::IsClipboardPasteAllowedCallback callback) {
 // TODO(b/352728209): Add Android-specific hook for Data Controls.
 #if BUILDFLAG(ENTERPRISE_DATA_CONTROLS) && !BUILDFLAG(IS_ANDROID)
   enterprise_data_protection::PasteAllowedRequest::StartPasteAllowedRequest(
@@ -7616,6 +7624,29 @@ void ChromeContentBrowserClient::IsClipboardPasteAllowedByPolicy(
 #else
   std::move(callback).Run(std::move(clipboard_paste_data));
 #endif  // BUILDFLAG(ENTERPRISE_DATA_CONTROLS)
+}
+
+}  // namespace
+
+void ChromeContentBrowserClient::IsClipboardPasteAllowedByPolicy(
+    const content::ClipboardEndpoint& source,
+    const content::ClipboardEndpoint& destination,
+    const ui::ClipboardMetadata& metadata,
+    ClipboardPasteData clipboard_paste_data,
+    IsClipboardPasteAllowedCallback callback) {
+#if !BUILDFLAG(IS_ANDROID)
+  // Oasis LLM paste telemetry/enforcement runs first; it either continues
+  // with the regular enterprise policy flow or denies the paste.
+  oasis::OasisPasteInterceptor::EvaluatePaste(
+      source, destination, metadata, std::move(clipboard_paste_data),
+      base::BindOnce(&ResumeClipboardPasteAllowedByPolicy, source, destination,
+                     metadata),
+      std::move(callback));
+#else
+  ResumeClipboardPasteAllowedByPolicy(source, destination, metadata,
+                                      std::move(clipboard_paste_data),
+                                      std::move(callback));
+#endif  // !BUILDFLAG(IS_ANDROID)
 }
 
 void ChromeContentBrowserClient::IsClipboardCopyAllowedByPolicy(

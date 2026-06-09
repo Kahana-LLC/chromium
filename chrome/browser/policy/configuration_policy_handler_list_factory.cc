@@ -26,6 +26,9 @@
 #include "chrome/browser/net/disk_cache_dir_policy_handler.h"
 #include "chrome/browser/net/explicitly_allowed_network_ports_policy_handler.h"
 #include "chrome/browser/net/secure_dns_policy_handler.h"
+#if !BUILDFLAG(IS_ANDROID)
+#include "chrome/browser/oasis/oasis_pref_names.h"
+#endif
 #include "chrome/browser/performance_manager/public/user_tuning/memory_saver_policy_handler.h"
 #include "chrome/browser/policy/annotations/blocklist_handler.h"
 #include "chrome/browser/policy/browsing_history_policy_handler.h"
@@ -1952,6 +1955,36 @@ const PolicyToPreferenceMapEntry kSimplePolicyMap[] = {
     prefs::kNtlmV2Enabled,
     base::Value::Type::BOOLEAN },
 #endif  // !BUILDFLAG(IS_WIN)
+
+#if !BUILDFLAG(IS_ANDROID)
+  { key::kOasisTelemetryEnabled,
+    oasis::prefs::kOasisTelemetryEnabled,
+    base::Value::Type::BOOLEAN },
+  { key::kOasisTelemetryRelayUrl,
+    oasis::prefs::kOasisTelemetryRelayUrl,
+    base::Value::Type::STRING },
+  { key::kOasisTelemetryMonitoredDomains,
+    oasis::prefs::kOasisTelemetryMonitoredDomains,
+    base::Value::Type::LIST },
+  { key::kOasisTelemetryBatchIntervalSeconds,
+    oasis::prefs::kOasisTelemetryBatchIntervalSeconds,
+    base::Value::Type::INTEGER },
+  { key::kOasisTelemetryBatchMaxEvents,
+    oasis::prefs::kOasisTelemetryBatchMaxEvents,
+    base::Value::Type::INTEGER },
+  { key::kOasisTelemetryIncludeContentHash,
+    oasis::prefs::kOasisTelemetryIncludeContentHash,
+    base::Value::Type::BOOLEAN },
+  { key::kOasisPasteEnforcementMode,
+    oasis::prefs::kOasisPasteEnforcementMode,
+    base::Value::Type::STRING },
+  { key::kOasisPasteEnforcementDomainOverrides,
+    oasis::prefs::kOasisPasteEnforcementDomainOverrides,
+    base::Value::Type::DICT },
+  { key::kOasisPasteBlockSensitiveData,
+    oasis::prefs::kOasisPasteBlockSensitiveData,
+    base::Value::Type::BOOLEAN },
+#endif  // !BUILDFLAG(IS_ANDROID)
 
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC)
   { key::kPrintPdfAsImageAvailability,

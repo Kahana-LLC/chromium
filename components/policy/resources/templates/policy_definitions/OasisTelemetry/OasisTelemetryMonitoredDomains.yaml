@@ -1,0 +1,26 @@
+caption: Additional monitored LLM domains
+desc: |-
+  Additional domains to monitor for LLM paste telemetry, merged with the
+  built-in provider registry.
+
+  Each entry is either a host ("llm.internal.example.com") or a host with an
+  explicit provider label ("llm.internal.example.com=internal-llm"). A host
+  entry matches the host itself and any subdomain. Entries without a
+  provider label are reported with provider "custom".
+example_value:
+- llm.internal.example.com=internal-llm
+- chat.partner.example.org
+features:
+  dynamic_refresh: true
+  per_profile: true
+owners:
+- file://chrome/browser/oasis/OWNERS
+schema:
+  items:
+    type: string
+  type: array
+supported_on:
+- chrome.*:146-
+tags:
+- admin-sharing
+type: list

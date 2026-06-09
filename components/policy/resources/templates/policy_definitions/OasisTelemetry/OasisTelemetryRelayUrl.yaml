@@ -1,0 +1,24 @@
+caption: Oasis telemetry relay URL
+desc: |-
+  HTTPS URL of the Oasis telemetry relay that receives paste telemetry
+  batches and forwards them to the configured sinks (for example Datadog).
+
+  The relay must present a CA-signed certificate; non-HTTPS values are
+  ignored (localhost is tolerated for development). Third-party sink
+  credentials live only on the relay, never in the browser.
+
+  If this policy is unset, telemetry is not uploaded even when
+  <ph name="OASIS_TELEMETRY_ENABLED_POLICY_NAME">OasisTelemetryEnabled</ph> is enabled.
+example_value: https://telemetry.example.com
+features:
+  dynamic_refresh: true
+  per_profile: true
+owners:
+- file://chrome/browser/oasis/OWNERS
+schema:
+  type: string
+supported_on:
+- chrome.*:146-
+tags:
+- admin-sharing
+type: string

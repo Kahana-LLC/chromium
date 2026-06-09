@@ -22,6 +22,7 @@ import java.lang.annotation.RetentionPolicy;
 @IntDef({
     ChromeIsolatedWorldIds.ISOLATED_WORLD_ID_TRANSLATE,
     ChromeIsolatedWorldIds.ISOLATED_WORLD_ID_CHROME_INTERNAL,
+    ChromeIsolatedWorldIds.ISOLATED_WORLD_ID_OASIS_TELEMETRY,
     ChromeIsolatedWorldIds.ISOLATED_WORLD_UNUSED_MAC,
     ChromeIsolatedWorldIds.ISOLATED_WORLD_ID_UNUSED_EXTENSIONS
 })
@@ -30,7 +31,8 @@ import java.lang.annotation.RetentionPolicy;
 public @interface ChromeIsolatedWorldIds {
     int ISOLATED_WORLD_ID_TRANSLATE = IsolatedWorldIds.ISOLATED_WORLD_ID_CONTENT_END + 1;
     int ISOLATED_WORLD_ID_CHROME_INTERNAL = IsolatedWorldIds.ISOLATED_WORLD_ID_CONTENT_END + 2;
-    int ISOLATED_WORLD_UNUSED_MAC = IsolatedWorldIds.ISOLATED_WORLD_ID_CONTENT_END + 3;
-    int ISOLATED_WORLD_ID_UNUSED_EXTENSIONS = IsolatedWorldIds.ISOLATED_WORLD_ID_CONTENT_END + 4;
+    int ISOLATED_WORLD_ID_OASIS_TELEMETRY = IsolatedWorldIds.ISOLATED_WORLD_ID_CONTENT_END + 3;
+    int ISOLATED_WORLD_UNUSED_MAC = IsolatedWorldIds.ISOLATED_WORLD_ID_CONTENT_END + 4;
+    int ISOLATED_WORLD_ID_UNUSED_EXTENSIONS = IsolatedWorldIds.ISOLATED_WORLD_ID_CONTENT_END + 5;
 }
 // LINT.ThenChange(//chrome/common/chrome_isolated_world_ids.h)

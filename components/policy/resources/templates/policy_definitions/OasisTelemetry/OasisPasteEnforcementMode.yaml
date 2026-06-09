@@ -1,0 +1,42 @@
+caption: Oasis paste enforcement mode
+default: audit
+desc: |-
+  Controls what happens when a user pastes into a monitored LLM site while
+  Oasis telemetry is enabled.
+
+  * "audit": the paste proceeds and telemetry is recorded (default).
+
+  * "warn": the user is shown a confirmation dialog and may proceed or
+  cancel; the decision is recorded.
+
+  * "block": the paste is denied and the block is recorded.
+
+  Per-domain exceptions can be configured with
+  <ph name="OASIS_PASTE_ENFORCEMENT_DOMAIN_OVERRIDES_POLICY_NAME">OasisPasteEnforcementDomainOverrides</ph>.
+example_value: warn
+features:
+  dynamic_refresh: true
+  per_profile: true
+items:
+- caption: Allow pastes and record telemetry
+  name: audit
+  value: audit
+- caption: Warn the user before the paste proceeds
+  name: warn
+  value: warn
+- caption: Block pastes into monitored LLM sites
+  name: block
+  value: block
+owners:
+- file://chrome/browser/oasis/OWNERS
+schema:
+  enum:
+  - audit
+  - warn
+  - block
+  type: string
+supported_on:
+- chrome.*:146-
+tags:
+- admin-sharing
+type: string-enum

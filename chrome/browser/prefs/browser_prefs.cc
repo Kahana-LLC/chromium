@@ -264,6 +264,7 @@
 #include "chrome/browser/media/router/discovery/access_code/access_code_cast_feature.h"
 #include "chrome/browser/media/router/media_router_feature.h"
 #include "chrome/browser/media/unified_autoplay_config.h"
+#include "chrome/browser/oasis/oasis_pref_names.h"
 #include "chrome/browser/nearby_sharing/common/nearby_share_prefs.h"
 #include "chrome/browser/new_tab_page/modules/file_suggestion/drive_service.h"
 #include "chrome/browser/new_tab_page/modules/file_suggestion/microsoft_files_page_handler.h"
@@ -1392,6 +1393,7 @@ void RegisterLocalState(PrefRegistrySimple* registry) {
   SerialPolicyAllowedPorts::RegisterPrefs(registry);
 #if !BUILDFLAG(IS_ANDROID)
   HidPolicyAllowedDevices::RegisterLocalStatePrefs(registry);
+  oasis::RegisterLocalStatePrefs(registry);
 #endif
   sessions::SessionIdGenerator::RegisterPrefs(registry);
   signin::ActivePrimaryAccountsMetricsRecorder::RegisterLocalStatePrefs(
@@ -2034,6 +2036,8 @@ void RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry,
   CertificateManagerPageHandler::RegisterProfilePrefs(registry);
 
   actor::ui::RegisterProfilePrefs(registry);
+
+  oasis::RegisterProfilePrefs(registry);
 #endif  // !BUILDFLAG(IS_ANDROID)
 
   registry->RegisterBooleanPref(webauthn::pref_names::kAllowWithBrokenCerts,

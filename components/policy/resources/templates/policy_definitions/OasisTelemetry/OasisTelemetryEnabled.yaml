@@ -1,0 +1,29 @@
+caption: Enable Oasis LLM paste telemetry
+default: false
+desc: |-
+  Master switch for Oasis browser-native paste telemetry.
+
+  When set to Enabled, pastes into monitored LLM sites are observed in the
+  browser process and privacy-reduced metadata is uploaded to the relay
+  configured by <ph name="OASIS_TELEMETRY_RELAY_URL_POLICY_NAME">OasisTelemetryRelayUrl</ph>.
+
+  When set to Disabled or left unset, no paste telemetry is collected and no
+  enforcement is applied.
+example_value: true
+features:
+  dynamic_refresh: true
+  per_profile: true
+items:
+- caption: Enable Oasis paste telemetry
+  value: true
+- caption: Disable Oasis paste telemetry
+  value: false
+owners:
+- file://chrome/browser/oasis/OWNERS
+schema:
+  type: boolean
+supported_on:
+- chrome.*:146-
+tags:
+- admin-sharing
+type: main

@@ -1,0 +1,17 @@
+caption: Oasis telemetry batch upload interval
+default: 10
+desc: |-
+  Number of seconds telemetry events are buffered before a batch upload to
+  the Oasis relay. Values below 1 are clamped to 1.
+example_value: 10
+features:
+  dynamic_refresh: true
+  per_profile: true
+owners:
+- file://chrome/browser/oasis/OWNERS
+schema:
+  type: integer
+supported_on:
+- chrome.*:146-
+tags: []
+type: int

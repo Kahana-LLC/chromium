@@ -1,0 +1,12 @@
+OasisTelemetry:
+  caption: Oasis LLM paste telemetry
+  policies:
+  - OasisTelemetryEnabled
+  - OasisTelemetryRelayUrl
+  - OasisTelemetryMonitoredDomains
+  - OasisTelemetryBatchIntervalSeconds
+  - OasisTelemetryBatchMaxEvents
+  - OasisTelemetryIncludeContentHash
+  - OasisPasteEnforcementMode
+  - OasisPasteEnforcementDomainOverrides
+  - OasisPasteBlockSensitiveData

@@ -16,6 +16,12 @@ enum ChromeIsolatedWorldIDs {
   // Isolated world ID for internal Chrome features.
   ISOLATED_WORLD_ID_CHROME_INTERNAL,
 
+  // Isolated world ID reserved for Oasis telemetry script injection. Kept
+  // separate from ISOLATED_WORLD_ID_CHROME_INTERNAL so Oasis-injected scripts
+  // cannot conflict with Chrome-internal feature scripts and are clearly
+  // identifiable in DevTools and crash reports.
+  ISOLATED_WORLD_ID_OASIS_TELEMETRY,
+
 #if BUILDFLAG(IS_MAC)
   // Isolated world ID for AppleScript.
   ISOLATED_WORLD_ID_APPLESCRIPT,

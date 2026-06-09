@@ -1,0 +1,27 @@
+caption: Include content hash in Oasis paste telemetry
+default: false
+desc: |-
+  When set to Enabled, a SHA-256 hash of the pasted text is included in
+  paste telemetry events.
+
+  When set to Disabled or left unset, no hash is reported. Leaving this
+  disabled is recommended: hashes of guessable or low-entropy content can
+  leak information about the pasted data.
+example_value: false
+features:
+  dynamic_refresh: true
+  per_profile: true
+items:
+- caption: Include SHA-256 content hash in telemetry
+  value: true
+- caption: Do not include content hashes in telemetry
+  value: false
+owners:
+- file://chrome/browser/oasis/OWNERS
+schema:
+  type: boolean
+supported_on:
+- chrome.*:146-
+tags:
+- admin-sharing
+type: main

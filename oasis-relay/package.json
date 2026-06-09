@@ -1,0 +1,14 @@
+{
+  "name": "oasis-relay",
+  "version": "1.0.0",
+  "description": "Oasis telemetry relay: authenticates browser devices and forwards privacy-reduced LLM paste telemetry to pluggable sinks (Datadog, Splunk HEC, webhook).",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "UNLICENSED"
+}

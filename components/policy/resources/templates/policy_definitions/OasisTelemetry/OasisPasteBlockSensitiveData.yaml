@@ -1,0 +1,31 @@
+caption: Block pastes containing sensitive data into LLM sites
+default: false
+desc: |-
+  When set to Enabled, pastes into monitored LLM sites that the on-device
+  classifier flags as containing sensitive data (credentials, private keys,
+  payment card numbers, national identifiers) are blocked regardless of
+  <ph name="OASIS_PASTE_ENFORCEMENT_MODE_POLICY_NAME">OasisPasteEnforcementMode</ph>.
+
+  Classification runs entirely on the device; only category names are
+  reported in telemetry.
+
+  When set to Disabled or left unset, classification results are recorded
+  in telemetry but do not affect the paste.
+example_value: true
+features:
+  dynamic_refresh: true
+  per_profile: true
+items:
+- caption: Block pastes classified as sensitive
+  value: true
+- caption: Record classifications without blocking
+  value: false
+owners:
+- file://chrome/browser/oasis/OWNERS
+schema:
+  type: boolean
+supported_on:
+- chrome.*:146-
+tags:
+- admin-sharing
+type: main

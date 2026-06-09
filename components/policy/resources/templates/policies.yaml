@@ -1421,6 +1421,15 @@ policies:
   1420: GeminiActOnWebAllowedForURLs
   1421: GeminiActOnWebBlockedForURLs
   1422: WebAppInstallByUserEnabled
+  1423: OasisTelemetryEnabled
+  1424: OasisTelemetryRelayUrl
+  1425: OasisTelemetryMonitoredDomains
+  1426: OasisTelemetryBatchIntervalSeconds
+  1427: OasisTelemetryBatchMaxEvents
+  1428: OasisTelemetryIncludeContentHash
+  1429: OasisPasteEnforcementMode
+  1430: OasisPasteEnforcementDomainOverrides
+  1431: OasisPasteBlockSensitiveData
 
 atomic_groups:
   1: Homepage
@@ -1485,3 +1494,4 @@ atomic_groups:
   60: ProtectedContent
   61: LegacyCookieScopeSettings
   62: GeolocationSettings
+  63: OasisTelemetry
