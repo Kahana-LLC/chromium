@@ -20,13 +20,14 @@ features:
 owners:
 - file://chrome/browser/oasis/OWNERS
 schema:
+  type: object
+  properties: {}
   additionalProperties:
     enum:
     - audit
     - warn
     - block
     type: string
-  type: object
 supported_on:
 - chrome.*:146-
 tags:
